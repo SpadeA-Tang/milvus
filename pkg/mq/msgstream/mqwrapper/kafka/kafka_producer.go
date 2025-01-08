@@ -30,6 +30,7 @@ func (kp *kafkaProducer) Topic() string {
 }
 
 func (kp *kafkaProducer) Send(ctx context.Context, message *mqcommon.ProducerMessage) (mqcommon.MessageID, error) {
+	log.Info("send message to kafka", zap.String("topic", kp.topic), zap.Int("msg_size", len(message.Payload)))
 	start := timerecord.NewTimeRecorder("send msg to stream")
 	metrics.MsgStreamOpCounter.WithLabelValues(metrics.SendMsgLabel, metrics.TotalLabel).Inc()
 

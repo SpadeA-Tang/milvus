@@ -3615,7 +3615,7 @@ func (node *Proxy) query(ctx context.Context, qt *queryTask, sp trace.Span) (*mi
 		zap.Bool("useDefaultConsistency", request.GetUseDefaultConsistency()),
 	)
 
-	log.Debug(
+	log.Info(
 		rpcReceived(method),
 		zap.String("expr", request.Expr),
 		zap.Strings("OutputFields", request.OutputFields),

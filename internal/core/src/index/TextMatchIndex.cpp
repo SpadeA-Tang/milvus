@@ -122,6 +122,7 @@ TextMatchIndex::Load(const Config& config) {
     AssertInfo(index_files.has_value(),
                "index file paths is empty when load text log index");
     auto prefix = disk_file_manager_->GetLocalTextIndexPrefix();
+    LOG_INFO("debug_text_index: index prefix: {}", prefix);
     auto files_value = index_files.value();
     auto it = std::find_if(
         files_value.begin(), files_value.end(), [](const std::string& file) {
@@ -132,6 +133,7 @@ TextMatchIndex::Load(const Config& config) {
         std::vector<std::string> file;
         file.push_back(*it);
         files_value.erase(it);
+        LOG_INFO("debug_text_index: load file: {}", *it);
         auto index_datas = mem_file_manager_->LoadIndexToMemory(file);
         AssembleIndexDatas(index_datas);
         BinarySet binary_set;
@@ -152,6 +154,7 @@ TextMatchIndex::Load(const Config& config) {
     AssertInfo(
         tantivy_index_exist(prefix.c_str()), "index not exist: {}", prefix);
     wrapper_ = std::make_shared<TantivyIndexWrapper>(prefix.c_str());
+    wrapper_->log_searching_segments();
 }
 
 void
@@ -165,6 +168,7 @@ TextMatchIndex::AddText(const std::string& text,
         }
         return;
     }
+    LOG_INFO("debug_text_index: add text: {}", text);
     wrapper_->add_data(&text, 1, offset);
     if (shouldTriggerCommit()) {
         Commit();
@@ -192,9 +196,24 @@ TextMatchIndex::AddTexts(size_t n,
             }
         }
     }
+    for (int i = 0; i < n; i++) {
+        LOG_INFO("debug_text_index: add texts[{}]: {}", i, texts[i]);
+    }
     wrapper_->add_data(texts, n, offset_begin);
     if (shouldTriggerCommit()) {
         Commit();
+    }
+}
+
+void
+TextMatchIndex::BuildIndexFromFieldDataPtr(
+    const std::vector<FieldDataPtr>& field_datas) {
+    int64_t offset = 0;
+    for (const auto& data : field_datas) {
+        auto n = data->get_num_rows();
+        wrapper_->add_data(
+            static_cast<const std::string*>(data->Data()), n, offset);
+        offset += n;
     }
 }
 

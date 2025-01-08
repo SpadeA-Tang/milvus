@@ -1962,6 +1962,7 @@ SegmentSealedImpl::RemoveFieldFile(const FieldId field_id) {
 void
 SegmentSealedImpl::CreateTextIndex(FieldId field_id) {
     std::unique_lock lck(mutex_);
+    LOG_INFO("debug_text_index2: create text index for field: {}", field_id.get());
 
     const auto& field_meta = schema_->operator[](field_id);
     auto& cfg = storage::MmapManager::GetInstance().GetMmapConfig();
@@ -2032,7 +2033,10 @@ SegmentSealedImpl::CreateTextIndex(FieldId field_id) {
     index->RegisterTokenizer("milvus_tokenizer",
                              field_meta.get_analyzer_params().c_str());
 
+    LOG_INFO("debug_text_index: Sealed CreateTextIndex add index to text_indexes for field: {}, index addr {}",
+               field_id.get(), reinterpret_cast<uintptr_t>(index.get()));
     text_indexes_[field_id] = std::move(index);
+    LOG_INFO("debug_text_index2: create text index done for field: {}", field_id.get());
 }
 
 void
@@ -2042,6 +2046,8 @@ SegmentSealedImpl::LoadTextIndex(FieldId field_id,
     const auto& field_meta = schema_->operator[](field_id);
     index->RegisterTokenizer("milvus_tokenizer",
                              field_meta.get_analyzer_params().c_str());
+    LOG_INFO("debug_text_index: Sealed LoadTextIndex add index to text_indexes for field: {}, index addr {}",
+               field_id.get(), reinterpret_cast<uintptr_t>(index.get()));
     text_indexes_[field_id] = std::move(index);
 }
 

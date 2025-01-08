@@ -258,6 +258,10 @@ class SegmentGrowingImpl : public SegmentGrowing {
                 storage::MmapManager::GetInstance().GetMmapChunkManager();
             mcm->Register(mmap_descriptor_);
         }
+        LOG_INFO(
+            "debug_text_index: growing segment creation, segment_id: {}",
+                     this->get_segment_id()
+        );
         this->CreateTextIndexes();
     }
 

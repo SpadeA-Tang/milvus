@@ -274,6 +274,12 @@ SegmentGrowingImpl::LoadFieldData(const LoadFieldDataInfo& infos) {
                 storage::GetByteSizeOfFieldDatas(field_data));
         }
 
+        // build text match index
+        if (field_meta.enable_match()) {
+            auto index = GetTextIndex(field_id);
+            index->BuildIndexFromFieldDataPtr(field_data);
+        }
+
         // update the mem size
         stats_.mem_size += storage::GetByteSizeOfFieldDatas(field_data);
 
@@ -842,6 +848,8 @@ SegmentGrowingImpl::CreateTextIndex(FieldId field_id) {
     index->CreateReader();
     index->RegisterTokenizer("milvus_tokenizer",
                              field_meta.get_analyzer_params().c_str());
+    LOG_INFO("debug_text_index: Growing CreateTextIndex add index to text_indexes for field: {}, index addr {}",
+               field_id.get(), reinterpret_cast<uintptr_t>(index.get()));
     text_indexes_[field_id] = std::move(index);
 }
 

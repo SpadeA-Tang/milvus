@@ -17,6 +17,7 @@ import (
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/streamingutil"
 	"github.com/milvus-io/milvus/pkg/common"
+	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/conc"
 	"github.com/milvus-io/milvus/pkg/util/merr"
@@ -157,6 +158,7 @@ func (wb *l0WriteBuffer) BufferData(insertData []*InsertData, deleteMsgs []*msgs
 
 	// buffer insert data and add segment if not exists
 	for _, inData := range insertData {
+		log.Info("debug_text_index: BufferData", zap.Int64("partitionID", inData.partitionID), zap.Int64("segmentID", inData.segmentID), zap.Int64("num_rows", inData.rowNum))
 		err := wb.bufferInsert(inData, startPos, endPos)
 		if err != nil {
 			return err

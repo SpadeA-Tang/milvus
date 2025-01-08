@@ -22,9 +22,15 @@ pub(crate) struct IndexReaderWrapper {
 
 impl IndexReaderWrapper {
     pub fn load(path: &str) -> Result<IndexReaderWrapper> {
+        use log::info;
         init_log();
 
         let index = Index::open_in_dir(path)?;
+        let segments = index.searchable_segments().unwrap();
+        info!(
+            "debug log segments when load: {:?}, path {:?}",
+            segments, path
+        );
 
         IndexReaderWrapper::from_index(Arc::new(index))
     }
@@ -68,6 +74,10 @@ impl IndexReaderWrapper {
     }
 
     pub(crate) fn search(&self, q: &dyn Query) -> Result<Vec<u32>> {
+        use log::info;
+        let segments = self.index.searchable_segments().unwrap();
+        info!("debug searching segments: {:?}", segments);
+        self.reader.reload()?;
         let searcher = self.reader.searcher();
         match self.id_field {
             Some(_) => {
@@ -83,6 +93,12 @@ impl IndexReaderWrapper {
                     .map_err(TantivyBindingError::TantivyError)
             }
         }
+    }
+
+    pub fn log_searching_segments(&self) {
+        use log::info;
+        let segments = self.index.searchable_segments().unwrap();
+        info!("debug log segments: {:?}", segments);
     }
 
     pub fn term_query_i64(&self, term: i64) -> Result<Vec<u32>> {

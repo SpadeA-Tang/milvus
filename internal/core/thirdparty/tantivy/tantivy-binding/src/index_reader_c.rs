@@ -217,3 +217,11 @@ pub extern "C" fn tantivy_regex_query(ptr: *mut c_void, pattern: *const c_char) 
     let pattern = cstr_to_str!(pattern);
     unsafe { (*real).regex_query(pattern).into() }
 }
+
+#[no_mangle]
+pub extern "C" fn tantivy_log_searching_segments(ptr: *mut c_void) {
+    let real = ptr as *mut IndexReaderWrapper;
+    unsafe {
+        (*real).log_searching_segments();
+    }
+}

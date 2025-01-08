@@ -135,6 +135,8 @@ RustResult tantivy_prefix_query_keyword(void *ptr, const char *prefix);
 
 RustResult tantivy_regex_query(void *ptr, const char *pattern);
 
+void tantivy_log_searching_segments(void *ptr);
+
 RustResult tantivy_match_query(void *ptr, const char *query);
 
 RustResult tantivy_phrase_match_query(void *ptr, const char *query, uint32_t slop);

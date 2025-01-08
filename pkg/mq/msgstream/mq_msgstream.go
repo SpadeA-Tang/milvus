@@ -302,9 +302,10 @@ func (ms *mqMsgStream) Produce(ctx context.Context, msgPack *MsgPack) error {
 		return merr.ErrDenyProduceMsg
 	}
 	if msgPack == nil || len(msgPack.Msgs) <= 0 {
-		log.Ctx(ms.ctx).Debug("Warning: Receive empty msgPack")
+		log.Ctx(ms.ctx).Info("Warning: Receive empty msgPack")
 		return nil
 	}
+	log.Info("start to produce msg", zap.Any("msg_len", len(msgPack.Msgs)), zap.Int("producer_len", len(ms.producers)))
 	if len(ms.producers) <= 0 {
 		return errors.New("nil producer in msg stream")
 	}
@@ -326,6 +327,7 @@ func (ms *mqMsgStream) Produce(ctx context.Context, msgPack *MsgPack) error {
 		}
 	}
 	if err != nil {
+		log.Info("produce meet error", zap.Error(err))
 		return err
 	}
 	eg, _ := errgroup.WithContext(context.Background())
@@ -360,6 +362,7 @@ func (ms *mqMsgStream) Produce(ctx context.Context, msgPack *MsgPack) error {
 				}}
 				InjectCtx(spanCtx, msg.Properties)
 
+				log.Info("send msg to channel", zap.String("channel", channel), zap.String("msg_type", v.Msgs[i].Type().String()))
 				if _, err := producer.Send(spanCtx, msg); err != nil {
 					sp.RecordError(err)
 					return err

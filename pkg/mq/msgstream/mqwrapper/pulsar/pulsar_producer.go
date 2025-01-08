@@ -20,7 +20,9 @@ import (
 	"context"
 
 	"github.com/apache/pulsar-client-go/pulsar"
+	"go.uber.org/zap"
 
+	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
 	"github.com/milvus-io/milvus/pkg/mq/common"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream/mqwrapper"
@@ -40,6 +42,7 @@ func (pp *pulsarProducer) Topic() string {
 }
 
 func (pp *pulsarProducer) Send(ctx context.Context, message *common.ProducerMessage) (common.MessageID, error) {
+	log.Info("send message to pulsar stream", zap.String("topic", pp.Topic()), zap.Int("payload_size", len(message.Payload)))
 	start := timerecord.NewTimeRecorder("send msg to stream")
 	metrics.MsgStreamOpCounter.WithLabelValues(metrics.SendMsgLabel, metrics.TotalLabel).Inc()
 

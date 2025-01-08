@@ -453,6 +453,8 @@ LoadTextIndex(CSegmentInterface c_segment,
                                               info_proto->fieldid(),
                                               info_proto->buildid(),
                                               info_proto->version()};
+
+        LOG_INFO("debug_text_index: load text index for field: {}", info_proto->fieldid());
         auto remote_chunk_manager =
             milvus::storage::RemoteChunkManagerSingleton::GetInstance()
                 .GetRemoteChunkManager();
@@ -460,6 +462,7 @@ LoadTextIndex(CSegmentInterface c_segment,
         milvus::Config config;
         std::vector<std::string> files;
         for (const auto& f : info_proto->files()) {
+            LOG_INFO("debug_text_index: load text index of file: {}", f);
             files.push_back(f);
         }
         config["index_files"] = files;
@@ -472,6 +475,7 @@ LoadTextIndex(CSegmentInterface c_segment,
 
         segment->LoadTextIndex(milvus::FieldId(info_proto->fieldid()),
                                std::move(index));
+        LOG_INFO("debug_text_index: load text index done for field: {}", info_proto->fieldid());
 
         return milvus::SuccessCStatus();
     } catch (std::exception& e) {

@@ -265,7 +265,7 @@ func (it *insertTask) Execute(ctx context.Context) error {
 		return err
 	}
 
-	log.Debug("send insert request to virtual channels",
+	log.Info("send insert request to virtual channels",
 		zap.String("partition", it.insertMsg.GetPartitionName()),
 		zap.Int64("collectionID", collID),
 		zap.Strings("virtual_channels", channelNames),
@@ -287,7 +287,7 @@ func (it *insertTask) Execute(ctx context.Context) error {
 	}
 	assignSegmentIDDur := tr.RecordSpan()
 
-	log.Debug("assign segmentID for insert data success",
+	log.Info("assign segmentID for insert data success",
 		zap.Duration("assign segmentID duration", assignSegmentIDDur))
 	err = stream.Produce(ctx, msgPack)
 	if err != nil {
@@ -298,7 +298,7 @@ func (it *insertTask) Execute(ctx context.Context) error {
 	sendMsgDur := tr.RecordSpan()
 	metrics.ProxySendMutationReqLatency.WithLabelValues(strconv.FormatInt(paramtable.GetNodeID(), 10), metrics.InsertLabel).Observe(float64(sendMsgDur.Milliseconds()))
 	totalExecDur := tr.ElapseSpan()
-	log.Debug("Proxy Insert Execute done",
+	log.Info("Proxy Insert Execute done",
 		zap.String("collectionName", collectionName),
 		zap.Duration("send message duration", sendMsgDur),
 		zap.Duration("execute duration", totalExecDur))

@@ -112,6 +112,8 @@ impl IndexWriterWrapper {
     }
 
     pub fn add_string(&mut self, data: &str, offset: i64) -> Result<()> {
+        use log::info;
+        info!("debug add_string: {}", data);
         let _ = self.index_writer.add_document(doc!(
             self.field => data,
             self.id_field => offset,

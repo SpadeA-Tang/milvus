@@ -44,6 +44,7 @@ func (np *nmqProducer) Topic() string {
 
 // Send send the producer messages to natsmq
 func (np *nmqProducer) Send(ctx context.Context, message *common.ProducerMessage) (common.MessageID, error) {
+	log.Info("send message to nmq stream", zap.String("topic", np.topic), zap.Int("payload_size", len(message.Payload)))
 	start := timerecord.NewTimeRecorder("send msg to stream")
 	metrics.MsgStreamOpCounter.WithLabelValues(metrics.SendMsgLabel, metrics.TotalLabel).Inc()
 

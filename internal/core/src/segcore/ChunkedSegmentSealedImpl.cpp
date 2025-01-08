@@ -374,6 +374,10 @@ ChunkedSegmentSealedImpl::LoadFieldData(FieldId field_id, FieldDataInfo& data) {
                     stats_.mem_size += var_column->DataByteSize();
                     LoadStringSkipIndex(field_id, 0, *var_column);
                     column = std::move(var_column);
+                    LOG_INFO("debug segment {} loads field {} with size {}",
+                             this->get_segment_id(),
+                             field_id.get(),
+                             field_data_size);
                     break;
                 }
                 case milvus::DataType::JSON: {
@@ -1467,6 +1471,7 @@ ChunkedSegmentSealedImpl::fill_with_empty(FieldId field_id,
 void
 ChunkedSegmentSealedImpl::CreateTextIndex(FieldId field_id) {
     std::unique_lock lck(mutex_);
+    LOG_INFO("debug_text_index: create text index for field: {}", field_id.get());
 
     const auto& field_meta = schema_->operator[](field_id);
     auto& cfg = storage::MmapManager::GetInstance().GetMmapConfig();
@@ -1538,7 +1543,10 @@ ChunkedSegmentSealedImpl::CreateTextIndex(FieldId field_id) {
     index->RegisterTokenizer("milvus_tokenizer",
                              field_meta.get_analyzer_params().c_str());
 
+    LOG_INFO("debug_text_index: Chunked Seal CreateTextIndex add index to text_indexes for field: {}, index addr {}",
+               field_id.get(), reinterpret_cast<uintptr_t>(index.get()));
     text_indexes_[field_id] = std::move(index);
+    LOG_INFO("debug_text_index: create text index done for field: {}", field_id.get());
 }
 
 void
@@ -1548,6 +1556,8 @@ ChunkedSegmentSealedImpl::LoadTextIndex(
     const auto& field_meta = schema_->operator[](field_id);
     index->RegisterTokenizer("milvus_tokenizer",
                              field_meta.get_analyzer_params().c_str());
+    LOG_INFO("debug_text_index: Chunked Seal LoadTextIndex add index to text_indexes for field: {}, index addr {}",
+               field_id.get(), reinterpret_cast<uintptr_t>(index.get()));
     text_indexes_[field_id] = std::move(index);
 }
 

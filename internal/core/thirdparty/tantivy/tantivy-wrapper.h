@@ -168,6 +168,15 @@ struct TantivyIndexWrapper {
         }
     }
 
+    void
+    log_searching_segments() {
+        if (reader_ != nullptr) {
+            tantivy_log_searching_segments(reader_);
+        } else {
+            LOG_INFO("reader_ is nullptr, cannot log searching segments");
+        }
+    }
+
     template <typename T>
     void
     add_data(const T* array, uintptr_t len, int64_t offset_begin) {

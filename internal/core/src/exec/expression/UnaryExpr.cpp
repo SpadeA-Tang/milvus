@@ -1108,6 +1108,8 @@ PhyUnaryRangeFilterExpr::ExecTextMatch() {
     auto op_type = expr_->op_type_;
     auto func = [op_type, slop](Index* index,
                                 const std::string& query) -> TargetBitmap {
+        LOG_INFO("debug_text_index: index addr for match query: {}",
+                reinterpret_cast<uintptr_t>(index));
         if (op_type == proto::plan::OpType::TextMatch) {
             return index->MatchQuery(query);
         } else if (op_type == proto::plan::OpType::PhraseMatch) {
