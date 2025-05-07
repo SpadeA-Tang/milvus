@@ -171,14 +171,15 @@ func MarshalCollectionModel(coll *Collection) *pb.CollectionInfo {
 }
 
 type config struct {
-	withFields     bool
-	withPartitions bool
+	withFields       bool
+	withPartitions   bool
+	withStructFields bool
 }
 
 type Option func(c *config)
 
 func newDefaultConfig() *config {
-	return &config{withFields: false, withPartitions: false}
+	return &config{withFields: false, withPartitions: false, withStructFields: false}
 }
 
 func WithFields() Option {
@@ -190,6 +191,12 @@ func WithFields() Option {
 func WithPartitions() Option {
 	return func(c *config) {
 		c.withPartitions = true
+	}
+}
+
+func WithStructFields() Option {
+	return func(c *config) {
+		c.withStructFields = true
 	}
 }
 
@@ -209,6 +216,11 @@ func marshalCollectionModelWithConfig(coll *Collection, c *config) *pb.Collectio
 	if c.withFields {
 		fields := MarshalFieldModels(coll.Fields)
 		collSchema.Fields = fields
+	}
+
+	if c.withStructFields {
+		structFields := MarshalStructFieldModels(coll.StructFields)
+		collSchema.StructFields = structFields
 	}
 
 	collectionPb := &pb.CollectionInfo{

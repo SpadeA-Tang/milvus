@@ -529,6 +529,7 @@ func (s *WriteSchemaChangeWALStep) Execute(ctx context.Context) ([]nestedStep, e
 		Description:        s.collection.Description,
 		AutoID:             s.collection.AutoID,
 		Fields:             model.MarshalFieldModels(s.collection.Fields),
+		StructFields:       model.MarshalStructFieldModels(s.collection.StructFields),
 		Functions:          model.MarshalFunctionModels(s.collection.Functions),
 		EnableDynamicField: s.collection.EnableDynamicField,
 		Properties:         s.collection.Properties,

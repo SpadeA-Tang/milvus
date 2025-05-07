@@ -10,7 +10,33 @@ type StructField struct {
 	EnableDynamicField bool
 }
 
-func UnmarshalStructFieldModel(fieldSchema *schemapb.StructSchema) *StructField {
+func MarshalStructFieldModel(structField *StructField) *schemapb.StructField {
+	if structField == nil {
+		return nil
+	}
+
+	return &schemapb.StructField{
+		FieldID:            structField.FieldID,
+		Name:               structField.Name,
+		Fields:             MarshalFieldModels(structField.Fields),
+		Functions:          MarshalFunctionModels(structField.Functions),
+		EnableDynamicField: structField.EnableDynamicField,
+	}
+}
+
+func MarshalStructFieldModels(fieldSchemas []*StructField) []*schemapb.StructField {
+	if fieldSchemas == nil {
+		return nil
+	}
+
+	structFields := make([]*schemapb.StructField, len(fieldSchemas))
+	for idx, structField := range fieldSchemas {
+		structFields[idx] = MarshalStructFieldModel(structField)
+	}
+	return structFields
+}
+
+func UnmarshalStructFieldModel(fieldSchema *schemapb.StructField) *StructField {
 	if fieldSchema == nil {
 		return nil
 	}
@@ -24,7 +50,7 @@ func UnmarshalStructFieldModel(fieldSchema *schemapb.StructSchema) *StructField 
 	}
 }
 
-func UnmarshalStructFieldModels(fieldSchemas []*schemapb.StructSchema) []*StructField {
+func UnmarshalStructFieldModels(fieldSchemas []*schemapb.StructField) []*StructField {
 	if fieldSchemas == nil {
 		return nil
 	}

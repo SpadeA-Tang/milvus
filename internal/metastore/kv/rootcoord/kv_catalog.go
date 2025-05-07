@@ -80,6 +80,14 @@ func BuildFunctionKey(collectionID typeutil.UniqueID, functionID int64) string {
 	return fmt.Sprintf("%s/%d", BuildFunctionPrefix(collectionID), functionID)
 }
 
+func BuildStructFieldPrefix(collectionID typeutil.UniqueID) string {
+	return fmt.Sprintf("%s/%d", StructFieldMetaPrefix, collectionID)
+}
+
+func BuildStructFieldKey(collectionId typeutil.UniqueID, fieldId int64) string {
+	return fmt.Sprintf("%s/%d", BuildStructFieldPrefix(collectionId), fieldId)
+}
+
 func BuildAliasKey210(alias string) string {
 	return fmt.Sprintf("%s/%s", CollectionAliasMetaPrefix210, alias)
 }
@@ -214,6 +222,17 @@ func (kc *Catalog) CreateCollection(ctx context.Context, coll *model.Collection,
 		k := BuildFunctionKey(coll.CollectionID, function.ID)
 		functionInfo := model.MarshalFunctionModel(function)
 		v, err := proto.Marshal(functionInfo)
+		if err != nil {
+			return err
+		}
+		kvs[k] = string(v)
+	}
+
+	// save struct fieldsto new path
+	for _, structField := range coll.StructFields {
+		k := BuildStructFieldKey(coll.CollectionID, structField.FieldID)
+		structFieldInfo := model.MarshalStructFieldModel(structField)
+		v, err := proto.Marshal(structFieldInfo)
 		if err != nil {
 			return err
 		}
@@ -609,6 +628,9 @@ func (kc *Catalog) DropCollection(ctx context.Context, collectionInfo *model.Col
 	}
 	for _, field := range collectionInfo.Fields {
 		delMetakeysSnap = append(delMetakeysSnap, BuildFieldKey(collectionInfo.CollectionID, field.FieldID))
+	}
+	for _, structField := range collectionInfo.StructFields {
+		delMetakeysSnap = append(delMetakeysSnap, BuildStructFieldKey(collectionInfo.CollectionID, structField.FieldID))
 	}
 	for _, function := range collectionInfo.Functions {
 		delMetakeysSnap = append(delMetakeysSnap, BuildFunctionKey(collectionInfo.CollectionID, function.ID))
