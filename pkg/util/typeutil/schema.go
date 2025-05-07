@@ -266,6 +266,21 @@ func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, e
 	return res, nil
 }
 
+type StructAddress struct {
+	structOff int
+	fieldOff  int
+}
+
+func GetStructAddress(offset int) (StructAddress, bool) {
+	if offset < (1 << 10) {
+		return StructAddress{0, 0}, false
+	} else {
+		structOff := (offset >> 10) - 1
+		fieldOff := offset & 0x3ff
+		return StructAddress{structOff, fieldOff}, true
+	}
+}
+
 // SchemaHelper provides methods to get the schema of fields
 type SchemaHelper struct {
 	schema              *schemapb.CollectionSchema
@@ -329,6 +344,21 @@ func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFie
 			schemaHelper.dynamicFieldOffset = offset
 		}
 	}
+	for structOffset, structField := range schema.StructFields {
+		for fieldOffset, field := range structField.Fields {
+			nestedName := fmt.Sprintf("%s.%s", structField.Name, field.Name)
+			if _, ok := schemaHelper.nameOffset[nestedName]; ok {
+				return nil, fmt.Errorf("duplicated fieldName: %s", nestedName)
+			}
+			if _, ok := schemaHelper.idOffset[field.FieldID]; ok {
+				return nil, fmt.Errorf("duplicated fieldID: %d", field.FieldID)
+			}
+
+			schemaHelper.nameOffset[field.Name] = (structOffset+1)<<10 | fieldOffset
+			schemaHelper.idOffset[field.FieldID] = (structOffset+1)<<10 | fieldOffset
+		}
+	}
+
 	return &schemaHelper, nil
 }
 
@@ -377,7 +407,11 @@ func (helper *SchemaHelper) GetFieldFromName(fieldName string) (*schemapb.FieldS
 	if !ok {
 		return nil, fmt.Errorf("failed to get field schema by name: fieldName(%s) not found", fieldName)
 	}
-	return helper.schema.Fields[offset], nil
+	if structAddr, ok := GetStructAddress(offset); ok {
+		return helper.schema.StructFields[structAddr.structOff].Fields[structAddr.fieldOff], nil
+	} else {
+		return helper.schema.Fields[offset], nil
+	}
 }
 
 // GetFieldFromNameDefaultJSON is used to find the schema by field name, if not exist, use json field
@@ -386,7 +420,12 @@ func (helper *SchemaHelper) GetFieldFromNameDefaultJSON(fieldName string) (*sche
 	if !ok {
 		return helper.getDefaultJSONField(fieldName)
 	}
-	fieldSchema := helper.schema.Fields[offset]
+	var fieldSchema *schemapb.FieldSchema
+	if structAddr, ok := GetStructAddress(offset); ok {
+		fieldSchema = helper.schema.StructFields[structAddr.structOff].Fields[structAddr.fieldOff]
+	} else {
+		fieldSchema = helper.schema.Fields[offset]
+	}
 	if !helper.IsFieldLoaded(fieldSchema.GetFieldID()) {
 		return nil, errors.Newf("field %s is not loaded", fieldSchema)
 	}

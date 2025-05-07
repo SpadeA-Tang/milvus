@@ -501,6 +501,7 @@ func (t *createCollectionTask) Execute(ctx context.Context) error {
 		Description:          t.schema.Description,
 		AutoID:               t.schema.AutoID,
 		Fields:               model.UnmarshalFieldModels(t.schema.Fields),
+		StructFields:         model.UnmarshalStructFieldModels(t.schema.StructFields),
 		Functions:            model.UnmarshalFunctionModels(t.schema.Functions),
 		VirtualChannelNames:  vchanNames,
 		PhysicalChannelNames: chanNames,

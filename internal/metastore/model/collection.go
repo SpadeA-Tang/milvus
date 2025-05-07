@@ -35,6 +35,7 @@ type Collection struct {
 	Description          string
 	AutoID               bool
 	Fields               []*Field
+	StructFields         []*StructField
 	Functions            []*Function
 	VirtualChannelNames  []string
 	PhysicalChannelNames []string
