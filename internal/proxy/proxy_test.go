@@ -414,6 +414,10 @@ func TestProxy(t *testing.T) {
 	rowNum := 3000
 	floatIndexName := "float_index"
 	binaryIndexName := "binary_index"
+	structId := "structI64"
+	structTag := "structTag"
+	structVec := "structVec"
+	structField := "structField"
 	nlist := 10
 	// nprobe := 10
 	// topk := 10
@@ -465,6 +469,55 @@ func TestProxy(t *testing.T) {
 			IndexParams: nil,
 			AutoID:      false,
 		}
+
+		// struct schema fields
+		sId := &schemapb.FieldSchema{
+			FieldID:      103,
+			Name:         structId,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_Int64,
+			TypeParams:   nil,
+			IndexParams:  nil,
+			AutoID:       false,
+		}
+		sTag := &schemapb.FieldSchema{
+			FieldID:      104,
+			Name:         structTag,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_VarChar,
+			TypeParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.MaxLengthKey,
+					Value: "128",
+				},
+			},
+			IndexParams: nil,
+			AutoID:      false,
+		}
+		sVec := &schemapb.FieldSchema{
+			FieldID:      105,
+			Name:         structVec,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_FloatVector,
+			TypeParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.DimKey,
+					Value: strconv.Itoa(dim),
+				},
+			},
+			IndexParams: nil,
+			AutoID:      false,
+		}
+		structF := &schemapb.StructFieldSchema{
+			FieldID:            106,
+			Name:               structField,
+			EnableDynamicField: false,
+			Fields:             []*schemapb.FieldSchema{sId, sTag, sVec},
+		}
+
 		return &schemapb.CollectionSchema{
 			Name:        collectionName,
 			Description: "",
@@ -474,6 +527,7 @@ func TestProxy(t *testing.T) {
 				fVec,
 				bVec,
 			},
+			StructFields: []*schemapb.StructFieldSchema{structF},
 		}
 	}
 	schema := constructCollectionSchema()
@@ -494,13 +548,14 @@ func TestProxy(t *testing.T) {
 	constructCollectionInsertRequest := func() *milvuspb.InsertRequest {
 		fVecColumn := newFloatVectorFieldData(floatVecField, rowNum, dim)
 		bVecColumn := newBinaryVectorFieldData(binaryVecField, rowNum, dim)
+		structColumn := newStructFieldData(schema.StructFields[0], structField, rowNum, dim)
 		hashKeys := testutils.GenerateHashKeys(rowNum)
 		return &milvuspb.InsertRequest{
 			Base:           nil,
 			DbName:         dbName,
 			CollectionName: collectionName,
 			PartitionName:  "",
-			FieldsData:     []*schemapb.FieldData{fVecColumn, bVecColumn},
+			FieldsData:     []*schemapb.FieldData{fVecColumn, bVecColumn, structColumn},
 			HashKeys:       hashKeys,
 			NumRows:        uint32(rowNum),
 		}
