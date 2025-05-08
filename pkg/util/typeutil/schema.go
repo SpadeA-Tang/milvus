@@ -213,55 +213,74 @@ func CalcColumnSize(column *schemapb.FieldData) int {
 	return res
 }
 
+func estimateFieldSize(field *schemapb.FieldData, rowOffset int) (int, error) {
+	switch field.GetType() {
+	case schemapb.DataType_Bool, schemapb.DataType_Int8:
+		return 1, nil
+	case schemapb.DataType_Int16:
+		return 2, nil
+	case schemapb.DataType_Int32, schemapb.DataType_Float:
+		return 4, nil
+	case schemapb.DataType_Int64, schemapb.DataType_Double:
+		return 8, nil
+	case schemapb.DataType_VarChar, schemapb.DataType_Text:
+		if rowOffset >= len(field.GetScalars().GetStringData().GetData()) {
+			return 0, fmt.Errorf("offset out range of field datas")
+		}
+		return len(field.GetScalars().GetStringData().Data[rowOffset]), nil
+	case schemapb.DataType_Array:
+		if rowOffset >= len(field.GetScalars().GetArrayData().GetData()) {
+			return 0, fmt.Errorf("offset out range of field datas")
+		}
+		array := field.GetScalars().GetArrayData().GetData()[rowOffset]
+		return CalcColumnSize(&schemapb.FieldData{
+			Field: &schemapb.FieldData_Scalars{Scalars: array},
+			Type:  field.GetScalars().GetArrayData().GetElementType(),
+		}), nil
+	case schemapb.DataType_JSON:
+		if rowOffset >= len(field.GetScalars().GetJsonData().GetData()) {
+			return 0, fmt.Errorf("offset out range of field datas")
+		}
+		return len(field.GetScalars().GetJsonData().GetData()[rowOffset]), nil
+	case schemapb.DataType_BinaryVector:
+		return int(field.GetVectors().GetDim()), nil
+	case schemapb.DataType_FloatVector:
+		return int(field.GetVectors().GetDim() * 4), nil
+	case schemapb.DataType_Float16Vector:
+		return int(field.GetVectors().GetDim() * 2), nil
+	case schemapb.DataType_BFloat16Vector:
+		return int(field.GetVectors().GetDim() * 2), nil
+	case schemapb.DataType_SparseFloatVector:
+		vec := field.GetVectors().GetSparseFloatVector()
+		// counting only the size of the vector data, ignoring other
+		// bytes used in proto.
+		return len(vec.Contents[rowOffset]), nil
+	case schemapb.DataType_Int8Vector:
+		return int(field.GetVectors().GetDim()), nil
+	default:
+		panic("Unknown data type:" + field.GetType().String())
+	}
+}
+
 func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, error) {
 	res := 0
-	for _, fs := range fieldsData {
-		switch fs.GetType() {
-		case schemapb.DataType_Bool, schemapb.DataType_Int8:
-			res++
-		case schemapb.DataType_Int16:
-			res += 2
-		case schemapb.DataType_Int32, schemapb.DataType_Float:
-			res += 4
-		case schemapb.DataType_Int64, schemapb.DataType_Double:
-			res += 8
-		case schemapb.DataType_VarChar, schemapb.DataType_Text:
-			if rowOffset >= len(fs.GetScalars().GetStringData().GetData()) {
-				return 0, fmt.Errorf("offset out range of field datas")
+	for _, field := range fieldsData {
+		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+			for _, subField := range structField.Structs.Fields {
+				size, err := estimateFieldSize(subField, rowOffset)
+				if err != nil {
+					return 0, err
+				}
+				res += size
 			}
-			res += len(fs.GetScalars().GetStringData().Data[rowOffset])
-		case schemapb.DataType_Array:
-			if rowOffset >= len(fs.GetScalars().GetArrayData().GetData()) {
-				return 0, fmt.Errorf("offset out range of field datas")
-			}
-			array := fs.GetScalars().GetArrayData().GetData()[rowOffset]
-			res += CalcColumnSize(&schemapb.FieldData{
-				Field: &schemapb.FieldData_Scalars{Scalars: array},
-				Type:  fs.GetScalars().GetArrayData().GetElementType(),
-			})
-		case schemapb.DataType_JSON:
-			if rowOffset >= len(fs.GetScalars().GetJsonData().GetData()) {
-				return 0, fmt.Errorf("offset out range of field datas")
-			}
-			res += len(fs.GetScalars().GetJsonData().GetData()[rowOffset])
-		case schemapb.DataType_BinaryVector:
-			res += int(fs.GetVectors().GetDim())
-		case schemapb.DataType_FloatVector:
-			res += int(fs.GetVectors().GetDim() * 4)
-		case schemapb.DataType_Float16Vector:
-			res += int(fs.GetVectors().GetDim() * 2)
-		case schemapb.DataType_BFloat16Vector:
-			res += int(fs.GetVectors().GetDim() * 2)
-		case schemapb.DataType_SparseFloatVector:
-			vec := fs.GetVectors().GetSparseFloatVector()
-			// counting only the size of the vector data, ignoring other
-			// bytes used in proto.
-			res += len(vec.Contents[rowOffset])
-		case schemapb.DataType_Int8Vector:
-			res += int(fs.GetVectors().GetDim())
-		default:
-			panic("Unknown data type:" + fs.GetType().String())
+			continue
 		}
+
+		size, err := estimateFieldSize(field, rowOffset)
+		if err != nil {
+			return 0, err
+		}
+		res += size
 	}
 	return res, nil
 }

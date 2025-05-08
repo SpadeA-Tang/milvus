@@ -1306,6 +1306,10 @@ func TestEstimateEntitySize(t *testing.T) {
 	assert.True(t, size == 384)
 }
 
+// todo: Add test for struct field for EstimateEntitySize
+func TestEstimateEntitySizeForStructField(t *testing.T) {
+}
+
 func TestGetPrimaryFieldSchema(t *testing.T) {
 	int64Field := &schemapb.FieldSchema{
 		FieldID:  1,
