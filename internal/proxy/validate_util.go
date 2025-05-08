@@ -57,75 +57,102 @@ func (v *validateUtil) apply(opts ...validateOption) {
 	}
 }
 
+func (v *validateUtil) validateFieldData(field *schemapb.FieldData, fieldSchema *schemapb.FieldSchema) error {
+	switch fieldSchema.GetDataType() {
+	case schemapb.DataType_FloatVector:
+		if err := v.checkFloatVectorFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Float16Vector:
+		if err := v.checkFloat16VectorFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_BFloat16Vector:
+		if err := v.checkBFloat16VectorFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_BinaryVector:
+		if err := v.checkBinaryVectorFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_SparseFloatVector:
+		if err := v.checkSparseFloatFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Int8Vector:
+		if err := v.checkInt8VectorFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_VarChar:
+		if err := v.checkVarCharFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Text:
+		if err := v.checkTextFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_JSON:
+		if err := v.checkJSONFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Int8, schemapb.DataType_Int16, schemapb.DataType_Int32:
+		if err := v.checkIntegerFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Int64:
+		if err := v.checkLongFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Float:
+		if err := v.checkFloatFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Double:
+		if err := v.checkDoubleFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+	case schemapb.DataType_Array:
+		if err := v.checkArrayFieldData(field, fieldSchema); err != nil {
+			return err
+		}
+
+	default:
+	}
+	return nil
+}
+
 func (v *validateUtil) Validate(data []*schemapb.FieldData, helper *typeutil.SchemaHelper, numRows uint64) error {
 	if helper == nil {
 		return merr.WrapErrServiceInternal("nil schema helper provided for Validation")
 	}
 	for _, field := range data {
+		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+			structFieldSchema, err := helper.GetStructFieldFromName(field.GetFieldName())
+			if err != nil {
+				return err
+			}
+
+			for _, subField := range structField.Structs.Fields {
+				subFieldSchema, err := helper.GetStructSubFieldFromName(structFieldSchema, subField.GetFieldName())
+				if err != nil {
+					return err
+				}
+
+				if err := v.validateFieldData(subField, subFieldSchema); err != nil {
+					return err
+				}
+			}
+
+			continue
+		}
+
 		fieldSchema, err := helper.GetFieldFromName(field.GetFieldName())
 		if err != nil {
 			return err
 		}
 
-		switch fieldSchema.GetDataType() {
-		case schemapb.DataType_FloatVector:
-			if err := v.checkFloatVectorFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Float16Vector:
-			if err := v.checkFloat16VectorFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_BFloat16Vector:
-			if err := v.checkBFloat16VectorFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_BinaryVector:
-			if err := v.checkBinaryVectorFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_SparseFloatVector:
-			if err := v.checkSparseFloatFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Int8Vector:
-			if err := v.checkInt8VectorFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_VarChar:
-			if err := v.checkVarCharFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Text:
-			if err := v.checkTextFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_JSON:
-			if err := v.checkJSONFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Int8, schemapb.DataType_Int16, schemapb.DataType_Int32:
-			if err := v.checkIntegerFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Int64:
-			if err := v.checkLongFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Float:
-			if err := v.checkFloatFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Double:
-			if err := v.checkDoubleFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-		case schemapb.DataType_Array:
-			if err := v.checkArrayFieldData(field, fieldSchema); err != nil {
-				return err
-			}
-
-		default:
+		if err := v.validateFieldData(field, fieldSchema); err != nil {
+			return err
 		}
 	}
 
@@ -141,7 +168,7 @@ func (v *validateUtil) Validate(data []*schemapb.FieldData, helper *typeutil.Sch
 	return nil
 }
 
-func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows uint64) error {
+func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, fieldSchema *schemapb.FieldSchema, schema *typeutil.SchemaHelper, numRows uint64) error {
 	errNumRowsMismatch := func(fieldName string, fieldNumRows uint64) error {
 		msg := fmt.Sprintf("the num_rows (%d) of field (%s) is not equal to passed num_rows (%d)", fieldNumRows, fieldName, numRows)
 		return merr.WrapErrParameterInvalid(numRows, fieldNumRows, msg)
@@ -150,146 +177,155 @@ func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil
 		msg := fmt.Sprintf("the dim (%d) of field data(%s) is not equal to schema dim (%d)", dataDim, fieldName, schemaDim)
 		return merr.WrapErrParameterInvalid(schemaDim, dataDim, msg)
 	}
+
+	switch field.GetType() {
+	case schemapb.DataType_FloatVector:
+		dim, err := typeutil.GetDim(fieldSchema)
+		if err != nil {
+			return err
+		}
+
+		n, err := funcutil.GetNumRowsOfFloatVectorField(field.GetVectors().GetFloatVector().GetData(), dim)
+		if err != nil {
+			return err
+		}
+		dataDim := field.GetVectors().Dim
+		if dataDim != dim {
+			return errDimMismatch(field.GetFieldName(), dataDim, dim)
+		}
+
+		if n != numRows {
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+
+	case schemapb.DataType_BinaryVector:
+		dim, err := typeutil.GetDim(fieldSchema)
+		if err != nil {
+			return err
+		}
+		dataDim := field.GetVectors().Dim
+		if dataDim != dim {
+			return errDimMismatch(field.GetFieldName(), dataDim, dim)
+		}
+
+		n, err := funcutil.GetNumRowsOfBinaryVectorField(field.GetVectors().GetBinaryVector(), dim)
+		if err != nil {
+			return err
+		}
+
+		if n != numRows {
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+
+	case schemapb.DataType_Float16Vector:
+		dim, err := typeutil.GetDim(fieldSchema)
+		if err != nil {
+			return err
+		}
+		dataDim := field.GetVectors().Dim
+		if dataDim != dim {
+			return errDimMismatch(field.GetFieldName(), dataDim, dim)
+		}
+
+		n, err := funcutil.GetNumRowsOfFloat16VectorField(field.GetVectors().GetFloat16Vector(), dim)
+		if err != nil {
+			return err
+		}
+
+		if n != numRows {
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+
+	case schemapb.DataType_BFloat16Vector:
+		dim, err := typeutil.GetDim(fieldSchema)
+		if err != nil {
+			return err
+		}
+		dataDim := field.GetVectors().Dim
+		if dataDim != dim {
+			return errDimMismatch(field.GetFieldName(), dataDim, dim)
+		}
+
+		n, err := funcutil.GetNumRowsOfBFloat16VectorField(field.GetVectors().GetBfloat16Vector(), dim)
+		if err != nil {
+			return err
+		}
+
+		if n != numRows {
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+
+	case schemapb.DataType_SparseFloatVector:
+		n := uint64(len(field.GetVectors().GetSparseFloatVector().Contents))
+		if n != numRows {
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+
+	case schemapb.DataType_Int8Vector:
+		dim, err := typeutil.GetDim(fieldSchema)
+		if err != nil {
+			return err
+		}
+
+		n, err := funcutil.GetNumRowsOfInt8VectorField(field.GetVectors().GetInt8Vector(), dim)
+		if err != nil {
+			return err
+		}
+		dataDim := field.GetVectors().Dim
+		if dataDim != dim {
+			return errDimMismatch(field.GetFieldName(), dataDim, dim)
+		}
+
+		if n != numRows {
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+	default:
+		// error won't happen here.
+		n, err := funcutil.GetNumRowOfFieldDataWithSchema(field, fieldSchema)
+		if err != nil {
+			return err
+		}
+
+		if n != numRows {
+			log.Warn("the num_rows of field is not equal to passed num_rows", zap.String("fieldName", field.GetFieldName()),
+				zap.Int64("fieldNumRows", int64(n)), zap.Int64("passedNumRows", int64(numRows)),
+				zap.Bools("ValidData", field.GetValidData()))
+			return errNumRowsMismatch(field.GetFieldName(), n)
+		}
+	}
+
+	return nil
+}
+
+func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows uint64) error {
 	for _, field := range data {
-		switch field.GetType() {
-		case schemapb.DataType_FloatVector:
-			f, err := schema.GetFieldFromName(field.GetFieldName())
+		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+			structFieldSchema, err := schema.GetStructFieldFromName(field.GetFieldName())
 			if err != nil {
 				return err
+
 			}
 
-			dim, err := typeutil.GetDim(f)
-			if err != nil {
-				return err
+			for _, subField := range structField.Structs.Fields {
+				subFieldSchema, err := schema.GetStructSubFieldFromName(structFieldSchema, subField.GetFieldName())
+				if err != nil {
+					return err
+				}
+
+				if err := v.checkAlignedForField(subField, subFieldSchema, schema, numRows); err != nil {
+					return err
+				}
 			}
 
-			n, err := funcutil.GetNumRowsOfFloatVectorField(field.GetVectors().GetFloatVector().GetData(), dim)
-			if err != nil {
-				return err
-			}
-			dataDim := field.GetVectors().Dim
-			if dataDim != dim {
-				return errDimMismatch(field.GetFieldName(), dataDim, dim)
-			}
+			continue
+		}
+		f, err := schema.GetFieldFromName(field.GetFieldName())
+		if err != nil {
+			return err
+		}
 
-			if n != numRows {
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
-
-		case schemapb.DataType_BinaryVector:
-			f, err := schema.GetFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-			}
-
-			dim, err := typeutil.GetDim(f)
-			if err != nil {
-				return err
-			}
-			dataDim := field.GetVectors().Dim
-			if dataDim != dim {
-				return errDimMismatch(field.GetFieldName(), dataDim, dim)
-			}
-
-			n, err := funcutil.GetNumRowsOfBinaryVectorField(field.GetVectors().GetBinaryVector(), dim)
-			if err != nil {
-				return err
-			}
-
-			if n != numRows {
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
-
-		case schemapb.DataType_Float16Vector:
-			f, err := schema.GetFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-			}
-
-			dim, err := typeutil.GetDim(f)
-			if err != nil {
-				return err
-			}
-			dataDim := field.GetVectors().Dim
-			if dataDim != dim {
-				return errDimMismatch(field.GetFieldName(), dataDim, dim)
-			}
-
-			n, err := funcutil.GetNumRowsOfFloat16VectorField(field.GetVectors().GetFloat16Vector(), dim)
-			if err != nil {
-				return err
-			}
-
-			if n != numRows {
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
-
-		case schemapb.DataType_BFloat16Vector:
-			f, err := schema.GetFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-			}
-
-			dim, err := typeutil.GetDim(f)
-			if err != nil {
-				return err
-			}
-			dataDim := field.GetVectors().Dim
-			if dataDim != dim {
-				return errDimMismatch(field.GetFieldName(), dataDim, dim)
-			}
-
-			n, err := funcutil.GetNumRowsOfBFloat16VectorField(field.GetVectors().GetBfloat16Vector(), dim)
-			if err != nil {
-				return err
-			}
-
-			if n != numRows {
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
-
-		case schemapb.DataType_SparseFloatVector:
-			n := uint64(len(field.GetVectors().GetSparseFloatVector().Contents))
-			if n != numRows {
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
-
-		case schemapb.DataType_Int8Vector:
-			f, err := schema.GetFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-			}
-
-			dim, err := typeutil.GetDim(f)
-			if err != nil {
-				return err
-			}
-
-			n, err := funcutil.GetNumRowsOfInt8VectorField(field.GetVectors().GetInt8Vector(), dim)
-			if err != nil {
-				return err
-			}
-			dataDim := field.GetVectors().Dim
-			if dataDim != dim {
-				return errDimMismatch(field.GetFieldName(), dataDim, dim)
-			}
-
-			if n != numRows {
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
-		default:
-			// error won't happen here.
-			n, err := funcutil.GetNumRowOfFieldDataWithSchema(field, schema)
-			if err != nil {
-				return err
-			}
-
-			if n != numRows {
-				log.Warn("the num_rows of field is not equal to passed num_rows", zap.String("fieldName", field.GetFieldName()),
-					zap.Int64("fieldNumRows", int64(n)), zap.Int64("passedNumRows", int64(numRows)),
-					zap.Bools("ValidData", field.GetValidData()))
-				return errNumRowsMismatch(field.GetFieldName(), n)
-			}
+		if err := v.checkAlignedForField(field, f, schema, numRows); err != nil {
+			return err
 		}
 	}
 
@@ -305,21 +341,43 @@ func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil
 // after fillWithValue, only nullable field will has valid_data, the length of all data will be passed num_rows
 func (v *validateUtil) fillWithValue(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows int) error {
 	for _, field := range data {
+		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+			structFieldSchema, err := schema.GetStructFieldFromName(field.GetFieldName())
+			if err != nil {
+				return err
+			}
+
+			for _, subField := range structField.Structs.Fields {
+				subFieldSchema, err := schema.GetStructSubFieldFromName(structFieldSchema, subField.GetFieldName())
+				if err != nil {
+					return err
+				}
+
+				if subFieldSchema.GetDefaultValue() != nil {
+					err = v.fillWithDefaultValue(subField, subFieldSchema, numRows)
+				} else {
+					err = v.fillWithNullValue(subField, subFieldSchema, numRows)
+				}
+				if err != nil {
+					return err
+				}
+			}
+
+			continue
+		}
+
 		fieldSchema, err := schema.GetFieldFromName(field.GetFieldName())
 		if err != nil {
 			return err
 		}
 
-		if fieldSchema.GetDefaultValue() == nil {
-			err = v.fillWithNullValue(field, fieldSchema, numRows)
-			if err != nil {
-				return err
-			}
-		} else {
+		if fieldSchema.GetDefaultValue() != nil {
 			err = v.fillWithDefaultValue(field, fieldSchema, numRows)
-			if err != nil {
-				return err
-			}
+		} else {
+			err = v.fillWithNullValue(field, fieldSchema, numRows)
+		}
+		if err != nil {
+			return err
 		}
 	}
 

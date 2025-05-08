@@ -1004,14 +1004,20 @@ func autoGenDynamicFieldData(data [][]byte) *schemapb.FieldData {
 
 // fillFieldPropertiesBySchema set fieldID to fieldData according FieldSchemas
 func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb.CollectionSchema) error {
-	fieldName2Schema := make(map[string]*schemapb.FieldSchema)
+	fieldName2FieldSchema := make(map[string]*schemapb.FieldSchema)
+	fieldName2StructSchema := make(map[string]*schemapb.StructFieldSchema)
 
 	expectColumnNum := 0
 	for _, field := range schema.GetFields() {
-		fieldName2Schema[field.Name] = field
+		fieldName2FieldSchema[field.Name] = field
 		if !IsBM25FunctionOutputField(field, schema) {
 			expectColumnNum++
 		}
+	}
+
+	for _, structField := range schema.GetStructFields() {
+		fieldName2StructSchema[structField.Name] = structField
+		expectColumnNum++
 	}
 
 	if len(columns) != expectColumnNum {
@@ -1020,7 +1026,7 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 	}
 
 	for _, fieldData := range columns {
-		if fieldSchema, ok := fieldName2Schema[fieldData.FieldName]; ok {
+		if fieldSchema, ok := fieldName2FieldSchema[fieldData.FieldName]; ok {
 			fieldData.FieldId = fieldSchema.FieldID
 			fieldData.Type = fieldSchema.DataType
 
@@ -1033,6 +1039,35 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 				}
 				fd.Scalars.GetArrayData().ElementType = fieldSchema.ElementType
 			}
+		} else if structFieldSchema, ok := fieldName2StructSchema[fieldData.FieldName]; ok {
+			fieldData.FieldId = structFieldSchema.FieldID
+
+			// verify the data type is array and element type is struct
+
+			fd, ok := fieldData.Field.(*schemapb.FieldData_Structs)
+			if !ok {
+				return fmt.Errorf("field convert FieldData_Structs fail in fieldData, fieldName: %s,"+
+					" collectionName:%s", fieldData.FieldName, schema.Name)
+			}
+			if len(fd.Structs.Fields) != len(structFieldSchema.GetFields()) {
+				return fmt.Errorf("length of fields of struct field mismatch length of the fields in schema, fieldName: %s,"+
+					" collectionName:%s, fieldData fields length:%d, schema fields length:%d",
+					fieldData.FieldName, schema.Name, len(fd.Structs.Fields), len(structFieldSchema.GetFields()))
+			}
+
+			for _, field := range structFieldSchema.GetFields() {
+				fieldName2FieldSchema[field.Name] = field
+			}
+
+			for _, subFieldData := range fd.Structs.Fields {
+				if fieldSchema, ok := fieldName2FieldSchema[subFieldData.FieldName]; ok {
+					subFieldData.FieldId = fieldSchema.FieldID
+					subFieldData.Type = fieldSchema.DataType
+				} else {
+					return fmt.Errorf("fieldName %s not exist in struct field schema %s", subFieldData.FieldName, structFieldSchema.Name)
+				}
+			}
+
 		} else {
 			return fmt.Errorf("fieldName %v not exist in collection schema", fieldData.FieldName)
 		}
@@ -1600,7 +1635,8 @@ func checkFieldsDataBySchema(schema *schemapb.CollectionSchema, insertMsg *msgst
 			zap.Int64("primaryKeyNum", int64(primaryKeyNum)))
 		return merr.WrapErrParameterInvalidMsg("more than 1 primary keys not supported, got %d", primaryKeyNum)
 	}
-	expectedNum := len(schema.Fields)
+	// todo(SpadeA): add check for struct fields
+	expectedNum := len(schema.Fields) + len(schema.StructFields)
 	actualNum := len(insertMsg.FieldsData) + autoGenFieldNum
 
 	if expectedNum != actualNum {

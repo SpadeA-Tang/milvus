@@ -669,6 +669,7 @@ func (kc *Catalog) alterModifyCollection(ctx context.Context, oldColl *model.Col
 	oldCollClone.State = newColl.State
 	oldCollClone.Properties = newColl.Properties
 	oldCollClone.Fields = newColl.Fields
+	oldCollClone.StructFields = newColl.StructFields
 
 	oldKey := BuildCollectionKey(oldColl.DBID, oldColl.CollectionID)
 	newKey := BuildCollectionKey(newColl.DBID, oldColl.CollectionID)
@@ -688,6 +689,16 @@ func (kc *Catalog) alterModifyCollection(ctx context.Context, oldColl *model.Col
 		}
 		saves[k] = string(v)
 	}
+	for _, structField := range newColl.StructFields {
+		k := BuildStructFieldKey(newColl.CollectionID, structField.FieldID)
+		structFieldInfo := model.MarshalStructFieldModel(structField)
+		v, err := proto.Marshal(structFieldInfo)
+		if err != nil {
+			return err
+		}
+		saves[k] = string(v)
+	}
+
 	if oldKey == newKey {
 		return etcd.SaveByBatchWithLimit(saves, util.MaxEtcdTxnNum/2, func(partialKvs map[string]string) error {
 			return kc.Snapshot.MultiSave(ctx, partialKvs, ts)

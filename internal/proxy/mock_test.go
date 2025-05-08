@@ -360,6 +360,10 @@ func newScalarFieldData(fieldSchema *schemapb.FieldSchema, fieldName string, num
 	return testutils.GenerateScalarFieldData(fieldSchema.GetDataType(), fieldName, numRows)
 }
 
+func newStructFieldData(structFieldSchema *schemapb.StructFieldSchema, fieldName string, numRows int, dim int) *schemapb.FieldData {
+	return testutils.GenerateStructFieldData(structFieldSchema, fieldName, numRows, dim)
+}
+
 func newFloatVectorFieldData(fieldName string, numRows, dim int) *schemapb.FieldData {
 	return testutils.NewFloatVectorFieldData(fieldName, numRows, dim)
 }

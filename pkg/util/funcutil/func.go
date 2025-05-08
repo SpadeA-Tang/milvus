@@ -366,13 +366,9 @@ func GetNumRowsOfInt8VectorField(iDatas []byte, dim int64) (uint64, error) {
 }
 
 // GetNumRowOfFieldDataWithSchema returns num of rows with schema specification.
-func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, helper *typeutil.SchemaHelper) (uint64, error) {
+func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, fieldSchema *schemapb.FieldSchema) (uint64, error) {
 	var fieldNumRows uint64
 	var err error
-	fieldSchema, err := helper.GetFieldFromName(fieldData.GetFieldName())
-	if err != nil {
-		return 0, err
-	}
 	switch fieldSchema.GetDataType() {
 	case schemapb.DataType_Bool:
 		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetBoolData().GetData())

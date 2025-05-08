@@ -204,6 +204,7 @@ func (mt *MetaTable) reload() error {
 				collection.DBName = dbName
 			}
 			mt.collID2Meta[collection.CollectionID] = collection
+			log.Info("debug=== reload collections", zap.Int64("collectionID", collection.CollectionID), zap.Any("coll", collection.StructFields))
 			if collection.Available() {
 				mt.names.insert(dbName, collection.Name, collection.CollectionID)
 				pn := collection.GetPartitionNum(true)
@@ -256,6 +257,7 @@ func (mt *MetaTable) reloadWithNonDatabase() error {
 
 	for _, collection := range oldCollections {
 		mt.collID2Meta[collection.CollectionID] = collection
+		log.Info("debug=== reloadWithNonDatabase collections", zap.Int64("collectionID", collection.CollectionID), zap.Any("coll", collection.StructFields))
 		if collection.Available() {
 			mt.names.insert(util.DefaultDBName, collection.Name, collection.CollectionID)
 			pn := collection.GetPartitionNum(true)
@@ -443,6 +445,7 @@ func (mt *MetaTable) AddCollection(ctx context.Context, coll *model.Collection) 
 	}
 
 	mt.collID2Meta[coll.CollectionID] = coll.Clone()
+	log.Info("debug=== AddCollection", zap.Int64("collectionID", coll.CollectionID), zap.Any("coll", coll.StructFields))
 	mt.names.insert(db.Name, coll.Name, coll.CollectionID)
 
 	channel.StaticPChannelStatsManager.MustGet().AddVChannel(coll.VirtualChannelNames...)
@@ -828,6 +831,7 @@ func (mt *MetaTable) AlterCollection(ctx context.Context, oldColl *model.Collect
 		return err
 	}
 	mt.collID2Meta[oldColl.CollectionID] = newColl
+	log.Info("debug=== alter collection", zap.Int64("collectionID", oldColl.CollectionID), zap.Any("newColl", newColl.StructFields))
 	log.Ctx(ctx).Info("alter collection finished", zap.Int64("collectionID", oldColl.CollectionID), zap.Uint64("ts", ts))
 	return nil
 }
@@ -909,6 +913,7 @@ func (mt *MetaTable) RenameCollection(ctx context.Context, dbName string, oldNam
 	mt.names.remove(dbName, oldName)
 
 	mt.collID2Meta[oldColl.CollectionID] = newColl
+	log.Info("debug=== rename collection", zap.Int64("collectionID", oldColl.CollectionID), zap.Any("newColl", newColl.StructFields))
 
 	log.Info("rename collection finished")
 	return nil
@@ -997,7 +1002,7 @@ func (mt *MetaTable) ChangePartitionState(ctx context.Context, collectionID Uniq
 				return err
 			}
 			mt.collID2Meta[collectionID].Partitions[idx] = clone
-
+			log.Info("debug=== change partition state", zap.Int64("collectionID", collectionID), zap.Int64("partitionID", partitionID), zap.Any("state", state), zap.Any("clone", clone))
 			switch state {
 			case pb.PartitionState_PartitionCreated:
 				mt.generalCnt += int(coll.ShardsNum) // 1 partition * shardNum

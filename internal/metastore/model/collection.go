@@ -64,6 +64,7 @@ func (c *Collection) ShallowClone() *Collection {
 		Description:          c.Description,
 		AutoID:               c.AutoID,
 		Fields:               c.Fields,
+		StructFields:         c.StructFields,
 		Partitions:           c.Partitions,
 		VirtualChannelNames:  c.VirtualChannelNames,
 		PhysicalChannelNames: c.PhysicalChannelNames,
@@ -90,6 +91,7 @@ func (c *Collection) Clone() *Collection {
 		Description:          c.Description,
 		AutoID:               c.AutoID,
 		Fields:               CloneFields(c.Fields),
+		StructFields:         CloneStructFields(c.StructFields),
 		Partitions:           ClonePartitions(c.Partitions),
 		VirtualChannelNames:  common.CloneStringList(c.VirtualChannelNames),
 		PhysicalChannelNames: common.CloneStringList(c.PhysicalChannelNames),
@@ -121,6 +123,7 @@ func (c *Collection) Equal(other Collection) bool {
 		c.Description == other.Description &&
 		c.AutoID == other.AutoID &&
 		CheckFieldsEqual(c.Fields, other.Fields) &&
+		CheckStructFieldsEqual(c.StructFields, other.StructFields) &&
 		c.ShardsNum == other.ShardsNum &&
 		c.ConsistencyLevel == other.ConsistencyLevel &&
 		checkParamsEqual(c.Properties, other.Properties) &&

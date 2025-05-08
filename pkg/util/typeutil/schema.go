@@ -291,6 +291,10 @@ type SchemaHelper struct {
 	clusteringKeyOffset int
 	dynamicFieldOffset  int
 	loadFields          Set[int64]
+
+	structFieldNameOffset    map[string]int
+	structFieldIDOffset      map[int64]int
+	structSubFieldNameOffset map[string]map[string]int
 }
 
 func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFields []int64) (*SchemaHelper, error) {
@@ -298,14 +302,17 @@ func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFie
 		return nil, errors.New("schema is nil")
 	}
 	schemaHelper := SchemaHelper{
-		schema:              schema,
-		nameOffset:          make(map[string]int),
-		idOffset:            make(map[int64]int),
-		primaryKeyOffset:    -1,
-		partitionKeyOffset:  -1,
-		clusteringKeyOffset: -1,
-		dynamicFieldOffset:  -1,
-		loadFields:          NewSet(loadFields...),
+		schema:                   schema,
+		nameOffset:               make(map[string]int),
+		idOffset:                 make(map[int64]int),
+		structFieldNameOffset:    make(map[string]int),
+		structFieldIDOffset:      make(map[int64]int),
+		structSubFieldNameOffset: make(map[string]map[string]int),
+		primaryKeyOffset:         -1,
+		partitionKeyOffset:       -1,
+		clusteringKeyOffset:      -1,
+		dynamicFieldOffset:       -1,
+		loadFields:               NewSet(loadFields...),
 	}
 	for offset, field := range schema.Fields {
 		if _, ok := schemaHelper.nameOffset[field.Name]; ok {
@@ -345,17 +352,22 @@ func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFie
 		}
 	}
 	for structOffset, structField := range schema.StructFields {
-		for fieldOffset, field := range structField.Fields {
-			nestedName := fmt.Sprintf("%s.%s", structField.Name, field.Name)
-			if _, ok := schemaHelper.nameOffset[nestedName]; ok {
-				return nil, fmt.Errorf("duplicated fieldName: %s", nestedName)
-			}
-			if _, ok := schemaHelper.idOffset[field.FieldID]; ok {
-				return nil, fmt.Errorf("duplicated fieldID: %d", field.FieldID)
-			}
+		if _, ok := schemaHelper.structFieldNameOffset[structField.Name]; ok {
+			return nil, fmt.Errorf("duplicated struct fieldName: %s", structField.Name)
+		}
+		if _, ok := schemaHelper.structFieldIDOffset[structField.FieldID]; ok {
+			return nil, fmt.Errorf("duplicated struct fieldID: %d", structField.FieldID)
+		}
+		schemaHelper.structSubFieldNameOffset[structField.Name] = make(map[string]int)
 
-			schemaHelper.nameOffset[field.Name] = (structOffset+1)<<10 | fieldOffset
-			schemaHelper.idOffset[field.FieldID] = (structOffset+1)<<10 | fieldOffset
+		schemaHelper.structFieldNameOffset[structField.Name] = structOffset
+		schemaHelper.structFieldIDOffset[structField.FieldID] = structOffset
+
+		for offset, field := range structField.Fields {
+			if _, ok := schemaHelper.structSubFieldNameOffset[structField.Name][field.Name]; ok {
+				return nil, fmt.Errorf("duplicated struct field name: %s", field.Name)
+			}
+			schemaHelper.structSubFieldNameOffset[structField.Name][field.Name] = offset
 		}
 	}
 
@@ -407,11 +419,23 @@ func (helper *SchemaHelper) GetFieldFromName(fieldName string) (*schemapb.FieldS
 	if !ok {
 		return nil, fmt.Errorf("failed to get field schema by name: fieldName(%s) not found", fieldName)
 	}
-	if structAddr, ok := GetStructAddress(offset); ok {
-		return helper.schema.StructFields[structAddr.structOff].Fields[structAddr.fieldOff], nil
-	} else {
-		return helper.schema.Fields[offset], nil
+	return helper.schema.Fields[offset], nil
+}
+
+func (helper *SchemaHelper) GetStructFieldFromName(fieldName string) (*schemapb.StructFieldSchema, error) {
+	offset, ok := helper.structFieldNameOffset[fieldName]
+	if !ok {
+		return nil, fmt.Errorf("failed to get struct field schema by name: fieldName(%s) not found", fieldName)
 	}
+	return helper.schema.StructFields[offset], nil
+}
+
+func (helper *SchemaHelper) GetStructSubFieldFromName(structFieldSchema *schemapb.StructFieldSchema, subFieldName string) (*schemapb.FieldSchema, error) {
+	offset, ok := helper.structSubFieldNameOffset[structFieldSchema.Name][subFieldName]
+	if !ok {
+		return nil, fmt.Errorf("failed to get struct sub field schema by name: structFieldName(%s), subFieldName(%s) not found", structFieldSchema.Name, subFieldName)
+	}
+	return structFieldSchema.Fields[offset], nil
 }
 
 // GetFieldFromNameDefaultJSON is used to find the schema by field name, if not exist, use json field

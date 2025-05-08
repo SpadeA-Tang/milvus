@@ -10,6 +10,49 @@ type StructField struct {
 	EnableDynamicField bool
 }
 
+func (s *StructField) Clone() *StructField {
+	return &StructField{
+		FieldID:            s.FieldID,
+		Name:               s.Name,
+		Fields:             CloneFields(s.Fields),
+		Functions:          CloneFunctions(s.Functions),
+		EnableDynamicField: s.EnableDynamicField,
+	}
+}
+
+func CloneStructFields(structFields []*StructField) []*StructField {
+	clone := make([]*StructField, len(structFields))
+	for i, structField := range structFields {
+		clone[i] = structField.Clone()
+	}
+	return clone
+}
+
+func (s *StructField) Equal(other StructField) bool {
+	return s.FieldID == other.FieldID &&
+		s.Name == other.Name &&
+		CheckFieldsEqual(s.Fields, other.Fields) &&
+		s.EnableDynamicField == other.EnableDynamicField
+}
+
+func CheckStructFieldsEqual(structFieldsA, structFieldsB []*StructField) bool {
+	if len(structFieldsA) != len(structFieldsB) {
+		return false
+	}
+
+	mapA := make(map[int64]*StructField)
+	for _, f := range structFieldsA {
+		mapA[f.FieldID] = f
+	}
+
+	for _, f := range structFieldsB {
+		if other, exists := mapA[f.FieldID]; !exists || !f.Equal(*other) {
+			return false
+		}
+	}
+	return true
+}
+
 func MarshalStructFieldModel(structField *StructField) *schemapb.StructFieldSchema {
 	if structField == nil {
 		return nil
