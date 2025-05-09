@@ -49,6 +49,29 @@ func (s *MiniClusterSuite) WaitForFlush(ctx context.Context, segIDs []int64, flu
 	}
 }
 
+func NewStructFieldData(schema *schemapb.StructFieldSchema, fieldName string, numRow int, dim int) *schemapb.FieldData {
+	fieldData := &schemapb.FieldData{
+		Type:      schemapb.DataType_Array,
+		FieldName: fieldName,
+		Field: &schemapb.FieldData_Structs{
+			Structs: &schemapb.StructField{
+				Fields: []*schemapb.FieldData{},
+			},
+		},
+	}
+	structFields := fieldData.GetStructs()
+	for _, field := range schema.Fields {
+		var fieldData *schemapb.FieldData
+		if field.DataType < 100 {
+			fieldData = testutils.GenerateScalarFieldData(field.DataType, field.Name, numRow)
+		} else {
+			fieldData = testutils.GenerateVectorFieldData(field.DataType, field.Name, numRow, dim)
+		}
+		structFields.Fields = append(structFields.Fields, fieldData)
+	}
+	return fieldData
+}
+
 func NewInt64FieldData(fieldName string, numRows int) *schemapb.FieldData {
 	return &schemapb.FieldData{
 		Type:      schemapb.DataType_Int64,

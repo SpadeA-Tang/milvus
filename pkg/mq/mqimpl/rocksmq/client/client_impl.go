@@ -203,6 +203,7 @@ func (c *client) tryToConsume(consumer *consumer) []*RmqMessage {
 	}
 	rmqMsgs := make([]*RmqMessage, 0, len(msgs))
 	for _, msg := range msgs {
+		log.Info("debug=== consume msg", zap.Any("msg", msg.MsgID), zap.Any("topic", consumer.topic), zap.Any("groupName", consumer.consumerName))
 		rmqMsg, err := unmarshalStreamingMessage(consumer.topic, msg)
 		if err == nil {
 			rmqMsgs = append(rmqMsgs, rmqMsg)

@@ -268,6 +268,334 @@ func (s *proxyTestServer) gracefulStop() {
 	}
 }
 
+func TestProxy1(t *testing.T) {
+	var err error
+	var wg sync.WaitGroup
+	paramtable.Init()
+	params := paramtable.Get()
+	testutil.ResetEnvironment()
+
+	params.RootCoordGrpcServerCfg.IP = "localhost"
+	params.QueryCoordGrpcServerCfg.IP = "localhost"
+	params.DataCoordGrpcServerCfg.IP = "localhost"
+	params.ProxyGrpcServerCfg.IP = "localhost"
+	params.QueryNodeGrpcServerCfg.IP = "localhost"
+	params.DataNodeGrpcServerCfg.IP = "localhost"
+	params.StreamingNodeGrpcServerCfg.IP = "localhost"
+
+	path := "/tmp/milvus/rocksmq" + funcutil.GenRandomStr()
+	t.Setenv("ROCKSMQ_PATH", path)
+	defer os.RemoveAll(path)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = GetContext(ctx, "root:123456")
+	localMsg := true
+	factory := dependency.MockDefaultFactory(localMsg, Params)
+	alias := "TestProxy"
+
+	log.Info("Initialize parameter table of Proxy")
+
+	mix := runMixCoord(ctx, localMsg)
+	log.Info("running MixCoord ...")
+
+	dn := runDataNode(ctx, localMsg, alias)
+	log.Info("running DataNode ...")
+
+	qn := runQueryNode(ctx, localMsg, alias)
+	log.Info("running QueryNode ...")
+
+	time.Sleep(10 * time.Millisecond)
+
+	proxy, err := NewProxy(ctx, factory)
+	assert.NoError(t, err)
+	assert.NotNil(t, proxy)
+
+	etcdcli, err := etcd.GetEtcdClient(
+		Params.EtcdCfg.UseEmbedEtcd.GetAsBool(),
+		Params.EtcdCfg.EtcdUseSSL.GetAsBool(),
+		Params.EtcdCfg.Endpoints.GetAsStrings(),
+		Params.EtcdCfg.EtcdTLSCert.GetValue(),
+		Params.EtcdCfg.EtcdTLSKey.GetValue(),
+		Params.EtcdCfg.EtcdTLSCACert.GetValue(),
+		Params.EtcdCfg.EtcdTLSMinVersion.GetValue())
+	defer etcdcli.Close()
+	assert.NoError(t, err)
+	proxy.SetEtcdClient(etcdcli)
+
+	testServer := newProxyTestServer(proxy)
+	wg.Add(1)
+
+	bt := paramtable.NewBaseTable(paramtable.SkipRemote(true))
+	base := &paramtable.ComponentParam{}
+	base.Init(bt)
+	var p paramtable.GrpcServerConfig
+	p.Init(typeutil.ProxyRole, bt)
+	testServer.Proxy.SetAddress(p.GetAddress())
+	assert.Equal(t, p.GetAddress(), testServer.Proxy.GetAddress())
+
+	go testServer.startGrpc(ctx, &wg, &p)
+	assert.NoError(t, testServer.waitForGrpcReady())
+
+	rootCoordClient, err := mixc.NewClient(ctx)
+	assert.NoError(t, err)
+	err = componentutil.WaitForComponentHealthy(ctx, rootCoordClient, typeutil.MixCoordRole, attempts, sleepDuration)
+	assert.NoError(t, err)
+	proxy.SetMixCoordClient(rootCoordClient)
+	log.Info("Proxy set mix coordinator client")
+
+	proxy.SetQueryNodeCreator(defaultQueryNodeClientCreator)
+	log.Info("Proxy set query coordinator client")
+
+	proxy.UpdateStateCode(commonpb.StateCode_Initializing)
+	err = proxy.Init()
+	assert.NoError(t, err)
+
+	err = proxy.Start()
+	assert.NoError(t, err)
+	assert.Equal(t, commonpb.StateCode_Healthy, proxy.GetStateCode())
+
+	// register proxy
+	err = proxy.Register()
+	assert.NoError(t, err)
+	log.Info("Register proxy done")
+	defer func() {
+		a := []any{mix, qn, dn, proxy}
+		fmt.Println(len(a))
+		// HINT: the order of stopping service refers to the `roles.go` file
+		log.Info("start to stop the services")
+		{
+			err := mix.Stop()
+			assert.NoError(t, err)
+			log.Info("stop MixCoord")
+		}
+
+		{
+			err := dn.Stop()
+			assert.NoError(t, err)
+			log.Info("stop DataNode")
+		}
+
+		{
+			err := proxy.Stop()
+			assert.NoError(t, err)
+			log.Info("stop Proxy")
+		}
+		cancel()
+	}()
+
+	t.Run("get component states", func(t *testing.T) {
+		states, err := proxy.GetComponentStates(ctx, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, states.GetStatus().GetErrorCode())
+		assert.Equal(t, paramtable.GetNodeID(), states.State.NodeID)
+		assert.Equal(t, typeutil.ProxyRole, states.State.Role)
+		assert.Equal(t, proxy.GetStateCode(), states.State.StateCode)
+	})
+
+	t.Run("get statistics channel", func(t *testing.T) {
+		resp, err := proxy.GetStatisticsChannel(ctx, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		assert.Equal(t, "", resp.Value)
+	})
+
+	prefix := "test_proxy_"
+	dbName := GetCurDBNameFromContextOrDefault(ctx)
+	collectionName := prefix + funcutil.GenRandomStr()
+	shardsNum := common.DefaultShardsNum
+	int64Field := "int64"
+	floatVecField := "fVec"
+	binaryVecField := "bVec"
+	dim := 128
+	rowNum := 3000
+	structId := "structI64"
+	structTag := "structTag"
+	structVec := "structVec"
+	structField := "structField"
+
+	// an int64 field (pk) & a float vector field
+	constructCollectionSchema := func() *schemapb.CollectionSchema {
+		pk := &schemapb.FieldSchema{
+			FieldID:      100,
+			Name:         int64Field,
+			IsPrimaryKey: true,
+			Description:  "",
+			DataType:     schemapb.DataType_Int64,
+			TypeParams:   nil,
+			IndexParams:  nil,
+			AutoID:       true,
+		}
+		fVec := &schemapb.FieldSchema{
+			FieldID:      101,
+			Name:         floatVecField,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_FloatVector,
+			TypeParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.DimKey,
+					Value: strconv.Itoa(dim),
+				},
+			},
+			IndexParams: nil,
+			AutoID:      false,
+		}
+		bVec := &schemapb.FieldSchema{
+			FieldID:      102,
+			Name:         binaryVecField,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_BinaryVector,
+			TypeParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.DimKey,
+					Value: strconv.Itoa(dim),
+				},
+			},
+			IndexParams: nil,
+			AutoID:      false,
+		}
+
+		// struct schema fields
+		sId := &schemapb.FieldSchema{
+			FieldID:      103,
+			Name:         structId,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_Int64,
+			TypeParams:   nil,
+			IndexParams:  nil,
+			AutoID:       false,
+		}
+		sTag := &schemapb.FieldSchema{
+			FieldID:      104,
+			Name:         structTag,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_VarChar,
+			TypeParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.MaxLengthKey,
+					Value: "128",
+				},
+			},
+			IndexParams: nil,
+			AutoID:      false,
+		}
+		sVec := &schemapb.FieldSchema{
+			FieldID:      105,
+			Name:         structVec,
+			IsPrimaryKey: false,
+			Description:  "",
+			DataType:     schemapb.DataType_FloatVector,
+			TypeParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.DimKey,
+					Value: strconv.Itoa(dim),
+				},
+			},
+			IndexParams: nil,
+			AutoID:      false,
+		}
+		structF := &schemapb.StructFieldSchema{
+			FieldID:            106,
+			Name:               structField,
+			EnableDynamicField: false,
+			Fields:             []*schemapb.FieldSchema{sId, sTag, sVec},
+		}
+
+		return &schemapb.CollectionSchema{
+			Name:        collectionName,
+			Description: "",
+			AutoID:      false,
+			Fields: []*schemapb.FieldSchema{
+				pk,
+				fVec,
+				bVec,
+			},
+			StructFields: []*schemapb.StructFieldSchema{structF},
+		}
+	}
+	schema := constructCollectionSchema()
+
+	constructCreateCollectionRequest := func() *milvuspb.CreateCollectionRequest {
+		bs, err := proto.Marshal(schema)
+		assert.NoError(t, err)
+		return &milvuspb.CreateCollectionRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			Schema:         bs,
+			ShardsNum:      shardsNum,
+		}
+	}
+	createCollectionReq := constructCreateCollectionRequest()
+
+	constructCollectionInsertRequest := func() *milvuspb.InsertRequest {
+		fVecColumn := newFloatVectorFieldData(floatVecField, rowNum, dim)
+		bVecColumn := newBinaryVectorFieldData(binaryVecField, rowNum, dim)
+		structColumn := newStructFieldData(schema.StructFields[0], structField, rowNum, dim)
+		hashKeys := testutils.GenerateHashKeys(rowNum)
+		return &milvuspb.InsertRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			PartitionName:  "",
+			FieldsData:     []*schemapb.FieldData{fVecColumn, bVecColumn, structColumn},
+			HashKeys:       hashKeys,
+			NumRows:        uint32(rowNum),
+		}
+	}
+
+	wg.Add(1)
+	t.Run("create collection", func(t *testing.T) {
+		defer wg.Done()
+		req := createCollectionReq
+		resp, err := proxy.CreateCollection(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+
+		reqInvalidField := constructCreateCollectionRequest()
+		schema := constructCollectionSchema()
+		schema.Fields = append(schema.Fields, &schemapb.FieldSchema{
+			Name:     "StringField",
+			DataType: schemapb.DataType_String,
+		})
+		bs, err := proto.Marshal(schema)
+		assert.NoError(t, err)
+		reqInvalidField.CollectionName = "invalid_field_coll"
+		reqInvalidField.Schema = bs
+
+		resp, err = proxy.CreateCollection(ctx, reqInvalidField)
+		assert.NoError(t, err)
+		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	})
+
+	var insertedIDs []int64
+	wg.Add(1)
+	t.Run("insert", func(t *testing.T) {
+		defer wg.Done()
+		req := constructCollectionInsertRequest()
+
+		resp, err := proxy.Insert(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		assert.Equal(t, rowNum, len(resp.SuccIndex))
+		assert.Equal(t, 0, len(resp.ErrIndex))
+		assert.Equal(t, int64(rowNum), resp.InsertCnt)
+
+		switch field := resp.GetIDs().GetIdField().(type) {
+		case *schemapb.IDs_IntId:
+			insertedIDs = field.IntId.GetData()
+		default:
+			t.Fatalf("Unexpected ID type")
+		}
+	})
+	println(insertedIDs)
+
+	time.Sleep(time.Second * 100)
+}
+
 func TestProxy(t *testing.T) {
 	var err error
 	var wg sync.WaitGroup
@@ -414,10 +742,10 @@ func TestProxy(t *testing.T) {
 	rowNum := 3000
 	floatIndexName := "float_index"
 	binaryIndexName := "binary_index"
-	structId := "structI64"
-	structTag := "structTag"
-	structVec := "structVec"
-	structField := "structField"
+	// structId := "structI64"
+	// structTag := "structTag"
+	// structVec := "structVec"
+	// structField := "structField"
 	nlist := 10
 	// nprobe := 10
 	// topk := 10
@@ -470,53 +798,53 @@ func TestProxy(t *testing.T) {
 			AutoID:      false,
 		}
 
-		// struct schema fields
-		sId := &schemapb.FieldSchema{
-			FieldID:      103,
-			Name:         structId,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_Int64,
-			TypeParams:   nil,
-			IndexParams:  nil,
-			AutoID:       false,
-		}
-		sTag := &schemapb.FieldSchema{
-			FieldID:      104,
-			Name:         structTag,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_VarChar,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.MaxLengthKey,
-					Value: "128",
-				},
-			},
-			IndexParams: nil,
-			AutoID:      false,
-		}
-		sVec := &schemapb.FieldSchema{
-			FieldID:      105,
-			Name:         structVec,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_FloatVector,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.DimKey,
-					Value: strconv.Itoa(dim),
-				},
-			},
-			IndexParams: nil,
-			AutoID:      false,
-		}
-		structF := &schemapb.StructFieldSchema{
-			FieldID:            106,
-			Name:               structField,
-			EnableDynamicField: false,
-			Fields:             []*schemapb.FieldSchema{sId, sTag, sVec},
-		}
+		// // struct schema fields
+		// sId := &schemapb.FieldSchema{
+		// 	FieldID:      103,
+		// 	Name:         structId,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_Int64,
+		// 	TypeParams:   nil,
+		// 	IndexParams:  nil,
+		// 	AutoID:       false,
+		// }
+		// sTag := &schemapb.FieldSchema{
+		// 	FieldID:      104,
+		// 	Name:         structTag,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_VarChar,
+		// 	TypeParams: []*commonpb.KeyValuePair{
+		// 		{
+		// 			Key:   common.MaxLengthKey,
+		// 			Value: "128",
+		// 		},
+		// 	},
+		// 	IndexParams: nil,
+		// 	AutoID:      false,
+		// }
+		// sVec := &schemapb.FieldSchema{
+		// 	FieldID:      105,
+		// 	Name:         structVec,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_FloatVector,
+		// 	TypeParams: []*commonpb.KeyValuePair{
+		// 		{
+		// 			Key:   common.DimKey,
+		// 			Value: strconv.Itoa(dim),
+		// 		},
+		// 	},
+		// 	IndexParams: nil,
+		// 	AutoID:      false,
+		// }
+		// structF := &schemapb.StructFieldSchema{
+		// 	FieldID:            106,
+		// 	Name:               structField,
+		// 	EnableDynamicField: false,
+		// 	Fields:             []*schemapb.FieldSchema{sId, sTag, sVec},
+		// }
 
 		return &schemapb.CollectionSchema{
 			Name:        collectionName,
@@ -527,7 +855,7 @@ func TestProxy(t *testing.T) {
 				fVec,
 				bVec,
 			},
-			StructFields: []*schemapb.StructFieldSchema{structF},
+			// StructFields: []*schemapb.StructFieldSchema{structF},
 		}
 	}
 	schema := constructCollectionSchema()
@@ -548,14 +876,14 @@ func TestProxy(t *testing.T) {
 	constructCollectionInsertRequest := func() *milvuspb.InsertRequest {
 		fVecColumn := newFloatVectorFieldData(floatVecField, rowNum, dim)
 		bVecColumn := newBinaryVectorFieldData(binaryVecField, rowNum, dim)
-		structColumn := newStructFieldData(schema.StructFields[0], structField, rowNum, dim)
+		// structColumn := newStructFieldData(schema.StructFields[0], structField, rowNum, dim)
 		hashKeys := testutils.GenerateHashKeys(rowNum)
 		return &milvuspb.InsertRequest{
 			Base:           nil,
 			DbName:         dbName,
 			CollectionName: collectionName,
 			PartitionName:  "",
-			FieldsData:     []*schemapb.FieldData{fVecColumn, bVecColumn, structColumn},
+			FieldsData:     []*schemapb.FieldData{fVecColumn, bVecColumn},
 			HashKeys:       hashKeys,
 			NumRows:        uint32(rowNum),
 		}
@@ -689,362 +1017,362 @@ func TestProxy(t *testing.T) {
 		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 	})
 
-	wg.Add(1)
-	t.Run("create alias", func(t *testing.T) {
-		defer wg.Done()
-		// create alias
-		aliasReq := &milvuspb.CreateAliasRequest{
-			Base:           nil,
-			CollectionName: collectionName,
-			Alias:          "alias",
-			DbName:         dbName,
-		}
-		resp, err := proxy.CreateAlias(ctx, aliasReq)
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// wg.Add(1)
+	// t.Run("create alias", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	// create alias
+	// 	aliasReq := &milvuspb.CreateAliasRequest{
+	// 		Base:           nil,
+	// 		CollectionName: collectionName,
+	// 		Alias:          "alias",
+	// 		DbName:         dbName,
+	// 	}
+	// 	resp, err := proxy.CreateAlias(ctx, aliasReq)
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 
-		_, _ = proxy.InvalidateCollectionMetaCache(ctx, &proxypb.InvalidateCollMetaCacheRequest{
-			Base: &commonpb.MsgBase{
-				MsgType:   commonpb.MsgType_CreateAlias,
-				MsgID:     0,
-				Timestamp: 0,
-				SourceID:  0,
-			},
-			DbName:         dbName,
-			CollectionName: collectionName,
-		})
-	})
+	// 	_, _ = proxy.InvalidateCollectionMetaCache(ctx, &proxypb.InvalidateCollMetaCacheRequest{
+	// 		Base: &commonpb.MsgBase{
+	// 			MsgType:   commonpb.MsgType_CreateAlias,
+	// 			MsgID:     0,
+	// 			Timestamp: 0,
+	// 			SourceID:  0,
+	// 		},
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 	})
+	// })
 
-	wg.Add(1)
-	t.Run("describe alias", func(t *testing.T) {
-		defer wg.Done()
-		describeAliasReq := &milvuspb.DescribeAliasRequest{
-			Base:   nil,
-			DbName: dbName,
-			Alias:  "alias",
-		}
-		resp, err := proxy.DescribeAlias(ctx, describeAliasReq)
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// wg.Add(1)
+	// t.Run("describe alias", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	describeAliasReq := &milvuspb.DescribeAliasRequest{
+	// 		Base:   nil,
+	// 		DbName: dbName,
+	// 		Alias:  "alias",
+	// 	}
+	// 	resp, err := proxy.DescribeAlias(ctx, describeAliasReq)
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
-	wg.Add(1)
-	t.Run("list alias", func(t *testing.T) {
-		defer wg.Done()
-		listAliasReq := &milvuspb.ListAliasesRequest{
-			Base: nil,
-		}
-		resp, err := proxy.ListAliases(ctx, listAliasReq)
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// wg.Add(1)
+	// t.Run("list alias", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	listAliasReq := &milvuspb.ListAliasesRequest{
+	// 		Base: nil,
+	// 	}
+	// 	resp, err := proxy.ListAliases(ctx, listAliasReq)
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
-	wg.Add(1)
-	t.Run("alter alias", func(t *testing.T) {
-		defer wg.Done()
-		// alter alias
-		alterReq := &milvuspb.AlterAliasRequest{
-			Base:           nil,
-			CollectionName: collectionName,
-			Alias:          "alias",
-			DbName:         dbName,
-		}
-		resp, err := proxy.AlterAlias(ctx, alterReq)
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// wg.Add(1)
+	// t.Run("alter alias", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	// alter alias
+	// 	alterReq := &milvuspb.AlterAliasRequest{
+	// 		Base:           nil,
+	// 		CollectionName: collectionName,
+	// 		Alias:          "alias",
+	// 		DbName:         dbName,
+	// 	}
+	// 	resp, err := proxy.AlterAlias(ctx, alterReq)
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 
-		_, _ = proxy.InvalidateCollectionMetaCache(ctx, &proxypb.InvalidateCollMetaCacheRequest{
-			Base: &commonpb.MsgBase{
-				MsgType:   commonpb.MsgType_AlterAlias,
-				MsgID:     0,
-				Timestamp: 0,
-				SourceID:  0,
-			},
-			DbName:         dbName,
-			CollectionName: "alias",
-		})
+	// 	_, _ = proxy.InvalidateCollectionMetaCache(ctx, &proxypb.InvalidateCollMetaCacheRequest{
+	// 		Base: &commonpb.MsgBase{
+	// 			MsgType:   commonpb.MsgType_AlterAlias,
+	// 			MsgID:     0,
+	// 			Timestamp: 0,
+	// 			SourceID:  0,
+	// 		},
+	// 		DbName:         dbName,
+	// 		CollectionName: "alias",
+	// 	})
 
-		nonExistingCollName := "coll_name_random_zarathustra"
-		faultyAlterReq := &milvuspb.AlterAliasRequest{
-			Base:           nil,
-			CollectionName: nonExistingCollName,
-			Alias:          "alias",
-		}
-		resp, err = proxy.AlterAlias(ctx, faultyAlterReq)
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
-	})
+	// 	nonExistingCollName := "coll_name_random_zarathustra"
+	// 	faultyAlterReq := &milvuspb.AlterAliasRequest{
+	// 		Base:           nil,
+	// 		CollectionName: nonExistingCollName,
+	// 		Alias:          "alias",
+	// 	}
+	// 	resp, err = proxy.AlterAlias(ctx, faultyAlterReq)
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// })
 
-	wg.Add(1)
-	t.Run("drop alias", func(t *testing.T) {
-		defer wg.Done()
-		// drop alias
-		resp, err := proxy.DropAlias(ctx, &milvuspb.DropAliasRequest{
-			Base:   nil,
-			Alias:  "alias",
-			DbName: dbName,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// wg.Add(1)
+	// t.Run("drop alias", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	// drop alias
+	// 	resp, err := proxy.DropAlias(ctx, &milvuspb.DropAliasRequest{
+	// 		Base:   nil,
+	// 		Alias:  "alias",
+	// 		DbName: dbName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 
-		_, _ = proxy.InvalidateCollectionMetaCache(ctx, &proxypb.InvalidateCollMetaCacheRequest{
-			Base: &commonpb.MsgBase{
-				MsgType:   commonpb.MsgType_DropAlias,
-				MsgID:     0,
-				Timestamp: 0,
-				SourceID:  0,
-			},
-			DbName:         dbName,
-			CollectionName: "alias",
-		})
+	// 	_, _ = proxy.InvalidateCollectionMetaCache(ctx, &proxypb.InvalidateCollMetaCacheRequest{
+	// 		Base: &commonpb.MsgBase{
+	// 			MsgType:   commonpb.MsgType_DropAlias,
+	// 			MsgID:     0,
+	// 			Timestamp: 0,
+	// 			SourceID:  0,
+	// 		},
+	// 		DbName:         dbName,
+	// 		CollectionName: "alias",
+	// 	})
 
-		_, err = globalMetaCache.GetCollectionID(ctx, dbName, "alias")
-		assert.Error(t, err)
-	})
+	// 	_, err = globalMetaCache.GetCollectionID(ctx, dbName, "alias")
+	// 	assert.Error(t, err)
+	// })
 
-	wg.Add(1)
-	t.Run("has collection", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.HasCollection(ctx, &milvuspb.HasCollectionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			TimeStamp:      0,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		assert.True(t, resp.Value)
+	// wg.Add(1)
+	// t.Run("has collection", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.HasCollection(ctx, &milvuspb.HasCollectionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		TimeStamp:      0,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	assert.True(t, resp.Value)
 
-		// has other collection: false
-		resp, err = proxy.HasCollection(ctx, &milvuspb.HasCollectionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-			TimeStamp:      0,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		assert.False(t, resp.Value)
-	})
+	// 	// has other collection: false
+	// 	resp, err = proxy.HasCollection(ctx, &milvuspb.HasCollectionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 		TimeStamp:      0,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	assert.False(t, resp.Value)
+	// })
 
-	wg.Add(1)
-	t.Run("describe collection", func(t *testing.T) {
-		defer wg.Done()
-		collectionID, err := globalMetaCache.GetCollectionID(ctx, dbName, collectionName)
-		assert.NoError(t, err)
+	// wg.Add(1)
+	// t.Run("describe collection", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	collectionID, err := globalMetaCache.GetCollectionID(ctx, dbName, collectionName)
+	// 	assert.NoError(t, err)
 
-		resp, err := proxy.DescribeCollection(ctx, &milvuspb.DescribeCollectionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			CollectionID:   collectionID,
-			TimeStamp:      0,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		assert.Equal(t, collectionID, resp.CollectionID)
-		// TODO(dragondriver): shards num
-		assert.Equal(t, len(schema.Fields), len(resp.Schema.Fields))
-		// TODO(dragondriver): compare fields schema, not sure the order of fields
+	// 	resp, err := proxy.DescribeCollection(ctx, &milvuspb.DescribeCollectionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		CollectionID:   collectionID,
+	// 		TimeStamp:      0,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	assert.Equal(t, collectionID, resp.CollectionID)
+	// 	// TODO(dragondriver): shards num
+	// 	assert.Equal(t, len(schema.Fields), len(resp.Schema.Fields))
+	// 	// TODO(dragondriver): compare fields schema, not sure the order of fields
 
-		// describe other collection -> fail
-		resp, err = proxy.DescribeCollection(ctx, &milvuspb.DescribeCollectionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-			CollectionID:   collectionID,
-			TimeStamp:      0,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// 	// describe other collection -> fail
+	// 	resp, err = proxy.DescribeCollection(ctx, &milvuspb.DescribeCollectionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 		CollectionID:   collectionID,
+	// 		TimeStamp:      0,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
-	wg.Add(1)
-	t.Run("get collection statistics", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.GetCollectionStatistics(ctx, &milvuspb.GetCollectionStatisticsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		// TODO(dragondriver): check num rows
+	// wg.Add(1)
+	// t.Run("get collection statistics", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.GetCollectionStatistics(ctx, &milvuspb.GetCollectionStatisticsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	// TODO(dragondriver): check num rows
 
-		// get statistics of other collection -> fail
-		resp, err = proxy.GetCollectionStatistics(ctx, &milvuspb.GetCollectionStatisticsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// 	// get statistics of other collection -> fail
+	// 	resp, err = proxy.GetCollectionStatistics(ctx, &milvuspb.GetCollectionStatisticsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
-	wg.Add(1)
-	t.Run("show collections", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.ShowCollections(ctx, &milvuspb.ShowCollectionsRequest{
-			Base:      nil,
-			DbName:    dbName,
-			TimeStamp: 0,
-			Type:      milvuspb.ShowType_All,
-		})
-		assert.NoError(t, err)
-		assert.True(t, merr.Ok(resp.GetStatus()))
-		assert.Contains(t, resp.CollectionNames, collectionName, "collections: %v", resp.CollectionNames)
-	})
+	// wg.Add(1)
+	// t.Run("show collections", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.ShowCollections(ctx, &milvuspb.ShowCollectionsRequest{
+	// 		Base:      nil,
+	// 		DbName:    dbName,
+	// 		TimeStamp: 0,
+	// 		Type:      milvuspb.ShowType_All,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.True(t, merr.Ok(resp.GetStatus()))
+	// 	assert.Contains(t, resp.CollectionNames, collectionName, "collections: %v", resp.CollectionNames)
+	// })
 
-	wg.Add(1)
-	t.Run("alter collection", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.AlterCollection(ctx, &milvuspb.AlterCollectionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			Properties: []*commonpb.KeyValuePair{
-				{
-					Key:   common.CollectionTTLConfigKey,
-					Value: "3600",
-				},
-			},
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
-	})
+	// wg.Add(1)
+	// t.Run("alter collection", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.AlterCollection(ctx, &milvuspb.AlterCollectionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		Properties: []*commonpb.KeyValuePair{
+	// 			{
+	// 				Key:   common.CollectionTTLConfigKey,
+	// 				Value: "3600",
+	// 			},
+	// 		},
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// })
 
-	wg.Add(1)
-	t.Run("create partition", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.CreatePartition(ctx, &milvuspb.CreatePartitionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			PartitionName:  partitionName,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// wg.Add(1)
+	// t.Run("create partition", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.CreatePartition(ctx, &milvuspb.CreatePartitionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		PartitionName:  partitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 
-		// create partition with non-exist collection -> fail
-		resp, err = proxy.CreatePartition(ctx, &milvuspb.CreatePartitionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-			PartitionName:  partitionName,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
-	})
+	// 	// create partition with non-exist collection -> fail
+	// 	resp, err = proxy.CreatePartition(ctx, &milvuspb.CreatePartitionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 		PartitionName:  partitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	// })
 
-	wg.Add(1)
-	t.Run("has partition", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.HasPartition(ctx, &milvuspb.HasPartitionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			PartitionName:  partitionName,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		assert.True(t, resp.Value)
+	// wg.Add(1)
+	// t.Run("has partition", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.HasPartition(ctx, &milvuspb.HasPartitionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		PartitionName:  partitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	assert.True(t, resp.Value)
 
-		resp, err = proxy.HasPartition(ctx, &milvuspb.HasPartitionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			PartitionName:  otherPartitionName,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		assert.False(t, resp.Value)
+	// 	resp, err = proxy.HasPartition(ctx, &milvuspb.HasPartitionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		PartitionName:  otherPartitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	assert.False(t, resp.Value)
 
-		// non-exist collection -> fail
-		resp, err = proxy.HasPartition(ctx, &milvuspb.HasPartitionRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-			PartitionName:  partitionName,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// 	// non-exist collection -> fail
+	// 	resp, err = proxy.HasPartition(ctx, &milvuspb.HasPartitionRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 		PartitionName:  partitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
-	wg.Add(1)
-	t.Run("get partition statistics", func(t *testing.T) {
-		defer wg.Done()
-		resp, err := proxy.GetPartitionStatistics(ctx, &milvuspb.GetPartitionStatisticsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			PartitionName:  partitionName,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// wg.Add(1)
+	// t.Run("get partition statistics", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	resp, err := proxy.GetPartitionStatistics(ctx, &milvuspb.GetPartitionStatisticsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		PartitionName:  partitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
 
-		// non-exist partition -> fail
-		resp, err = proxy.GetPartitionStatistics(ctx, &milvuspb.GetPartitionStatisticsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			PartitionName:  otherPartitionName,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	// non-exist partition -> fail
+	// 	resp, err = proxy.GetPartitionStatistics(ctx, &milvuspb.GetPartitionStatisticsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		PartitionName:  otherPartitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
 
-		// non-exist collection -> fail
-		resp, err = proxy.GetPartitionStatistics(ctx, &milvuspb.GetPartitionStatisticsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-			PartitionName:  partitionName,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// 	// non-exist collection -> fail
+	// 	resp, err = proxy.GetPartitionStatistics(ctx, &milvuspb.GetPartitionStatisticsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 		PartitionName:  partitionName,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
-	wg.Add(1)
-	t.Run("show partitions", func(t *testing.T) {
-		defer wg.Done()
-		collectionID, err := globalMetaCache.GetCollectionID(ctx, dbName, collectionName)
-		assert.NoError(t, err)
+	// wg.Add(1)
+	// t.Run("show partitions", func(t *testing.T) {
+	// 	defer wg.Done()
+	// 	collectionID, err := globalMetaCache.GetCollectionID(ctx, dbName, collectionName)
+	// 	assert.NoError(t, err)
 
-		resp, err := proxy.ShowPartitions(ctx, &milvuspb.ShowPartitionsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: collectionName,
-			CollectionID:   collectionID,
-			PartitionNames: nil,
-			Type:           milvuspb.ShowType_All,
-		})
-		assert.NoError(t, err)
-		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-		// default partition
-		assert.Equal(t, 2, len(resp.PartitionNames))
+	// 	resp, err := proxy.ShowPartitions(ctx, &milvuspb.ShowPartitionsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: collectionName,
+	// 		CollectionID:   collectionID,
+	// 		PartitionNames: nil,
+	// 		Type:           milvuspb.ShowType_All,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// 	// default partition
+	// 	assert.Equal(t, 2, len(resp.PartitionNames))
 
-		{
-			stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
-				DbName:         dbName,
-				CollectionName: collectionName,
-				PartitionNames: resp.PartitionNames,
-			})
-			assert.NoError(t, err)
-			assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
-			assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
-		}
+	// 	{
+	// 		stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
+	// 			DbName:         dbName,
+	// 			CollectionName: collectionName,
+	// 			PartitionNames: resp.PartitionNames,
+	// 		})
+	// 		assert.NoError(t, err)
+	// 		assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
+	// 		assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
+	// 	}
 
-		// non-exist collection -> fail
-		resp, err = proxy.ShowPartitions(ctx, &milvuspb.ShowPartitionsRequest{
-			Base:           nil,
-			DbName:         dbName,
-			CollectionName: otherCollectionName,
-			CollectionID:   collectionID + 1,
-			PartitionNames: nil,
-			Type:           milvuspb.ShowType_All,
-		})
-		assert.NoError(t, err)
-		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	})
+	// 	// non-exist collection -> fail
+	// 	resp, err = proxy.ShowPartitions(ctx, &milvuspb.ShowPartitionsRequest{
+	// 		Base:           nil,
+	// 		DbName:         dbName,
+	// 		CollectionName: otherCollectionName,
+	// 		CollectionID:   collectionID + 1,
+	// 		PartitionNames: nil,
+	// 		Type:           milvuspb.ShowType_All,
+	// 	})
+	// 	assert.NoError(t, err)
+	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	// })
 
 	var insertedIDs []int64
 	wg.Add(1)

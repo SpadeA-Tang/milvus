@@ -520,6 +520,12 @@ func RowBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemap
 func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemapb.CollectionSchema) (idata *InsertData, err error) {
 	srcFields := make(map[FieldID]*schemapb.FieldData)
 	for _, field := range msg.FieldsData {
+		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+			for _, subField := range structField.Structs.Fields {
+				srcFields[subField.FieldId] = subField
+			}
+			continue
+		}
 		srcFields[field.FieldId] = field
 	}
 
@@ -527,15 +533,13 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 		Data: make(map[FieldID]FieldData),
 	}
 	length := 0
-	for _, field := range collSchema.Fields {
-		if IsBM25FunctionOutputField(field, collSchema) {
-			continue
-		}
 
+	getFieldData := func(field *schemapb.FieldSchema) (FieldData, error) {
 		srcField, ok := srcFields[field.GetFieldID()]
 		if !ok && field.GetFieldID() >= common.StartOfUserFieldID {
 			return nil, merr.WrapErrFieldNotFound(field.GetFieldID(), fmt.Sprintf("field %s not found when converting insert msg to insert data", field.GetName()))
 		}
+
 		var fieldData FieldData
 		switch field.DataType {
 		case schemapb.DataType_FloatVector:
@@ -716,6 +720,19 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 			return nil, merr.WrapErrServiceInternal("data type not handled", field.GetDataType().String())
 		}
 
+		return fieldData, nil
+	}
+
+	for _, field := range collSchema.Fields {
+		if IsBM25FunctionOutputField(field, collSchema) {
+			continue
+		}
+
+		fieldData, err := getFieldData(field)
+		if err != nil {
+			return nil, err
+		}
+
 		if length == 0 {
 			length = fieldData.RowNum()
 		}
@@ -724,6 +741,28 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 		}
 
 		idata.Data[field.FieldID] = fieldData
+	}
+
+	for _, structField := range collSchema.StructFields {
+		for _, field := range structField.Fields {
+			if IsBM25FunctionOutputField(field, collSchema) {
+				continue
+			}
+
+			fieldData, err := getFieldData(field)
+			if err != nil {
+				return nil, err
+			}
+
+			if length == 0 {
+				length = fieldData.RowNum()
+			}
+			if fieldData.RowNum() != length {
+				return nil, merr.WrapErrServiceInternal("row num not match", fmt.Sprintf("field %s row num not match %d, other column %d", field.GetName(), fieldData.RowNum(), length))
+			}
+
+			idata.Data[field.FieldID] = fieldData
+		}
 	}
 
 	idata.Infos = []BlobInfo{

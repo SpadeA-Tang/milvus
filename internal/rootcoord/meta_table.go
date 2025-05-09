@@ -204,7 +204,6 @@ func (mt *MetaTable) reload() error {
 				collection.DBName = dbName
 			}
 			mt.collID2Meta[collection.CollectionID] = collection
-			log.Info("debug=== reload collections", zap.Int64("collectionID", collection.CollectionID), zap.Any("coll", collection.StructFields))
 			if collection.Available() {
 				mt.names.insert(dbName, collection.Name, collection.CollectionID)
 				pn := collection.GetPartitionNum(true)

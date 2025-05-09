@@ -68,6 +68,11 @@ func (p *streamPipeline) work() {
 			log.Ctx(context.TODO()).Debug("stream pipeline input closed")
 			return
 		case msg, ok := <-p.input:
+			if msg != nil {
+				for _, smsg := range msg.Msgs {
+					log.Info("debug=== receive msg", zap.Any("BeginTs", smsg.ID()))
+				}
+			}
 			if !ok {
 				log.Ctx(context.TODO()).Debug("stream pipeline input closed")
 				return

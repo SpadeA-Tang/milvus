@@ -18,6 +18,7 @@ package integration
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
@@ -39,6 +40,7 @@ const (
 	Float16VecField     = "float16VecField"
 	BFloat16VecField    = "bfloat16VecField"
 	SparseFloatVecField = "sparseFloatVecField"
+	StructField         = "structField"
 )
 
 func ConstructSchema(collection string, dim int, autoID bool, fields ...*schemapb.FieldSchema) *schemapb.CollectionSchema {
@@ -80,6 +82,101 @@ func ConstructSchema(collection string, dim int, autoID bool, fields ...*schemap
 		Name:   collection,
 		AutoID: autoID,
 		Fields: []*schemapb.FieldSchema{pk, fVec},
+	}
+}
+
+func ConstructSchemaWithStructField(collection string, dim int, autoID bool, fields ...*schemapb.FieldSchema) *schemapb.CollectionSchema {
+	// if fields are specified, construct it
+	if len(fields) > 0 {
+		return &schemapb.CollectionSchema{
+			Name:   collection,
+			AutoID: autoID,
+			Fields: fields,
+		}
+	}
+
+	// if no field is specified, use default
+	pk := &schemapb.FieldSchema{
+		FieldID:      100,
+		Name:         Int64Field,
+		IsPrimaryKey: true,
+		Description:  "",
+		DataType:     schemapb.DataType_Int64,
+		TypeParams:   nil,
+		IndexParams:  nil,
+		AutoID:       autoID,
+	}
+	fVec := &schemapb.FieldSchema{
+		FieldID:      101,
+		Name:         FloatVecField,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_FloatVector,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.DimKey,
+				Value: fmt.Sprintf("%d", dim),
+			},
+		},
+		IndexParams: nil,
+	}
+
+	structId := "structI64"
+	structTag := "structTag"
+	structVec := "structVec"
+	structField := "structField"
+	sId := &schemapb.FieldSchema{
+		FieldID:      103,
+		Name:         structId,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_Int64,
+		TypeParams:   nil,
+		IndexParams:  nil,
+		AutoID:       false,
+	}
+	sTag := &schemapb.FieldSchema{
+		FieldID:      104,
+		Name:         structTag,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_VarChar,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.MaxLengthKey,
+				Value: "128",
+			},
+		},
+		IndexParams: nil,
+		AutoID:      false,
+	}
+	sVec := &schemapb.FieldSchema{
+		FieldID:      105,
+		Name:         structVec,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_FloatVector,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.DimKey,
+				Value: strconv.Itoa(dim),
+			},
+		},
+		IndexParams: nil,
+		AutoID:      false,
+	}
+	structF := &schemapb.StructFieldSchema{
+		FieldID:            106,
+		Name:               structField,
+		EnableDynamicField: false,
+		Fields:             []*schemapb.FieldSchema{sId, sTag, sVec},
+	}
+
+	return &schemapb.CollectionSchema{
+		Name:         collection,
+		AutoID:       autoID,
+		Fields:       []*schemapb.FieldSchema{pk, fVec},
+		StructFields: []*schemapb.StructFieldSchema{structF},
 	}
 }
 

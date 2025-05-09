@@ -20,6 +20,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"go.uber.org/zap"
+
+	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/mq/common"
 	"github.com/milvus-io/milvus/pkg/v2/mq/mqimpl/rocksmq/client"
 	"github.com/milvus-io/milvus/pkg/v2/mq/mqimpl/rocksmq/server"
@@ -51,6 +54,7 @@ func (rc *Consumer) Chan() <-chan common.Message {
 				for { //nolint:gosimple
 					select {
 					case msg, ok := <-rc.c.Chan():
+						log.Info("debug=== consume receive msg", zap.Any("msg", msg.ID()))
 						if !ok {
 							close(rc.msgChannel)
 							return
