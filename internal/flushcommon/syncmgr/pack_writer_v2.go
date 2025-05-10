@@ -183,16 +183,32 @@ func (bw *BulkPackWriterV2) splitInsertData(insertData []*storage.InsertData, sp
 	if len(uniqueRows) != 1 || uniqueRows[0] == 0 {
 		return nil, fmt.Errorf("row num is not equal for each field")
 	}
-	for i, field := range bw.metaCache.Schema().GetFields() {
+
+	idx := 0
+	appendGroup := func(field *schemapb.FieldSchema) {
+		if rowNums[field.FieldID] != 0 && memorySizes[field.FieldID]/rowNums[field.FieldID] >= splitThresHold {
+			groups = append(groups, storagecommon.ColumnGroup{Columns: []int{idx}})
+		} else {
+			shortColumnGroup.Columns = append(shortColumnGroup.Columns, idx)
+		}
+		idx++
+	}
+
+	for _, field := range bw.metaCache.Schema().GetFields() {
 		if _, ok := memorySizes[field.FieldID]; !ok {
 			return nil, fmt.Errorf("field %d not found in insert data", field.FieldID)
 		}
-		if rowNums[field.FieldID] != 0 && memorySizes[field.FieldID]/rowNums[field.FieldID] >= splitThresHold {
-			groups = append(groups, storagecommon.ColumnGroup{Columns: []int{i}})
-		} else {
-			shortColumnGroup.Columns = append(shortColumnGroup.Columns, i)
+		appendGroup(field)
+	}
+	for _, structField := range bw.metaCache.Schema().GetStructFields() {
+		for _, subField := range structField.GetFields() {
+			if _, ok := memorySizes[subField.FieldID]; !ok {
+				return nil, fmt.Errorf("struct sub field %d not found in insert data", subField.FieldID)
+			}
+			appendGroup(subField)
 		}
 	}
+
 	if len(shortColumnGroup.Columns) > 0 {
 		groups = append(groups, shortColumnGroup)
 	}
@@ -203,7 +219,7 @@ func (bw *BulkPackWriterV2) serializeBinlog(ctx context.Context, pack *SyncPack)
 	if len(pack.insertData) == 0 {
 		return nil, nil
 	}
-	arrowSchema, err := storage.ConvertToArrowSchema(bw.schema.Fields)
+	arrowSchema, err := storage.ConvertToArrowSchema(bw.schema)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +227,7 @@ func (bw *BulkPackWriterV2) serializeBinlog(ctx context.Context, pack *SyncPack)
 	defer builder.Release()
 
 	for _, chunk := range pack.insertData {
-		if err := storage.BuildRecord(builder, chunk, bw.metaCache.Schema().GetFields()); err != nil {
+		if err := storage.BuildRecord(builder, chunk, bw.metaCache.Schema()); err != nil {
 			return nil, err
 		}
 	}

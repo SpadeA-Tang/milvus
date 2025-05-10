@@ -99,7 +99,7 @@ func (pr *packedRecordReader) Close() error {
 
 func newPackedRecordReader(paths [][]string, schema *schemapb.CollectionSchema, bufferSize int64,
 ) (*packedRecordReader, error) {
-	arrowSchema, err := ConvertToArrowSchema(schema.Fields)
+	arrowSchema, err := ConvertToArrowSchema(schema)
 	if err != nil {
 		return nil, merr.WrapErrParameterInvalid("convert collection schema [%s] to arrow schema error: %s", schema.Name, err.Error())
 	}
@@ -193,7 +193,7 @@ func (pw *packedRecordWriter) Close() error {
 }
 
 func NewPackedRecordWriter(paths []string, schema *schemapb.CollectionSchema, bufferSize int64, multiPartUploadSize int64, columnGroups []storagecommon.ColumnGroup) (*packedRecordWriter, error) {
-	arrowSchema, err := ConvertToArrowSchema(schema.Fields)
+	arrowSchema, err := ConvertToArrowSchema(schema)
 	if err != nil {
 		return nil, merr.WrapErrServiceInternal(
 			fmt.Sprintf("can not convert collection schema %s to arrow schema: %s", schema.Name, err.Error()))
@@ -512,7 +512,7 @@ func (pw *PackedBinlogRecordWriter) GetBufferUncompressed() uint64 {
 func newPackedBinlogRecordWriter(collectionID, partitionID, segmentID UniqueID, schema *schemapb.CollectionSchema,
 	blobsWriter ChunkedBlobsWriter, allocator allocator.Interface, chunkSize uint64, rootPath string, maxRowNum int64, bufferSize, multiPartUploadSize int64, columnGroups []storagecommon.ColumnGroup,
 ) (*PackedBinlogRecordWriter, error) {
-	arrowSchema, err := ConvertToArrowSchema(schema.Fields)
+	arrowSchema, err := ConvertToArrowSchema(schema)
 	if err != nil {
 		return nil, merr.WrapErrParameterInvalid("convert collection schema [%s] to arrow schema error: %s", schema.Name, err.Error())
 	}

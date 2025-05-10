@@ -593,7 +593,47 @@ func TestProxy1(t *testing.T) {
 	})
 	println(insertedIDs)
 
-	time.Sleep(time.Second * 100)
+	var segmentIDs []int64
+	flushed := true
+	wg.Add(1)
+	t.Run("flush", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.Flush(ctx, &milvuspb.FlushRequest{
+			Base:            nil,
+			DbName:          dbName,
+			CollectionNames: []string{collectionName},
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		segmentIDs = resp.CollSegIDs[collectionName].Data
+		log.Info("flush collection", zap.Int64s("segments to be flushed", segmentIDs))
+
+		f := func() bool {
+			resp, err := proxy.GetFlushState(ctx, &milvuspb.GetFlushStateRequest{
+				SegmentIDs: segmentIDs,
+			})
+			if err != nil {
+				return false
+			}
+			return resp.GetFlushed()
+		}
+
+		// waiting for flush operation to be done
+		counter := 0
+		for !f() {
+			if counter > 100 {
+				flushed = false
+				break
+			}
+			// avoid too frequent rpc call
+			time.Sleep(100 * time.Millisecond)
+			counter++
+		}
+	})
+	if !flushed {
+		log.Warn("flush operation was not sure to be done")
+	}
+	println(flushed)
 }
 
 func TestProxy(t *testing.T) {

@@ -1027,10 +1027,8 @@ func appendFieldData(dst []*schemapb.FieldData, fieldOffset int, dataOffset int6
 func AppendFieldData(dst, src []*schemapb.FieldData, idx int64) (appendSize int64) {
 	for i, fieldData := range src {
 		if structField, ok := fieldData.Field.(*schemapb.FieldData_Structs); ok {
-			for j, subFieldData := range structField.Structs.Fields {
-				appendSize += appendFieldData(subFieldsData, j, idx, subFieldData)
-			}
 			if dst[i] == nil {
+				// Initialize the sub fields of struct so that we can append data from src to it
 				subFieldsData := make([]*schemapb.FieldData, len(structField.Structs.Fields))
 				dst[i] = &schemapb.FieldData{
 					Type:      fieldData.Type,
@@ -1043,7 +1041,9 @@ func AppendFieldData(dst, src []*schemapb.FieldData, idx int64) (appendSize int6
 					},
 				}
 			}
-
+			for j, subFieldData := range structField.Structs.Fields {
+				appendSize += appendFieldData(dst[i].GetStructs().Fields, j, idx, subFieldData)
+			}
 		}
 
 		appendSize += appendFieldData(dst, i, idx, fieldData)
