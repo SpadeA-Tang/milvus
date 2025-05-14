@@ -43,6 +43,7 @@ type storageV1Serializer struct {
 
 func NewStorageSerializer(metacache metacache.MetaCache) (*storageV1Serializer, error) {
 	schema := metacache.Schema()
+	// StructFields should not contain pk field, so just search in Fields
 	pkField := lo.FindOrElse(schema.GetFields(), nil, func(field *schemapb.FieldSchema) bool { return field.GetIsPrimaryKey() })
 	if pkField == nil {
 		return nil, merr.WrapErrServiceInternal("cannot find pk field")

@@ -185,6 +185,7 @@ func (insertCodec *InsertCodec) SerializePkStatsByData(data *InsertData) (*Blob,
 	}
 	rowNum := int64(timeFieldData.RowNum())
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range insertCodec.Schema.Schema.Fields {
 		// stats fields
 		if !field.GetIsPrimaryKey() {
@@ -243,7 +244,7 @@ func (insertCodec *InsertCodec) Serialize(partitionID UniqueID, segmentID Unique
 		}
 	}
 
-	for _, field := range insertCodec.Schema.Schema.Fields {
+	serializeField := func(field *schemapb.FieldSchema) error {
 		// encode fields
 		writer = NewInsertBinlogWriter(field.DataType, insertCodec.Schema.ID, partitionID, segmentID, field.FieldID, field.GetNullable())
 
@@ -253,14 +254,14 @@ func (insertCodec *InsertCodec) Serialize(partitionID UniqueID, segmentID Unique
 		if typeutil.IsVectorType(field.DataType) && !typeutil.IsSparseFloatVectorType(field.DataType) {
 			dim, err := typeutil.GetDim(field)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			opts = append(opts, WithDim(int(dim)))
 		}
 		eventWriter, err := writer.NextInsertEventWriter(opts...)
 		if err != nil {
 			writer.Close()
-			return nil, err
+			return err
 		}
 		eventWriter.SetEventTimestamp(startTs, endTs)
 		eventWriter.Reserve(int(rowNum))
@@ -274,7 +275,7 @@ func (insertCodec *InsertCodec) Serialize(partitionID UniqueID, segmentID Unique
 			if err = AddFieldDataToPayload(eventWriter, field.DataType, singleData); err != nil {
 				eventWriter.Close()
 				writer.Close()
-				return nil, err
+				return err
 			}
 			writer.AddExtra(originalSizeKey, fmt.Sprintf("%v", blockMemorySize))
 			writer.SetEventTimeStamp(startTs, endTs)
@@ -284,14 +285,14 @@ func (insertCodec *InsertCodec) Serialize(partitionID UniqueID, segmentID Unique
 		if err != nil {
 			eventWriter.Close()
 			writer.Close()
-			return nil, err
+			return err
 		}
 
 		buffer, err := writer.GetBuffer()
 		if err != nil {
 			eventWriter.Close()
 			writer.Close()
-			return nil, err
+			return err
 		}
 		blobKey := fmt.Sprintf("%d", field.FieldID)
 		blobs = append(blobs, &Blob{
@@ -302,6 +303,21 @@ func (insertCodec *InsertCodec) Serialize(partitionID UniqueID, segmentID Unique
 		})
 		eventWriter.Close()
 		writer.Close()
+
+		return nil
+	}
+	for _, field := range insertCodec.Schema.Schema.Fields {
+		if err := serializeField(field); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, structField := range insertCodec.Schema.Schema.StructFields {
+		for _, field := range structField.Fields {
+			if err := serializeField(field); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return blobs, nil

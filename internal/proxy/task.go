@@ -226,6 +226,7 @@ func (t *createCollectionTask) OnEnqueue() error {
 
 func (t *createCollectionTask) validatePartitionKey(ctx context.Context) error {
 	idx := -1
+	// todo(SpadeA): consider struct fields
 	for i, field := range t.schema.Fields {
 		if field.GetIsPartitionKey() {
 			if idx != -1 {
@@ -289,6 +290,7 @@ func (t *createCollectionTask) validatePartitionKey(ctx context.Context) error {
 
 func (t *createCollectionTask) validateClusteringKey(ctx context.Context) error {
 	idx := -1
+	// todo(SpadeA): consider struct fields
 	for i, field := range t.schema.Fields {
 		if field.GetIsClusteringKey() {
 			if typeutil.IsVectorType(field.GetDataType()) &&
@@ -297,6 +299,7 @@ func (t *createCollectionTask) validateClusteringKey(ctx context.Context) error 
 			}
 			if idx != -1 {
 				return merr.WrapErrCollectionIllegalSchema(t.CollectionName,
+					// todo(SpadeA): consider struct fields
 					fmt.Sprintf("there are more than one clustering key, field name = %s, %s", t.schema.Fields[idx].Name, field.Name))
 			}
 			idx = i
@@ -306,6 +309,7 @@ func (t *createCollectionTask) validateClusteringKey(ctx context.Context) error 
 	if idx != -1 {
 		log.Ctx(ctx).Info("create collection with clustering key",
 			zap.String("collectionName", t.CollectionName),
+			// todo(SpadeA): consider struct fields
 			zap.String("clusteringKeyField", t.schema.Fields[idx].Name))
 	}
 	return nil
@@ -330,6 +334,7 @@ func (t *createCollectionTask) PreExecute(ctx context.Context) error {
 		return fmt.Errorf("maximum shards's number should be limited to %d", Params.ProxyCfg.MaxShardNum.GetAsInt())
 	}
 
+	// todo(SpadeA): consider struct fields
 	if len(t.schema.Fields) > Params.ProxyCfg.MaxFieldNum.GetAsInt() {
 		return fmt.Errorf("maximum field's number should be limited to %d", Params.ProxyCfg.MaxFieldNum.GetAsInt())
 	}
@@ -348,6 +353,7 @@ func (t *createCollectionTask) PreExecute(ctx context.Context) error {
 		return err
 	}
 
+	// todo(SpadeA): consider struct fields
 	// validate whether field names duplicates
 	if err := validateDuplicatedFieldName(t.schema.Fields); err != nil {
 		return err
@@ -388,6 +394,7 @@ func (t *createCollectionTask) PreExecute(ctx context.Context) error {
 		return err
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range t.schema.Fields {
 		if err := ValidateField(field, t.schema); err != nil {
 			return err
@@ -485,6 +492,7 @@ func (t *addCollectionFieldTask) PreExecute(ctx context.Context) error {
 		return err
 	}
 	fieldList := typeutil.NewSet[string]()
+	// todo(SpadeA): consider struct fields
 	for _, schema := range t.oldSchema.Fields {
 		fieldList.Insert(schema.Name)
 	}
@@ -514,6 +522,7 @@ func (t *addCollectionFieldTask) PreExecute(ctx context.Context) error {
 		return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("only primary field can speficy AutoID with true, field name = %s", t.fieldSchema.Name))
 	}
 	if t.fieldSchema.GetIsClusteringKey() {
+		// todo(SpadeA): consider struct fields
 		for _, f := range t.oldSchema.Fields {
 			if f.GetIsClusteringKey() {
 				return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("already has another clutering key field, field name: %s", t.fieldSchema.GetName()))
@@ -753,8 +762,9 @@ func (t *describeCollectionTask) Execute(ctx context.Context) error {
 			Name:        "",
 			Description: "",
 			AutoID:      false,
-			Fields:      make([]*schemapb.FieldSchema, 0),
-			Functions:   make([]*schemapb.FunctionSchema, 0),
+			// todo(SpadeA): consider struct fields
+			Fields:    make([]*schemapb.FieldSchema, 0),
+			Functions: make([]*schemapb.FunctionSchema, 0),
 		},
 		CollectionID:         0,
 		VirtualChannelNames:  nil,
@@ -799,11 +809,13 @@ func (t *describeCollectionTask) Execute(ctx context.Context) error {
 	t.result.DbName = result.GetDbName()
 	t.result.NumPartitions = result.NumPartitions
 	t.result.UpdateTimestamp = result.UpdateTimestamp
+	// todo(SpadeA): consider struct fields
 	for _, field := range result.Schema.Fields {
 		if field.IsDynamic {
 			continue
 		}
 		if field.FieldID >= common.StartOfUserFieldID {
+			// todo(SpadeA): consider struct fields
 			t.result.Schema.Fields = append(t.result.Schema.Fields, &schemapb.FieldSchema{
 				FieldID:          field.FieldID,
 				Name:             field.Name,
@@ -1167,6 +1179,7 @@ func (t *alterCollectionTask) PreExecute(ctx context.Context) error {
 			return merr.WrapErrServiceInternal("describe index failed", err.Error())
 		}
 		for _, index := range indexResponse.IndexInfos {
+			// todo(SpadeA): consider struct fields
 			for _, field := range collSchema.Fields {
 				if index.FieldID == field.FieldID && typeutil.IsVectorType(field.DataType) {
 					hasVecIndex = true
@@ -1332,6 +1345,7 @@ func (t *alterCollectionFieldTask) PreExecute(ctx context.Context) error {
 		case common.MaxLengthKey:
 			IsStringType := false
 			fieldName := ""
+			// todo(SpadeA): consider struct fields
 			for _, field := range collSchema.Fields {
 				if field.GetName() == t.FieldName && (typeutil.IsStringType(field.DataType) || typeutil.IsArrayContainStringElementType(field.DataType, field.ElementType)) {
 					IsStringType = true
@@ -1354,6 +1368,7 @@ func (t *alterCollectionFieldTask) PreExecute(ctx context.Context) error {
 		case common.MaxCapacityKey:
 			IsArrayType := false
 			fieldName := ""
+			// todo(SpadeA): consider struct fields
 			for _, field := range collSchema.Fields {
 				if field.GetName() == t.FieldName && typeutil.IsArrayType(field.DataType) {
 					IsArrayType = true
@@ -1925,6 +1940,7 @@ func (t *loadCollectionTask) Execute(ctx context.Context) (err error) {
 
 	loadFieldsSet := typeutil.NewSet(loadFields...)
 	unindexedVecFields := make([]string, 0)
+	// todo(SpadeA): consider struct fields
 	for _, field := range collSchema.GetFields() {
 		if typeutil.IsVectorType(field.GetDataType()) && loadFieldsSet.Contain(field.GetFieldID()) {
 			if _, ok := fieldIndexIDs[field.GetFieldID()]; !ok {
@@ -2174,6 +2190,7 @@ func (t *loadPartitionsTask) Execute(ctx context.Context) error {
 
 	loadFieldsSet := typeutil.NewSet(loadFields...)
 	unindexedVecFields := make([]string, 0)
+	// todo(SpadeA): consider struct fields
 	for _, field := range collSchema.GetFields() {
 		if typeutil.IsVectorType(field.GetDataType()) && loadFieldsSet.Contain(field.GetFieldID()) {
 			if _, ok := fieldIndexIDs[field.GetFieldID()]; !ok {

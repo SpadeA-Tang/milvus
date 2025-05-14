@@ -50,6 +50,7 @@ func NewRowParser(schema *schemapb.CollectionSchema, header []string, nullkey st
 	}
 	dynamicField := typeutil.GetDynamicField(schema)
 
+	// todo(SpadeA): consider struct fields
 	name2Field := lo.SliceToMap(
 		lo.Filter(schema.GetFields(), func(field *schemapb.FieldSchema, _ int) bool {
 			return !field.GetIsFunctionOutput() && !typeutil.IsAutoPKField(field) && field.GetName() != dynamicField.GetName()

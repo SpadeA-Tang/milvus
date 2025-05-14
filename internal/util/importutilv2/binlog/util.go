@@ -95,6 +95,7 @@ func listInsertLogs(ctx context.Context, cm storage.ChunkManager, insertPrefix s
 
 func verify(schema *schemapb.CollectionSchema, insertLogs map[int64][]string) error {
 	// 1. check schema fields
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		if _, ok := insertLogs[field.GetFieldID()]; !ok {
 			return merr.WrapErrImportFailed(fmt.Sprintf("no binlog for field:%s", field.GetName()))

@@ -90,6 +90,7 @@ type queryParams struct {
 func translateToOutputFieldIDs(outputFields []string, schema *schemapb.CollectionSchema) ([]UniqueID, error) {
 	outputFieldIDs := make([]UniqueID, 0, len(outputFields)+1)
 	if len(outputFields) == 0 {
+		// todo(SpadeA): consider struct fields
 		for _, field := range schema.Fields {
 			if field.IsPrimaryKey {
 				outputFieldIDs = append(outputFieldIDs, field.FieldID)
@@ -97,6 +98,7 @@ func translateToOutputFieldIDs(outputFields []string, schema *schemapb.Collectio
 		}
 	} else {
 		var pkFieldID UniqueID
+		// todo(SpadeA): consider struct fields
 		for _, field := range schema.Fields {
 			if field.IsPrimaryKey {
 				pkFieldID = field.FieldID
@@ -104,6 +106,7 @@ func translateToOutputFieldIDs(outputFields []string, schema *schemapb.Collectio
 		}
 		for _, reqField := range outputFields {
 			var fieldFound bool
+			// todo(SpadeA): consider struct fields
 			for _, field := range schema.Fields {
 				if reqField == field.Name {
 					outputFieldIDs = append(outputFieldIDs, field.FieldID)
@@ -396,6 +399,7 @@ func (t *queryTask) PreExecute(ctx context.Context) error {
 
 	if t.ids != nil {
 		pkField := ""
+		// todo(SpadeA): consider struct fields
 		for _, field := range schema.Fields {
 			if field.IsPrimaryKey {
 				pkField = field.Name

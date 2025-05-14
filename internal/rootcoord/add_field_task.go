@@ -61,6 +61,7 @@ func (t *addCollectionFieldTask) Execute(ctx context.Context) error {
 	}
 
 	// assign field id
+	// todo(SpadeA): consider struct fields
 	t.fieldSchema.FieldID = t.nextFieldID(oldColl)
 
 	newField := model.UnmarshalFieldModel(t.fieldSchema)

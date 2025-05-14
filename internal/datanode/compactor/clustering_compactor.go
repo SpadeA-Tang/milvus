@@ -212,6 +212,7 @@ func (t *clusteringCompactionTask) init() error {
 	if t.plan.Schema == nil {
 		return merr.WrapErrIllegalCompactionPlan("empty schema in compactionPlan")
 	}
+	// todo(SpadeA): consider struct fields
 	for _, field := range t.plan.Schema.Fields {
 		if field.GetIsPrimaryKey() && field.GetFieldID() >= 100 && typeutil.IsPrimaryFieldType(field.GetDataType()) {
 			pkField = field
@@ -596,6 +597,7 @@ func (t *clusteringCompactionTask) mappingSegment(
 	}
 
 	reader := storage.NewDeserializeReader(rr, func(r storage.Record, v []*storage.Value) error {
+		// todo(SpadeA): consider struct fields
 		return storage.ValueDeserializer(r, v, t.plan.Schema.Fields)
 	})
 	defer reader.Close()
@@ -859,6 +861,7 @@ func (t *clusteringCompactionTask) scalarAnalyzeSegment(
 	}
 
 	pkIter := storage.NewDeserializeReader(rr, func(r storage.Record, v []*storage.Value) error {
+		// todo(SpadeA): consider struct fields
 		return storage.ValueDeserializer(r, v, t.plan.Schema.Fields)
 	})
 	defer pkIter.Close()

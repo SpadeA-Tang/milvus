@@ -171,6 +171,7 @@ func needDoBM25(segment *SegmentInfo, fieldIDs []UniqueID) bool {
 	return false
 }
 
+// todo(SpadeA): consider struct fields
 func (jm *statsJobManager) triggerTextStatsTask() {
 	collections := jm.mt.GetCollections()
 	for _, collection := range collections {
@@ -197,6 +198,7 @@ func (jm *statsJobManager) triggerTextStatsTask() {
 	}
 }
 
+// todo(SpadeA): consider struct fields
 func (jm *statsJobManager) triggerJsonKeyIndexStatsTask(lastJSONStatsLastTrigger int64, maxJSONStatsTaskCount int) (int64, int) {
 	collections := jm.mt.GetCollections()
 	for _, collection := range collections {
@@ -229,6 +231,7 @@ func (jm *statsJobManager) triggerJsonKeyIndexStatsTask(lastJSONStatsLastTrigger
 	return lastJSONStatsLastTrigger, maxJSONStatsTaskCount
 }
 
+// todo(SpadeA): consider struct fields
 func (jm *statsJobManager) triggerBM25StatsTask() {
 	collections := jm.mt.GetCollections()
 	for _, collection := range collections {

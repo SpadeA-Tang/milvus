@@ -55,6 +55,7 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*e
 		functionRunners: make(map[int64]function.FunctionRunner),
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		if field.GetIsPrimaryKey() {
 			node.pkField = field

@@ -44,6 +44,7 @@ type rowParser struct {
 }
 
 func NewRowParser(schema *schemapb.CollectionSchema) (RowParser, error) {
+	// todo(SpadeA): consider struct fields
 	id2Field := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
@@ -65,6 +66,7 @@ func NewRowParser(schema *schemapb.CollectionSchema) (RowParser, error) {
 	}
 	dynamicField := typeutil.GetDynamicField(schema)
 
+	// todo(SpadeA): consider struct fields
 	name2FieldID := lo.SliceToMap(
 		lo.Filter(schema.GetFields(), func(field *schemapb.FieldSchema, _ int) bool {
 			return !field.GetIsFunctionOutput() && !typeutil.IsAutoPKField(field) && field.GetName() != dynamicField.GetName()

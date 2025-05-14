@@ -232,6 +232,7 @@ func (bw *BulkPackWriterV2) serializeBinlog(ctx context.Context, pack *SyncPack)
 		}
 	}
 
+	// todo(SpadeA): consider struct fields
 	rec := builder.NewRecord()
 	field2Col := make(map[storage.FieldID]int, len(bw.metaCache.Schema().GetFields()))
 

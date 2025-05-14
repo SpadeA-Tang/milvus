@@ -408,7 +408,7 @@ func (kc *Catalog) batchListPartitionsAfter210(ctx context.Context, ts typeutil.
 }
 
 func fieldVersionAfter210(collMeta *pb.CollectionInfo) bool {
-	return len(collMeta.GetSchema().GetFields()) <= 0
+	return len(collMeta.GetSchema().GetFields()) <= 0 && len(collMeta.GetSchema().GetStructFields()) <= 0
 }
 
 func (kc *Catalog) listFieldsAfter210(ctx context.Context, collectionID typeutil.UniqueID, ts typeutil.Timestamp) ([]*model.Field, error) {
@@ -453,6 +453,25 @@ func (kc *Catalog) batchListFieldsAfter210(ctx context.Context, ts typeutil.Time
 		ret[collectionID] = append(ret[collectionID], model.UnmarshalFieldModel(fieldMeta))
 	}
 	return ret, nil
+}
+
+// todo(SpadeA): add tests
+func (kc *Catalog) listStructFieldsAfter210(ctx context.Context, collectionID typeutil.UniqueID, ts typeutil.Timestamp) ([]*model.StructField, error) {
+	prefix := BuildStructFieldPrefix(collectionID)
+	_, values, err := kc.Snapshot.LoadWithPrefix(ctx, prefix, ts)
+	if err != nil {
+		return nil, err
+	}
+	structFields := make([]*model.StructField, 0, len(values))
+	for _, v := range values {
+		partitionMeta := &schemapb.StructFieldSchema{}
+		err := proto.Unmarshal([]byte(v), partitionMeta)
+		if err != nil {
+			return nil, err
+		}
+		structFields = append(structFields, model.UnmarshalStructFieldModel(partitionMeta))
+	}
+	return structFields, nil
 }
 
 func (kc *Catalog) listFunctions(ctx context.Context, collectionID typeutil.UniqueID, ts typeutil.Timestamp) ([]*model.Function, error) {
@@ -518,6 +537,12 @@ func (kc *Catalog) appendPartitionAndFieldsInfo(ctx context.Context, collMeta *p
 	}
 	collection.Fields = fields
 
+	structFields, err := kc.listStructFieldsAfter210(ctx, collection.CollectionID, ts)
+	if err != nil {
+		return nil, err
+	}
+	collection.StructFields = structFields
+
 	functions, err := kc.listFunctions(ctx, collection.CollectionID, ts)
 	if err != nil {
 		return nil, err
@@ -526,6 +551,7 @@ func (kc *Catalog) appendPartitionAndFieldsInfo(ctx context.Context, collMeta *p
 	return collection, nil
 }
 
+// todo: consider struct fields when this function is used
 func (kc *Catalog) batchAppendPartitionAndFieldsInfo(ctx context.Context, collMeta []*pb.CollectionInfo,
 	ts typeutil.Timestamp,
 ) ([]*model.Collection, error) {

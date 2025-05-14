@@ -281,6 +281,7 @@ func GenTestBM25CollectionSchema(collectionName string) *schemapb.CollectionSche
 
 	schema := &schemapb.CollectionSchema{
 		Name: collectionName,
+		// todo(SpadeA): consider struct fields
 		Fields: []*schemapb.FieldSchema{
 			fieldRowID,
 			fieldTimestamp,
@@ -330,6 +331,7 @@ func GenTestCollectionSchema(collectionName string, pkType schemapb.DataType, wi
 	schema := schemapb.CollectionSchema{ // schema for segCore
 		Name:   collectionName,
 		AutoID: false,
+		// todo(SpadeA): consider struct fields
 		Fields: []*schemapb.FieldSchema{
 			fieldBool,
 			fieldInt8,
@@ -348,12 +350,14 @@ func GenTestCollectionSchema(collectionName string, pkType schemapb.DataType, wi
 	}
 
 	if withSparse {
+		// todo(SpadeA): consider struct fields
 		schema.Fields = append(schema.Fields, genVectorFieldSchema(SimpleSparseFloatVectorField))
 	}
 
 	for i, field := range schema.GetFields() {
 		field.FieldID = 100 + int64(i)
 	}
+	// todo(SpadeA): consider struct fields
 	schema.Fields = append(schema.Fields, fieldRowID, fieldTimestamp)
 	return &schema
 }
@@ -556,6 +560,7 @@ func genInsertData(msgLength int, schema *schemapb.CollectionSchema) (*storage.I
 		Data: make(map[int64]storage.FieldData),
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.Fields {
 		switch f.DataType {
 		case schemapb.DataType_Bool:
@@ -1013,6 +1018,7 @@ func genBruteForceDSL(schema *schemapb.CollectionSchema, topK int64, roundDecima
 	nProbStr := strconv.Itoa(defaultNProb)
 	roundDecimalStr := strconv.FormatInt(roundDecimal, 10)
 	var fieldID int64
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.Fields {
 		if f.DataType == schemapb.DataType_FloatVector {
 			vecFieldName = f.Name
@@ -1047,6 +1053,7 @@ func genHNSWDSL(schema *schemapb.CollectionSchema, ef int, topK int64, roundDeci
 	topKStr := strconv.FormatInt(topK, 10)
 	roundDecimalStr := strconv.FormatInt(roundDecimal, 10)
 	var fieldID int64
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.Fields {
 		if f.DataType == schemapb.DataType_FloatVector {
 			vecFieldName = f.Name
@@ -1139,6 +1146,7 @@ func GenSearchPlanAndRequests(collection *segcore.CCollection, segments []int64,
 func GenInsertMsg(collection *segcore.CCollection, partitionID, segment int64, numRows int) (*msgstream.InsertMsg, error) {
 	fieldsData := make([]*schemapb.FieldData, 0)
 
+	// todo(SpadeA): consider struct fields
 	for _, f := range collection.Schema().Fields {
 		switch f.DataType {
 		case schemapb.DataType_Bool:

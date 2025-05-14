@@ -50,6 +50,7 @@ func NewFunctionBase(coll *schemapb.CollectionSchema, fSchema *schemapb.Function
 	var base FunctionBase
 	base.schema = fSchema
 	for _, fieldName := range fSchema.GetOutputFieldNames() {
+		// todo(SpadeA): consider struct fields
 		for _, field := range coll.GetFields() {
 			if field.GetName() == fieldName {
 				base.outputFields = append(base.outputFields, field)

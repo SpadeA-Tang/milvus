@@ -153,6 +153,7 @@ func UnmarshalCollectionModel(coll *pb.CollectionInfo) *Collection {
 		Description:          coll.Schema.Description,
 		AutoID:               coll.Schema.AutoID,
 		Fields:               UnmarshalFieldModels(coll.GetSchema().GetFields()),
+		StructFields:         UnmarshalStructFieldModels(coll.GetSchema().GetStructFields()),
 		Partitions:           partitions,
 		VirtualChannelNames:  coll.VirtualChannelNames,
 		PhysicalChannelNames: coll.PhysicalChannelNames,

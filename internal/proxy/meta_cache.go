@@ -126,6 +126,7 @@ func newSchemaInfoWithLoadFields(schema *schemapb.CollectionSchema, loadFields [
 	fieldMap := typeutil.NewConcurrentMap[string, int64]()
 	hasPartitionkey := false
 	var pkField *schemapb.FieldSchema
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		fieldMap.Insert(field.GetName(), field.GetFieldID())
 		if field.GetIsPartitionKey() {

@@ -162,6 +162,7 @@ func genDefaultFiledData(numRows int) []*schemapb.FieldData {
 
 func genFiledDataWithSchema(schema *schemapb.CollectionSchema, numRows int) []*schemapb.FieldData {
 	fieldsData := make([]*schemapb.FieldData, 0)
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.DataType < 100 {
 			fieldsData = append(fieldsData, testutils.GenerateScalarFieldDataWithID(field.DataType, field.DataType.String(), field.GetFieldID(), numRows))

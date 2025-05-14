@@ -750,6 +750,7 @@ func separateLoadInfoV2(loadInfo *querypb.SegmentLoadInfo, schema *schemapb.Coll
 	}
 
 	unindexedTextFields := make(map[int64]struct{})
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		h := typeutil.CreateFieldSchemaHelper(field)
 		_, textIndexExist := textIndexedInfo[field.GetFieldID()]
@@ -1637,6 +1638,7 @@ func (loader *segmentLoader) getFieldType(collectionID, fieldID int64) (schemapb
 		return 0, merr.WrapErrCollectionNotFound(collectionID)
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range collection.Schema().GetFields() {
 		if field.GetFieldID() == fieldID {
 			return field.GetDataType(), nil

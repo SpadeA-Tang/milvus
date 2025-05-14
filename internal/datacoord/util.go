@@ -99,6 +99,7 @@ func FilterInIndexedSegments(handler Handler, mt *meta, skipNoIndexCollection bo
 
 		// get vector field id
 		vecFieldIDs := make([]int64, 0)
+		// todo(SpadeA): consider struct fields
 		for _, field := range coll.Schema.GetFields() {
 			if typeutil.IsVectorType(field.GetDataType()) {
 				vecFieldIDs = append(vecFieldIDs, field.GetFieldID())

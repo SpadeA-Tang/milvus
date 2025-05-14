@@ -43,6 +43,7 @@ import (
 var errLazyLoadTimeout = merr.WrapErrServiceInternal("lazy load time out")
 
 func GetPkField(schema *schemapb.CollectionSchema) *schemapb.FieldSchema {
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		if field.GetIsPrimaryKey() {
 			return field
@@ -62,6 +63,7 @@ func GetPrimaryKeys(msg *msgstream.InsertMsg, schema *schemapb.CollectionSchema)
 
 func getPKsFromRowBasedInsertMsg(msg *msgstream.InsertMsg, schema *schemapb.CollectionSchema) ([]storage.PrimaryKey, error) {
 	offset := 0
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey {
 			break
@@ -253,6 +255,7 @@ func getFieldSizeFromFieldBinlog(fieldBinlog *datapb.FieldBinlog) int64 {
 }
 
 func getFieldSchema(schema *schemapb.CollectionSchema, fieldID int64) (*schemapb.FieldSchema, error) {
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.FieldID == fieldID {
 			return field, nil

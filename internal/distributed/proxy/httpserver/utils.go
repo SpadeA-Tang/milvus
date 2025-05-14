@@ -100,6 +100,7 @@ func GetAuthorization(c *gin.Context) string {
 
 // find the primary field of collection
 func getPrimaryField(schema *schemapb.CollectionSchema) (*schemapb.FieldSchema, bool) {
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey {
 			return field, true
@@ -293,6 +294,7 @@ func checkAndSetData(body []byte, collSchema *schemapb.CollectionSchema) (error,
 	}
 
 	fieldNames := make([]string, 0, len(collSchema.Fields))
+	// todo(SpadeA): consider struct fields
 	for _, field := range collSchema.Fields {
 		if field.IsDynamic {
 			continue
@@ -303,6 +305,7 @@ func checkAndSetData(body []byte, collSchema *schemapb.CollectionSchema) (error,
 	for _, data := range dataResultArray {
 		reallyData := map[string]interface{}{}
 		if data.Type == gjson.JSON {
+			// todo(SpadeA): consider struct fields
 			for _, field := range collSchema.Fields {
 				if field.IsDynamic {
 					continue
@@ -743,6 +746,7 @@ func anyToColumns(rows []map[string]interface{}, validDataMap map[string][]bool,
 	nameDims := make(map[string]int64)
 	fieldData := make(map[string]*schemapb.FieldData)
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range sch.Fields {
 		if (field.IsPrimaryKey && field.AutoID && inInsert) || field.IsDynamic {
 			continue
@@ -822,6 +826,7 @@ func anyToColumns(rows []map[string]interface{}, validDataMap map[string][]bool,
 		if err != nil {
 			return nil, err
 		}
+		// todo(SpadeA): consider struct fields
 		for idx, field := range sch.Fields {
 			if field.IsDynamic {
 				continue

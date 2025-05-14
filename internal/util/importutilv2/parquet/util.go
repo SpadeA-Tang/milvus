@@ -41,6 +41,7 @@ func WrapTypeErr(expect string, actual string, field *schemapb.FieldSchema) erro
 }
 
 func CreateFieldReaders(ctx context.Context, fileReader *pqarrow.FileReader, schema *schemapb.CollectionSchema) (map[int64]*FieldReader, error) {
+	// todo(SpadeA): consider struct fields
 	nameToField := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) string {
 		return field.GetName()
 	})
@@ -254,6 +255,7 @@ func convertToArrowDataType(field *schemapb.FieldSchema, isArray bool) (arrow.Da
 // doesn't include function output fields.
 func ConvertToArrowSchema(schema *schemapb.CollectionSchema, useNullType bool) (*arrow.Schema, error) {
 	arrFields := make([]arrow.Field, 0)
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		if typeutil.IsAutoPKField(field) || field.GetIsFunctionOutput() {
 			continue
@@ -284,6 +286,7 @@ func isSchemaEqual(schema *schemapb.CollectionSchema, arrSchema *arrow.Schema) e
 	arrNameToField := lo.KeyBy(arrSchema.Fields(), func(field arrow.Field) string {
 		return field.Name
 	})
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		if typeutil.IsAutoPKField(field) || field.GetIsFunctionOutput() {
 			continue

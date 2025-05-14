@@ -218,6 +218,7 @@ func (st *statsTask) PreCheck(ctx context.Context, dependency *taskScheduler) bo
 		return false
 	}
 
+	// todo(SpadeA): consider struct fields
 	binlogNum := (segment.getSegmentSize()/Params.DataNodeCfg.BinLogMaxSize.GetAsInt64() + 1) * int64(len(collInfo.Schema.GetFields())) * paramtable.Get().DataCoordCfg.CompactionPreAllocateIDExpansionFactor.GetAsInt64()
 	// binlogNum + BM25logNum + statslogNum
 	start, end, err := dependency.allocator.AllocN(binlogNum + int64(len(collInfo.Schema.GetFunctions())) + 1)

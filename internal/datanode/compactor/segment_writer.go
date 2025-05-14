@@ -551,6 +551,7 @@ func NewSegmentWriter(sch *schemapb.CollectionSchema, maxCount int64, batchSize 
 
 func newBinlogWriter(collID, partID, segID int64, schema *schemapb.CollectionSchema, batchSize int,
 ) (writer *storage.BinlogSerializeWriter, closers []func() (*storage.Blob, error), err error) {
+	// todo(SpadeA): consider struct fields
 	fieldWriters := storage.NewBinlogStreamWriters(collID, partID, segID, schema.Fields)
 	closers = make([]func() (*storage.Blob, error), 0, len(fieldWriters))
 	for _, w := range fieldWriters {

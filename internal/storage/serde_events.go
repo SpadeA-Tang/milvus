@@ -77,8 +77,14 @@ func (crr *CompositeBinlogRecordReader) iterateNextBatch() error {
 		return err
 	}
 
-	crr.rrs = make([]array.RecordReader, len(crr.schema.Fields))
-	crr.brs = make([]*BinlogReader, len(crr.schema.Fields))
+	fieldNum := len(crr.schema.Fields)
+	for _, f := range crr.schema.StructFields {
+		fieldNum += len(f.Fields)
+	}
+
+	// todo(SpadeA): consider struct fields
+	crr.rrs = make([]array.RecordReader, fieldNum)
+	crr.brs = make([]*BinlogReader, fieldNum)
 
 	for _, b := range blobs {
 		reader, err := NewBinlogReader(b.Value)
@@ -109,25 +115,46 @@ func (crr *CompositeBinlogRecordReader) Next() (Record, error) {
 	}
 
 	composeRecord := func() (Record, error) {
-		recs := make([]arrow.Array, len(crr.schema.Fields))
+		fieldNum := len(crr.schema.Fields)
+		for _, f := range crr.schema.StructFields {
+			fieldNum += len(f.Fields)
+		}
+		recs := make([]arrow.Array, fieldNum)
 
-		for i, f := range crr.schema.Fields {
-			if crr.rrs[i] != nil {
-				if ok := crr.rrs[i].Next(); !ok {
-					return nil, io.EOF
+		idx := 0
+		appendFieldRecord := func(f *schemapb.FieldSchema) error {
+			if crr.rrs[idx] != nil {
+				if ok := crr.rrs[idx].Next(); !ok {
+					return io.EOF
 				}
-				recs[i] = crr.rrs[i].Record().Column(0)
+				recs[idx] = crr.rrs[idx].Record().Column(0)
 			} else {
 				// If the field is not in the current batch, fill with null array
 				// Note that we're intentionally not filling default value here, because the
 				// deserializer will fill them later.
 				if !f.Nullable {
-					return nil, merr.WrapErrServiceInternal(fmt.Sprintf("missing field data %s", f.Name))
+					return merr.WrapErrServiceInternal(fmt.Sprintf("missing field data %s", f.Name))
 				}
 				dim, _ := typeutil.GetDim(f)
 				builder := array.NewBuilder(memory.DefaultAllocator, serdeMap[f.DataType].arrowType(int(dim)))
 				builder.AppendNulls(int(crr.rrs[0].Record().NumRows()))
-				recs[i] = builder.NewArray()
+				recs[idx] = builder.NewArray()
+			}
+			idx++
+			return nil
+		}
+
+		// todo(SpadeA): consider struct fields
+		for _, f := range crr.schema.Fields {
+			if err := appendFieldRecord(f); err != nil {
+				return nil, err
+			}
+		}
+		for _, f := range crr.schema.StructFields {
+			for _, sf := range f.Fields {
+				if err := appendFieldRecord(sf); err != nil {
+					return nil, err
+				}
 			}
 		}
 		return &compositeRecord{
@@ -212,9 +239,17 @@ func MakeBlobsReader(blobs []*Blob) ChunkedBlobsReader {
 }
 
 func newCompositeBinlogRecordReader(schema *schemapb.CollectionSchema, blobsReader ChunkedBlobsReader) (*CompositeBinlogRecordReader, error) {
+	idx := 0
 	index := make(map[FieldID]int16)
-	for i, f := range schema.Fields {
-		index[f.FieldID] = int16(i)
+	for _, f := range schema.Fields {
+		index[f.FieldID] = int16(idx)
+		idx++
+	}
+	for _, f := range schema.StructFields {
+		for _, sf := range f.Fields {
+			index[sf.FieldID] = int16(idx)
+			idx++
+		}
 	}
 	return &CompositeBinlogRecordReader{
 		schema:      schema,
@@ -289,6 +324,7 @@ func NewBinlogDeserializeReader(schema *schemapb.CollectionSchema, blobsReader C
 		return nil, err
 	}
 
+	// todo(SpadeA): consider struct fields
 	return NewDeserializeReader(reader, func(r Record, v []*Value) error {
 		return ValueDeserializer(r, v, schema.Fields)
 	}), nil
@@ -297,6 +333,7 @@ func NewBinlogDeserializeReader(schema *schemapb.CollectionSchema, blobsReader C
 func newDeltalogOneFieldReader(blobs []*Blob) (*DeserializeReaderImpl[*DeleteLog], error) {
 	reader, err := newCompositeBinlogRecordReader(
 		&schemapb.CollectionSchema{
+			// todo(SpadeA): consider struct fields
 			Fields: []*schemapb.FieldSchema{
 				{
 					DataType: schemapb.DataType_VarChar,
@@ -552,6 +589,7 @@ func (c *CompositeBinlogRecordWriter) Write(r Record) error {
 
 func (c *CompositeBinlogRecordWriter) initWriters() error {
 	if c.rw == nil {
+		// todo(SpadeA): consider struct fields
 		c.fieldWriters = NewBinlogStreamWriters(c.collectionID, c.partitionID, c.segmentID, c.schema.Fields)
 		rws := make(map[FieldID]RecordWriter, len(c.fieldWriters))
 		for fid, w := range c.fieldWriters {
@@ -808,6 +846,7 @@ func NewBinlogValueWriter(rw BinlogRecordWriter, batchSize int,
 	return &BinlogValueWriter{
 		BinlogRecordWriter: rw,
 		SerializeWriter: NewSerializeRecordWriter(rw, func(v []*Value) (Record, error) {
+			// todo(SpadeA): consider struct fields
 			return ValueSerializer(v, rw.Schema().Fields)
 		}, batchSize),
 	}
@@ -839,6 +878,7 @@ func NewBinlogSerializeWriter(schema *schemapb.CollectionSchema, partitionID, se
 	return &BinlogSerializeWriter{
 		RecordWriter: compositeRecordWriter,
 		SerializeWriter: NewSerializeRecordWriter[*Value](compositeRecordWriter, func(v []*Value) (Record, error) {
+			// todo(SpadeA): consider struct fields
 			return ValueSerializer(v, schema.Fields)
 		}, batchSize),
 	}, nil

@@ -250,6 +250,7 @@ func (c *IndexChecker) checkSegmentStats(segment *meta.Segment, schema *schemapb
 		for _, v := range segment.JSONIndexField {
 			jsonStatsFieldMap[v] = struct{}{}
 		}
+		// todo(SpadeA): consider struct fields
 		for _, field := range schema.GetFields() {
 			// Check if the field exists in both loadFieldMap and jsonStatsFieldMap
 			h := typeutil.CreateFieldSchemaHelper(field)

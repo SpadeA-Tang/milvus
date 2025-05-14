@@ -449,6 +449,7 @@ func (h *HandlersV2) getCollectionDetails(ctx context.Context, c *gin.Context, a
 		errMessage += err.Error() + ";"
 	}
 	vectorField := ""
+	// todo(SpadeA): consider struct fields
 	for _, field := range coll.Schema.Fields {
 		if typeutil.IsVectorType(field.DataType) {
 			vectorField = field.Name
@@ -493,16 +494,17 @@ func (h *HandlersV2) getCollectionDetails(ctx context.Context, c *gin.Context, a
 		HTTPCollectionID:      coll.CollectionID,
 		HTTPReturnDescription: coll.Schema.Description,
 		HTTPReturnFieldAutoID: autoID,
-		"fields":              printFieldsV2(coll.Schema.Fields),
-		"functions":           printFunctionDetails(coll.Schema.Functions),
-		"aliases":             aliases,
-		"indexes":             indexDesc,
-		"load":                collLoadState,
-		"shardsNum":           coll.ShardsNum,
-		"partitionsNum":       coll.NumPartitions,
-		"consistencyLevel":    commonpb.ConsistencyLevel_name[int32(coll.ConsistencyLevel)],
-		"enableDynamicField":  coll.Schema.EnableDynamicField,
-		"properties":          coll.Properties,
+		// todo(SpadeA): consider struct fields
+		"fields":             printFieldsV2(coll.Schema.Fields),
+		"functions":          printFunctionDetails(coll.Schema.Functions),
+		"aliases":            aliases,
+		"indexes":            indexDesc,
+		"load":               collLoadState,
+		"shardsNum":          coll.ShardsNum,
+		"partitionsNum":      coll.NumPartitions,
+		"consistencyLevel":   commonpb.ConsistencyLevel_name[int32(coll.ConsistencyLevel)],
+		"enableDynamicField": coll.Schema.EnableDynamicField,
+		"properties":         coll.Properties,
 	}, HTTPReturnMessage: errMessage})
 	return resp, nil
 }
@@ -1061,6 +1063,7 @@ func generatePlaceholderGroup(ctx context.Context, body string, collSchema *sche
 	var err error
 	var vectorField *schemapb.FieldSchema
 	if len(fieldName) == 0 {
+		// todo(SpadeA): consider struct fields
 		for _, field := range collSchema.Fields {
 			if typeutil.IsVectorType(field.DataType) {
 				if len(fieldName) == 0 {
@@ -1072,6 +1075,7 @@ func generatePlaceholderGroup(ctx context.Context, body string, collSchema *sche
 			}
 		}
 	} else {
+		// todo(SpadeA): consider struct fields
 		for _, field := range collSchema.Fields {
 			if field.Name == fieldName && typeutil.IsVectorType(field.DataType) {
 				vectorField = field
@@ -1378,6 +1382,7 @@ func (h *HandlersV2) createCollection(ctx context.Context, c *gin.Context, anyRe
 		}
 		schema, err = proto.Marshal(&schemapb.CollectionSchema{
 			Name: httpReq.CollectionName,
+			// todo(SpadeA): consider struct fields
 			Fields: []*schemapb.FieldSchema{
 				{
 					FieldID:      common.StartOfUserFieldID,
@@ -1406,8 +1411,9 @@ func (h *HandlersV2) createCollection(ctx context.Context, c *gin.Context, anyRe
 		})
 	} else {
 		collSchema := schemapb.CollectionSchema{
-			Name:               httpReq.CollectionName,
-			AutoID:             httpReq.Schema.AutoId,
+			Name:   httpReq.CollectionName,
+			AutoID: httpReq.Schema.AutoId,
+			// todo(SpadeA): consider struct fields
 			Fields:             []*schemapb.FieldSchema{},
 			Functions:          []*schemapb.FunctionSchema{},
 			EnableDynamicField: httpReq.Schema.EnableDynamicField,
@@ -1505,6 +1511,7 @@ func (h *HandlersV2) createCollection(ctx context.Context, c *gin.Context, anyRe
 			if lo.Contains(allOutputFields, field.FieldName) {
 				fieldSchema.IsFunctionOutput = true
 			}
+			// todo(SpadeA): consider struct fields
 			collSchema.Fields = append(collSchema.Fields, &fieldSchema)
 			fieldNames[field.FieldName] = true
 		}

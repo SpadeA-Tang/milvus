@@ -542,6 +542,7 @@ func (mt *MetaTable) RemoveCollection(ctx context.Context, collectionID UniqueID
 		CollectionID: collectionID,
 		Partitions:   model.ClonePartitions(coll.Partitions),
 		Fields:       model.CloneFields(coll.Fields),
+		StructFields: model.CloneStructFields(coll.StructFields),
 		Aliases:      aliases,
 		DBID:         coll.DBID,
 	}

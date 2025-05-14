@@ -50,6 +50,7 @@ func NewReader(ctx context.Context, cm storage.ChunkManager, schema *schemapb.Co
 			return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("not support bulk insert numpy files in field(%s) which set nullable == true", fieldSchema.GetName()))
 		}
 	}
+	// todo(SpadeA): consider struct fields
 	fields := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
@@ -131,6 +132,7 @@ func CreateReaders(ctx context.Context, cm storage.ChunkManager, schema *schemap
 		name := strings.TrimSuffix(nameWithExt, filepath.Ext(nameWithExt))
 		return name, path
 	})
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		path, hasPath := nameToPath[field.GetName()]
 		if field.GetIsPrimaryKey() && field.GetAutoID() {

@@ -97,8 +97,7 @@ func (s *SegmentInfo) SyncingRows() int64 {
 }
 
 func (s *SegmentInfo) GetStorageVersion() int64 {
-	return storage.StorageV2
-	// return s.storageVersion
+	return s.storageVersion
 }
 
 func (s *SegmentInfo) Clone() *SegmentInfo {

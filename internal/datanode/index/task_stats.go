@@ -439,6 +439,7 @@ func (st *statsTask) createTextIndex(ctx context.Context,
 	}
 
 	textIndexLogs := make(map[int64]*datapb.TextIndexStats)
+	// todo(SpadeA): consider struct fields
 	for _, field := range st.req.GetSchema().GetFields() {
 		h := typeutil.CreateFieldSchemaHelper(field)
 		if !h.EnableMatch() {
@@ -539,6 +540,7 @@ func (st *statsTask) createJSONKeyStats(ctx context.Context,
 	}
 
 	jsonKeyIndexStats := make(map[int64]*datapb.JsonKeyStats)
+	// todo(SpadeA): consider struct fields
 	for _, field := range st.req.GetSchema().GetFields() {
 		h := typeutil.CreateFieldSchemaHelper(field)
 		if !h.EnableJSONKeyStatsIndex() {

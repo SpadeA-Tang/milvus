@@ -76,6 +76,7 @@ func Test_AddCollectionFieldTask_Prepare(t *testing.T) {
 	})
 }
 
+// todo(SpadeA): consider struct fields
 func Test_AddCollectionFieldTask_Execute(t *testing.T) {
 	b := mock_streaming.NewMockBroadcast(t)
 	wal := mock_streaming.NewMockWALAccesser(t)

@@ -152,6 +152,7 @@ func (t *createCollectionTask) checkMaxCollectionsPerDB(ctx context.Context, db2
 }
 
 func hasSystemFields(schema *schemapb.CollectionSchema, systemFields []string) bool {
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.GetFields() {
 		if funcutil.SliceContain(systemFields, f.GetName()) {
 			return true
@@ -168,6 +169,7 @@ func (t *createCollectionTask) validateSchema(ctx context.Context, schema *schem
 		return merr.WrapErrParameterInvalid("collection name matches schema name", "don't match", msg)
 	}
 
+	// todo(SpadeA): consider struct fields
 	if err := checkFieldSchema(schema.GetFields()); err != nil {
 		return err
 	}
@@ -180,11 +182,13 @@ func (t *createCollectionTask) validateSchema(ctx context.Context, schema *schem
 		msg := fmt.Sprintf("schema contains system field: %s, %s, %s", RowIDFieldName, TimeStampFieldName, MetaFieldName)
 		return merr.WrapErrParameterInvalid("schema don't contains system field", "contains", msg)
 	}
+	// todo(SpadeA): consider struct fields
 	return validateFieldDataType(schema.GetFields())
 }
 
 func (t *createCollectionTask) assignFieldAndFunctionID(schema *schemapb.CollectionSchema) error {
 	name2id := map[string]int64{}
+	// todo(SpadeA): consider struct fields
 	for idx, field := range schema.GetFields() {
 		field.FieldID = int64(idx + StartOfUserFieldID)
 		name2id[field.GetName()] = field.GetFieldID()
@@ -214,6 +218,7 @@ func (t *createCollectionTask) assignFieldAndFunctionID(schema *schemapb.Collect
 }
 
 func (t *createCollectionTask) appendDynamicField(ctx context.Context, schema *schemapb.CollectionSchema) {
+	// todo(SpadeA): consider struct fields
 	if schema.EnableDynamicField {
 		schema.Fields = append(schema.Fields, &schemapb.FieldSchema{
 			Name:        MetaFieldName,

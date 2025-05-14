@@ -200,6 +200,7 @@ func (it *indexBuildTask) PreCheck(ctx context.Context, dependency *taskSchedule
 	schema := collectionInfo.Schema
 	var field *schemapb.FieldSchema
 
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.Fields {
 		if f.FieldID == fieldID {
 			field = f

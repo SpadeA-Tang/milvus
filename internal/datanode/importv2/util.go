@@ -133,6 +133,7 @@ func CheckRowsEqual(schema *schemapb.CollectionSchema, data *storage.InsertData)
 	if len(data.Data) == 0 {
 		return nil
 	}
+	// todo(SpadeA): consider struct fields
 	idToField := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
@@ -268,6 +269,7 @@ func RunBm25Function(task *ImportTask, data *storage.InsertData) error {
 }
 
 func GetInsertDataRowCount(data *storage.InsertData, schema *schemapb.CollectionSchema) int {
+	// todo(SpadeA): consider struct fields
 	fields := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
@@ -299,6 +301,7 @@ func LogStats(manager TaskManager) {
 	logFunc(tasks, ImportTaskType)
 }
 
+// todo(SpadeA): consider struct fields
 func UnsetAutoID(schema *schemapb.CollectionSchema) {
 	for _, field := range schema.GetFields() {
 		if field.GetIsPrimaryKey() && field.GetAutoID() {

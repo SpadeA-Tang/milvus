@@ -61,6 +61,7 @@ func NewBM25FunctionRunner(coll *schemapb.CollectionSchema, schema *schemapb.Fun
 		concurrency: 8,
 	}
 	var params string
+	// todo(SpadeA): consider struct fields
 	for _, field := range coll.GetFields() {
 		if field.GetFieldID() == schema.GetOutputFieldIds()[0] {
 			runner.outputField = field

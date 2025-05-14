@@ -47,6 +47,7 @@ func FillDynamicData(data *storage.InsertData, schema *schemapb.CollectionSchema
 }
 
 func getInsertDataRowNum(data *storage.InsertData, schema *schemapb.CollectionSchema) int {
+	// todo(SpadeA): consider struct fields
 	fields := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})

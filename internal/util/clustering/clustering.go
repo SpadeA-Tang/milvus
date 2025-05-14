@@ -56,6 +56,7 @@ func GetClusteringKeyField(collectionSchema *schemapb.CollectionSchema) *schemap
 	var clusteringKeyField *schemapb.FieldSchema
 	var partitionKeyField *schemapb.FieldSchema
 	vectorFields := make([]*schemapb.FieldSchema, 0)
+	// todo(SpadeA): consider struct fields
 	for _, field := range collectionSchema.GetFields() {
 		if field.IsClusteringKey {
 			clusteringKeyField = field

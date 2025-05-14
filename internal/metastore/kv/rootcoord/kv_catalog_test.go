@@ -1266,6 +1266,21 @@ func TestCatalog_CreateCollection(t *testing.T) {
 					DataType: schemapb.DataType_SparseFloatVector,
 				},
 			},
+			StructFields: []*model.StructField{
+				{
+					Name: "test_struct",
+					Fields: []*model.Field{
+						{
+							Name:     "sub_text",
+							DataType: schemapb.DataType_VarChar,
+						},
+						{
+							Name:     "sub_sparse",
+							DataType: schemapb.DataType_SparseFloatVector,
+						},
+					},
+				},
+			},
 			Functions: []*model.Function{
 				{
 					Name:             "test",
@@ -1370,6 +1385,21 @@ func TestCatalog_DropCollection(t *testing.T) {
 				{
 					Name:     "sparse",
 					DataType: schemapb.DataType_SparseFloatVector,
+				},
+			},
+			StructFields: []*model.StructField{
+				{
+					Name: "test_struct",
+					Fields: []*model.Field{
+						{
+							Name:     "sub_text",
+							DataType: schemapb.DataType_VarChar,
+						},
+						{
+							Name:     "sub_sparse",
+							DataType: schemapb.DataType_SparseFloatVector,
+						},
+					},
 				},
 			},
 			Functions: []*model.Function{

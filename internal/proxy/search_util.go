@@ -436,6 +436,7 @@ func parseGroupByInfo(searchParamsPair []*commonpb.KeyValuePair, schema *schemap
 	}
 	var groupByFieldId int64 = -1
 	if groupByFieldName != "" {
+		// todo(SpadeA): consider struct fields
 		fields := schema.GetFields()
 		for _, field := range fields {
 			if field.Name == groupByFieldName {

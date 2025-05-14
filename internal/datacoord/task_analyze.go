@@ -197,6 +197,7 @@ func (at *analyzeTask) PreCheck(ctx context.Context, dependency *taskScheduler) 
 	schema := collInfo.Schema
 	var field *schemapb.FieldSchema
 
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.Fields {
 		if f.FieldID == t.FieldID {
 			field = f

@@ -66,6 +66,7 @@ func NewInsertDataWithCap(schema *schemapb.CollectionSchema, cap int, withFuncti
 		Data: make(map[FieldID]FieldData),
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey && field.GetNullable() {
 			return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("primary key field should not be nullable (field: %s)", field.Name))

@@ -382,6 +382,7 @@ func RowBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemap
 		Infos: nil,
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, field := range collSchema.Fields {
 		if skipFunction && IsBM25FunctionOutputField(field, collSchema) {
 			continue

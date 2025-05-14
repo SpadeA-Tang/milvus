@@ -449,6 +449,7 @@ func validateElementType(dataType schemapb.DataType) error {
 }
 
 func validateFieldType(schema *schemapb.CollectionSchema) error {
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		switch field.GetDataType() {
 		case schemapb.DataType_String:
@@ -467,6 +468,7 @@ func validateFieldType(schema *schemapb.CollectionSchema) error {
 // ValidateFieldAutoID call after validatePrimaryKey
 func ValidateFieldAutoID(coll *schemapb.CollectionSchema) error {
 	idx := -1
+	// todo(SpadeA): consider struct fields
 	for i, field := range coll.Fields {
 		if field.AutoID {
 			if idx != -1 {
@@ -525,6 +527,7 @@ func ValidateField(field *schemapb.FieldSchema, schema *schemapb.CollectionSchem
 
 func validatePrimaryKey(coll *schemapb.CollectionSchema) error {
 	idx := -1
+	// todo(SpadeA): consider struct fields
 	for i, field := range coll.Fields {
 		if field.IsPrimaryKey {
 			if idx != -1 {
@@ -554,6 +557,7 @@ func validatePrimaryKey(coll *schemapb.CollectionSchema) error {
 }
 
 func validateDynamicField(coll *schemapb.CollectionSchema) error {
+	// todo(SpadeA): consider struct fields
 	for _, field := range coll.Fields {
 		if field.IsDynamic {
 			return fmt.Errorf("cannot explicitly set a field as a dynamic field")
@@ -611,6 +615,7 @@ func validateSchema(coll *schemapb.CollectionSchema) error {
 	primaryIdx := -1
 	idMap := make(map[int64]int)    // fieldId -> idx
 	nameMap := make(map[string]int) // name -> idx
+	// todo(SpadeA): consider struct fields
 	for idx, field := range coll.Fields {
 		// check system field
 		if field.FieldID < 100 {
@@ -694,6 +699,7 @@ func validateSchema(coll *schemapb.CollectionSchema) error {
 }
 
 func validateFunction(coll *schemapb.CollectionSchema) error {
+	// todo(SpadeA): consider struct fields
 	nameMap := lo.SliceToMap(coll.GetFields(), func(field *schemapb.FieldSchema) (string, *schemapb.FieldSchema) {
 		return field.GetName(), field
 	})
@@ -864,6 +870,7 @@ func validateMultipleVectorFields(schema *schemapb.CollectionSchema) error {
 	vecExist := false
 	var vecName string
 
+	// todo(SpadeA): consider struct fields
 	for i := range schema.Fields {
 		name := schema.Fields[i].Name
 		dType := schema.Fields[i].DataType
@@ -885,6 +892,7 @@ func validateMultipleVectorFields(schema *schemapb.CollectionSchema) error {
 
 func validateLoadFieldsList(schema *schemapb.CollectionSchema) error {
 	var vectorCnt int
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		shouldLoad, err := common.ShouldFieldBeLoaded(field.GetTypeParams())
 		if err != nil {
@@ -1008,6 +1016,7 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 	fieldName2StructSchema := make(map[string]*schemapb.StructFieldSchema)
 
 	expectColumnNum := 0
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.GetFields() {
 		fieldName2FieldSchema[field.Name] = field
 		if !IsBM25FunctionOutputField(field, schema) {
@@ -1322,6 +1331,7 @@ func passwordVerify(ctx context.Context, username, rawPwd string, globalMetaCach
 func translatePkOutputFields(schema *schemapb.CollectionSchema) ([]string, []int64) {
 	pkNames := []string{}
 	fieldIDs := []int64{}
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey {
 			pkNames = append(pkNames, field.GetName())
@@ -1424,6 +1434,7 @@ func translateOutputFields(outputFields []string, schema *schemaInfo, removePkFi
 	userDynamicFieldsMap := make(map[string]bool)
 	userDynamicFields := make([]string, 0)
 	useAllDyncamicFields := false
+	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey {
 			primaryFieldName = field.Name
@@ -1594,6 +1605,7 @@ func checkFieldsDataBySchema(schema *schemapb.CollectionSchema, insertMsg *msgst
 		dataNameSet.Insert(fieldName)
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.Fields {
 		if fieldSchema.AutoID && !fieldSchema.IsPrimaryKey {
 			log.Warn("not primary key field, but set autoID true", zap.String("field", fieldSchema.GetName()))
@@ -1710,6 +1722,7 @@ func checkPrimaryFieldData(schema *schemapb.CollectionSchema, insertMsg *msgstre
 // we need check char format before insert it to message queue
 // now only support utf-8
 func checkInputUtf8Compatiable(schema *schemapb.CollectionSchema, insertMsg *msgstream.InsertMsg) error {
+	// todo(SpadeA): consider struct fields
 	checkeFields := lo.FilterMap(schema.GetFields(), func(field *schemapb.FieldSchema, _ int) (int64, bool) {
 		if field.DataType == schemapb.DataType_VarChar {
 			return field.GetFieldID(), true
@@ -1930,6 +1943,7 @@ func isPartitionKeyMode(ctx context.Context, dbName string, colName string) (boo
 		return false, err
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range colSchema.GetFields() {
 		if fieldSchema.IsPartitionKey {
 			return true, nil
@@ -1940,6 +1954,7 @@ func isPartitionKeyMode(ctx context.Context, dbName string, colName string) (boo
 }
 
 func hasPartitionKeyModeField(schema *schemapb.CollectionSchema) bool {
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.GetFields() {
 		if fieldSchema.IsPartitionKey {
 			return true
@@ -2029,6 +2044,7 @@ func verifyDynamicFieldData(schema *schemapb.CollectionSchema, insertMsg *msgstr
 				if _, ok := jsonData[common.MetaFieldName]; ok {
 					return fmt.Errorf("cannot set json key to: %s", common.MetaFieldName)
 				}
+				// todo(SpadeA): consider struct fields
 				for _, f := range schema.GetFields() {
 					if _, ok := jsonData[f.GetName()]; ok {
 						log.Info("dynamic field name include the static field name", zap.String("fieldName", f.GetName()))

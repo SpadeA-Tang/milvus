@@ -109,6 +109,7 @@ func CreateInsertData(schema *schemapb.CollectionSchema, rows int, nullPercent .
 	if err != nil {
 		return nil, err
 	}
+	// todo(SpadeA): consider struct fields
 	for _, f := range schema.GetFields() {
 		if f.GetAutoID() || f.IsFunctionOutput {
 			continue
@@ -711,6 +712,7 @@ func BuildArrayData(schema *schemapb.CollectionSchema, insertData *storage.Inser
 }
 
 func CreateInsertDataRowsForJSON(schema *schemapb.CollectionSchema, insertData *storage.InsertData) ([]map[string]any, error) {
+	// todo(SpadeA): consider struct fields
 	fieldIDToField := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
@@ -782,6 +784,7 @@ func CreateInsertDataForCSV(schema *schemapb.CollectionSchema, insertData *stora
 	csvData := make([][]string, 0, rowNum+1)
 
 	header := make([]string, 0)
+	// todo(SpadeA): consider struct fields
 	fields := lo.Filter(schema.GetFields(), func(field *schemapb.FieldSchema, _ int) bool {
 		return !field.GetAutoID() && !field.IsFunctionOutput
 	})

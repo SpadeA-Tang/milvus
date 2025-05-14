@@ -403,6 +403,7 @@ func (h *HandlersV1) getCollectionDetails(c *gin.Context) {
 		collLoadState = stateResp.State.String()
 	}
 	vectorField := ""
+	// todo(SpadeA): consider struct fields
 	for _, field := range coll.Schema.Fields {
 		if typeutil.IsVectorType(field.DataType) {
 			vectorField = field.Name
@@ -431,11 +432,12 @@ func (h *HandlersV1) getCollectionDetails(c *gin.Context) {
 	HTTPReturn(c, http.StatusOK, gin.H{HTTPReturnCode: http.StatusOK, HTTPReturnData: gin.H{
 		HTTPCollectionName:    coll.CollectionName,
 		HTTPReturnDescription: coll.Schema.Description,
-		"fields":              printFields(coll.Schema.Fields),
-		"indexes":             indexDesc,
-		"load":                collLoadState,
-		"shardsNum":           coll.ShardsNum,
-		"enableDynamicField":  coll.Schema.EnableDynamicField,
+		// todo(SpadeA): consider struct fields
+		"fields":             printFields(coll.Schema.Fields),
+		"indexes":            indexDesc,
+		"load":               collLoadState,
+		"shardsNum":          coll.ShardsNum,
+		"enableDynamicField": coll.Schema.EnableDynamicField,
 	}})
 }
 
@@ -853,6 +855,7 @@ func (h *HandlersV1) upsert(c *gin.Context) {
 		if err != nil || collSchema == nil {
 			return nil, RestRequestInterceptorErr
 		}
+		// todo(SpadeA): consider struct fields
 		for _, fieldSchema := range collSchema.Fields {
 			if fieldSchema.IsPrimaryKey && fieldSchema.AutoID {
 				err := merr.WrapErrParameterInvalid("autoID: false", "autoID: true", "cannot upsert an autoID collection")

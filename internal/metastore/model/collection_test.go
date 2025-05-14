@@ -137,6 +137,7 @@ func TestCollection_GetPartitionNum(t *testing.T) {
 	assert.Equal(t, 6, coll.GetPartitionNum(false))
 }
 
+// todo(SpadeA): consider struct fields
 func TestCollection_Equal(t *testing.T) {
 	equal := func(a, b Collection) bool {
 		return a.Equal(b)

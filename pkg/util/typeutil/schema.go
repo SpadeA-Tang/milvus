@@ -493,6 +493,7 @@ func (helper *SchemaHelper) IsFieldTextMatchEnabled(fieldId int64) bool {
 }
 
 func (helper *SchemaHelper) getDefaultJSONField(fieldName string) (*schemapb.FieldSchema, error) {
+	// todo(SpadeA): consider struct fields
 	for _, f := range helper.schema.GetFields() {
 		if f.DataType == schemapb.DataType_JSON && f.IsDynamic {
 			if !helper.IsFieldLoaded(f.GetFieldID()) {
@@ -1315,6 +1316,7 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 
 // GetVectorFieldSchema get vector field schema from collection schema.
 func GetVectorFieldSchema(schema *schemapb.CollectionSchema) (*schemapb.FieldSchema, error) {
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.GetFields() {
 		if IsVectorType(fieldSchema.DataType) {
 			return fieldSchema, nil
@@ -1326,6 +1328,7 @@ func GetVectorFieldSchema(schema *schemapb.CollectionSchema) (*schemapb.FieldSch
 // GetVectorFieldSchemas get vector fields schema from collection schema.
 func GetVectorFieldSchemas(schema *schemapb.CollectionSchema) []*schemapb.FieldSchema {
 	ret := make([]*schemapb.FieldSchema, 0)
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.GetFields() {
 		if IsVectorType(fieldSchema.DataType) {
 			ret = append(ret, fieldSchema)
@@ -1337,6 +1340,7 @@ func GetVectorFieldSchemas(schema *schemapb.CollectionSchema) []*schemapb.FieldS
 
 // GetPrimaryFieldSchema get primary field schema from collection schema
 func GetPrimaryFieldSchema(schema *schemapb.CollectionSchema) (*schemapb.FieldSchema, error) {
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.GetFields() {
 		if fieldSchema.IsPrimaryKey {
 			return fieldSchema, nil
@@ -1353,6 +1357,7 @@ func IsFieldSparseFloatVector(schema *schemapb.CollectionSchema, fieldID int64) 
 
 // GetPartitionKeyFieldSchema get partition field schema from collection schema
 func GetPartitionKeyFieldSchema(schema *schemapb.CollectionSchema) (*schemapb.FieldSchema, error) {
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.GetFields() {
 		if fieldSchema.IsPartitionKey {
 			return fieldSchema, nil
@@ -1364,6 +1369,7 @@ func GetPartitionKeyFieldSchema(schema *schemapb.CollectionSchema) (*schemapb.Fi
 
 // GetDynamicField returns the dynamic field if it exists.
 func GetDynamicField(schema *schemapb.CollectionSchema) *schemapb.FieldSchema {
+	// todo(SpadeA): consider struct fields
 	for _, fieldSchema := range schema.GetFields() {
 		if fieldSchema.GetIsDynamic() {
 			return fieldSchema
@@ -1417,12 +1423,14 @@ func GetPrimaryFieldData(datas []*schemapb.FieldData, primaryFieldSchema *schema
 }
 
 func GetField(schema *schemapb.CollectionSchema, fieldID int64) *schemapb.FieldSchema {
+	// todo(SpadeA): consider struct fields
 	return lo.FindOrElse(schema.GetFields(), nil, func(field *schemapb.FieldSchema) bool {
 		return field.GetFieldID() == fieldID
 	})
 }
 
 func GetFieldByName(schema *schemapb.CollectionSchema, fieldName string) *schemapb.FieldSchema {
+	// todo(SpadeA): consider struct fields
 	return lo.FindOrElse(schema.GetFields(), nil, func(field *schemapb.FieldSchema) bool {
 		return field.GetName() == fieldName
 	})

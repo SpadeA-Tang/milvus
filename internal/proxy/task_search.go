@@ -209,6 +209,8 @@ func (t *searchTask) PreExecute(ctx context.Context) error {
 	}
 	t.SearchRequest.OutputFieldsId = outputFieldIDs
 
+	// todo(SpadeA): consider struct fields
+
 	// Currently, we get vectors by requery. Once we support getting vectors from search,
 	// searches with small result size could no longer need requery.
 	vectorOutputFields := lo.Filter(t.schema.GetFields(), func(field *schemapb.FieldSchema, _ int) bool {
@@ -922,6 +924,7 @@ func (t *searchTask) searchShard(ctx context.Context, nodeID int64, qn types.Que
 }
 
 func (t *searchTask) estimateResultSize(nq int64, topK int64) (int64, error) {
+	// todo(SpadeA): consider struct fields
 	vectorOutputFields := lo.Filter(t.schema.GetFields(), func(field *schemapb.FieldSchema, _ int) bool {
 		return lo.Contains(t.translatedOutputFields, field.GetName()) && typeutil.IsVectorType(field.GetDataType())
 	})
@@ -1042,6 +1045,7 @@ func (t *searchTask) Requery(span trace.Span) error {
 func (t *searchTask) fillInFieldInfo() {
 	if len(t.translatedOutputFields) != 0 && len(t.result.Results.FieldsData) != 0 {
 		for i, name := range t.translatedOutputFields {
+			// todo(SpadeA): consider struct fields
 			for _, field := range t.schema.Fields {
 				if t.result.Results.FieldsData[i] != nil && field.Name == name {
 					t.result.Results.FieldsData[i].FieldName = field.Name
