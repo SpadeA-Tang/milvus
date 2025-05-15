@@ -109,6 +109,7 @@ func NewFunctionExecutor(schema *schemapb.CollectionSchema) (*FunctionExecutor, 
 func (executor *FunctionExecutor) processSingleFunction(ctx context.Context, runner Runner, msg *msgstream.InsertMsg) ([]*schemapb.FieldData, error) {
 	inputs := make([]*schemapb.FieldData, 0, len(runner.GetSchema().GetInputFieldNames()))
 	for _, name := range runner.GetSchema().GetInputFieldNames() {
+		// todo(SpadeA): consider struct fields
 		for _, field := range msg.FieldsData {
 			if field.GetFieldName() == name {
 				inputs = append(inputs, field)

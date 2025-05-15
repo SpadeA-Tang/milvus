@@ -1091,22 +1091,21 @@ func DeleteFieldData(dst []*schemapb.FieldData) {
 func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error {
 	fieldID2Data := make(map[int64]*schemapb.FieldData)
 	for _, data := range dst {
+		if structField, ok := data.Field.(*schemapb.FieldData_Structs); ok {
+			for _, subField := range structField.Structs.Fields {
+				fieldID2Data[subField.FieldId] = subField
+			}
+			continue
+		}
+
 		fieldID2Data[data.FieldId] = data
 	}
-	for _, srcFieldData := range src {
+
+	mergeFieldData := func(srcFieldData *schemapb.FieldData) error {
 		switch fieldType := srcFieldData.Field.(type) {
 		case *schemapb.FieldData_Scalars:
 			if _, ok := fieldID2Data[srcFieldData.FieldId]; !ok {
-				scalarFieldData := &schemapb.FieldData{
-					Type:      srcFieldData.Type,
-					FieldName: srcFieldData.FieldName,
-					FieldId:   srcFieldData.FieldId,
-					Field: &schemapb.FieldData_Scalars{
-						Scalars: &schemapb.ScalarField{},
-					},
-				}
-				dst = append(dst, scalarFieldData)
-				fieldID2Data[srcFieldData.FieldId] = scalarFieldData
+				return errors.New("fields in src but not in dst: " + srcFieldData.Type.String())
 			}
 			fieldData := fieldID2Data[srcFieldData.FieldId]
 			fieldData.ValidData = append(fieldData.ValidData, srcFieldData.GetValidData()...)
@@ -1208,20 +1207,8 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 				return errors.New("unsupported data type: " + srcFieldData.Type.String())
 			}
 		case *schemapb.FieldData_Vectors:
-			dim := fieldType.Vectors.Dim
 			if _, ok := fieldID2Data[srcFieldData.FieldId]; !ok {
-				vectorFieldData := &schemapb.FieldData{
-					Type:      srcFieldData.Type,
-					FieldName: srcFieldData.FieldName,
-					FieldId:   srcFieldData.FieldId,
-					Field: &schemapb.FieldData_Vectors{
-						Vectors: &schemapb.VectorField{
-							Dim: dim,
-						},
-					},
-				}
-				dst = append(dst, vectorFieldData)
-				fieldID2Data[srcFieldData.FieldId] = vectorFieldData
+				return errors.New("fields in src but not in dst: " + srcFieldData.Type.String())
 			}
 			dstVector := fieldID2Data[srcFieldData.FieldId].GetVectors()
 			switch srcVector := fieldType.Vectors.Data.(type) {
@@ -1284,6 +1271,18 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 				return errors.New("unsupported data type: " + srcFieldData.Type.String())
 			}
 		}
+		return nil
+	}
+
+	for _, srcFieldData := range src {
+		if structField, ok := srcFieldData.Field.(*schemapb.FieldData_Structs); ok {
+			for _, subField := range structField.Structs.Fields {
+				mergeFieldData(subField)
+			}
+			continue
+		}
+
+		mergeFieldData(srcFieldData)
 	}
 
 	return nil

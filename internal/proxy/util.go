@@ -1034,6 +1034,7 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 			expectColumnNum, len(columns))
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, fieldData := range columns {
 		if fieldSchema, ok := fieldName2FieldSchema[fieldData.FieldName]; ok {
 			fieldData.FieldId = fieldSchema.FieldID
@@ -1744,6 +1745,7 @@ func checkInputUtf8Compatiable(schema *schemapb.CollectionSchema, insertMsg *msg
 		return nil
 	}
 
+	// todo(SpadeA): consider struct fields
 	for _, fieldData := range insertMsg.FieldsData {
 		if !lo.Contains(checkeFields, fieldData.GetFieldId()) {
 			continue
@@ -1826,6 +1828,7 @@ func checkUpsertPrimaryFieldData(schema *schemapb.CollectionSchema, insertMsg *m
 	return newIDs, ids, nil
 }
 
+// todo(SpadeA): need to consider struct fields?
 func getPartitionKeyFieldData(fieldSchema *schemapb.FieldSchema, insertMsg *msgstream.InsertMsg) (*schemapb.FieldData, error) {
 	if len(insertMsg.GetPartitionName()) > 0 && !Params.ProxyCfg.SkipPartitionKeyCheck.GetAsBool() {
 		return nil, errors.New("not support manually specifying the partition names if partition key mode is used")
@@ -2027,6 +2030,7 @@ func ErrWithLog(logger *log.MLogger, msg string, err error) error {
 }
 
 func verifyDynamicFieldData(schema *schemapb.CollectionSchema, insertMsg *msgstream.InsertMsg) error {
+	// todo(SpadeA): consider struct fields
 	for _, field := range insertMsg.FieldsData {
 		if field.GetFieldName() == common.MetaFieldName {
 			if !schema.EnableDynamicField {
@@ -2059,6 +2063,7 @@ func verifyDynamicFieldData(schema *schemapb.CollectionSchema, insertMsg *msgstr
 }
 
 func checkDynamicFieldData(schema *schemapb.CollectionSchema, insertMsg *msgstream.InsertMsg) error {
+	// todo(SpadeA): consider struct fields
 	for _, data := range insertMsg.FieldsData {
 		if data.IsDynamic {
 			data.FieldName = common.MetaFieldName

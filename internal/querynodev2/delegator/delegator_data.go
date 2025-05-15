@@ -90,6 +90,24 @@ func (d *DeleteData) Append(ad DeleteData) {
 	d.RowCount += ad.RowCount
 }
 
+// flattenInsertData flattens struct fields in insertData, so that segcore does
+// not need to handle struct fields
+func flattenInsertData(insertData *InsertData) {
+	flattenedInsertData := make([]*schemapb.FieldData, 0, len(insertData.InsertRecord.FieldsData)+10)
+
+	for _, field := range insertData.InsertRecord.FieldsData {
+		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+			for _, structFieldData := range structField.Structs.Fields {
+				flattenedInsertData = append(flattenedInsertData, structFieldData)
+			}
+		} else {
+			flattenedInsertData = append(flattenedInsertData, field)
+		}
+	}
+
+	insertData.InsertRecord.FieldsData = flattenedInsertData
+}
+
 // ProcessInsert handles insert data in delegator.
 func (sd *shardDelegator) ProcessInsert(insertRecords map[int64]*InsertData) {
 	method := "ProcessInsert"
@@ -127,6 +145,7 @@ func (sd *shardDelegator) ProcessInsert(insertRecords map[int64]*InsertData) {
 			newGrowingSegment = true
 		}
 
+		flattenInsertData(insertData)
 		err := growing.Insert(context.Background(), insertData.RowIDs, insertData.Timestamps, insertData.InsertRecord)
 		if err != nil {
 			log.Error("failed to insert data into growing segment",

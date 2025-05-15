@@ -744,8 +744,8 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 		idata.Data[field.FieldID] = fieldData
 	}
 
-	for _, structField := range collSchema.StructFields {
-		for _, field := range structField.Fields {
+	for _, structField := range collSchema.GetStructFields() {
+		for _, field := range structField.GetFields() {
 			if IsBM25FunctionOutputField(field, collSchema) {
 				continue
 			}

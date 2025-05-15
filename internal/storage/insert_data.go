@@ -66,31 +66,42 @@ func NewInsertDataWithCap(schema *schemapb.CollectionSchema, cap int, withFuncti
 		Data: make(map[FieldID]FieldData),
 	}
 
-	// todo(SpadeA): consider struct fields
-	for _, field := range schema.Fields {
+	appendField := func(field *schemapb.FieldSchema) error {
 		if field.IsPrimaryKey && field.GetNullable() {
-			return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("primary key field should not be nullable (field: %s)", field.Name))
+			return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("primary key field should not be nullable (field: %s)", field.Name))
 		}
 		if field.IsPartitionKey && field.GetNullable() {
-			return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("partition key field should not be nullable (field: %s)", field.Name))
+			return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("partition key field should not be nullable (field: %s)", field.Name))
 		}
 		if field.IsFunctionOutput {
 			if field.IsPrimaryKey || field.IsPartitionKey {
-				return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("function output field should not be primary key or partition key (field: %s)", field.Name))
+				return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("function output field should not be primary key or partition key (field: %s)", field.Name))
 			}
 			if field.GetNullable() {
-				return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("function output field should not be nullable (field: %s)", field.Name))
+				return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("function output field should not be nullable (field: %s)", field.Name))
 			}
 			if !withFunctionOutput {
-				continue
+				return nil
 			}
 		}
 		fieldData, err := NewFieldData(field.DataType, field, cap)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		idata.Data[field.FieldID] = fieldData
+		return nil
 	}
+
+	// todo(SpadeA): consider struct fields
+	for _, field := range schema.Fields {
+		appendField(field)
+	}
+	for _, structField := range schema.StructFields {
+		for _, field := range structField.GetFields() {
+			appendField(field)
+		}
+	}
+
 	return idata, nil
 }
 

@@ -144,6 +144,7 @@ func (eNode *embeddingNode) bm25Embedding(runner function.FunctionRunner, msg *m
 	outputFieldID := functionSchema.GetOutputFieldIds()[0]
 	outputField := runner.GetOutputFields()[0]
 
+	// todo(SpadeA): consider struct fields
 	data, err := GetEmbeddingFieldData(msg.GetFieldsData(), inputFieldID)
 	if data == nil || err != nil {
 		return merr.WrapErrFieldNotFound(fmt.Sprint(inputFieldID))
