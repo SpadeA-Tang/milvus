@@ -414,8 +414,7 @@ func TestProxy(t *testing.T) {
 	rowNum := 3000
 	floatIndexName := "float_index"
 	binaryIndexName := "binary_index"
-	structId := "structI64"
-	structTag := "structTag"
+	structId := "structI32"
 	structVec := "structVec"
 	structField := "structField"
 	nlist := 10
@@ -471,32 +470,19 @@ func TestProxy(t *testing.T) {
 			Name:         structId,
 			IsPrimaryKey: false,
 			Description:  "",
-			DataType:     schemapb.DataType_Int64,
+			DataType:     schemapb.DataType_Array,
+			ElementType:  schemapb.DataType_Int32,
 			TypeParams:   nil,
 			IndexParams:  nil,
 			AutoID:       false,
 		}
-		sTag := &schemapb.FieldSchema{
-			FieldID:      104,
-			Name:         structTag,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_VarChar,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.MaxLengthKey,
-					Value: "128",
-				},
-			},
-			IndexParams: nil,
-			AutoID:      false,
-		}
 		sVec := &schemapb.FieldSchema{
-			FieldID:      105,
+			FieldID:      104,
 			Name:         structVec,
 			IsPrimaryKey: false,
 			Description:  "",
-			DataType:     schemapb.DataType_FloatVector,
+			DataType:     schemapb.DataType_Array,
+			ElementType:  schemapb.DataType_FloatVector,
 			TypeParams: []*commonpb.KeyValuePair{
 				{
 					Key:   common.DimKey,
@@ -507,10 +493,10 @@ func TestProxy(t *testing.T) {
 			AutoID:      false,
 		}
 		structF := &schemapb.StructFieldSchema{
-			FieldID:            106,
+			FieldID:            105,
 			Name:               structField,
 			EnableDynamicField: false,
-			Fields:             []*schemapb.FieldSchema{sId, sTag, sVec},
+			Fields:             []*schemapb.FieldSchema{sId, sVec},
 		}
 
 		return &schemapb.CollectionSchema{
