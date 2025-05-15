@@ -285,35 +285,21 @@ func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, e
 	return res, nil
 }
 
-type StructAddress struct {
-	structOff int
-	fieldOff  int
-}
-
-func GetStructAddress(offset int) (StructAddress, bool) {
-	if offset < (1 << 10) {
-		return StructAddress{0, 0}, false
-	} else {
-		structOff := (offset >> 10) - 1
-		fieldOff := offset & 0x3ff
-		return StructAddress{structOff, fieldOff}, true
-	}
+type StructSubFieldAddress struct {
+	structOffset int
+	fieldOffset  int
 }
 
 // SchemaHelper provides methods to get the schema of fields
 type SchemaHelper struct {
 	schema              *schemapb.CollectionSchema
-	nameOffset          map[string]int
-	idOffset            map[int64]int
+	nameOffset          map[string]Either[int, StructSubFieldAddress]
+	idOffset            map[int64]Either[int, StructSubFieldAddress]
 	primaryKeyOffset    int
 	partitionKeyOffset  int
 	clusteringKeyOffset int
 	dynamicFieldOffset  int
 	loadFields          Set[int64]
-
-	structFieldNameOffset    map[string]int
-	structFieldIDOffset      map[int64]int
-	structSubFieldNameOffset map[string]map[string]int
 }
 
 func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFields []int64) (*SchemaHelper, error) {
@@ -321,17 +307,14 @@ func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFie
 		return nil, errors.New("schema is nil")
 	}
 	schemaHelper := SchemaHelper{
-		schema:                   schema,
-		nameOffset:               make(map[string]int),
-		idOffset:                 make(map[int64]int),
-		structFieldNameOffset:    make(map[string]int),
-		structFieldIDOffset:      make(map[int64]int),
-		structSubFieldNameOffset: make(map[string]map[string]int),
-		primaryKeyOffset:         -1,
-		partitionKeyOffset:       -1,
-		clusteringKeyOffset:      -1,
-		dynamicFieldOffset:       -1,
-		loadFields:               NewSet(loadFields...),
+		schema:              schema,
+		nameOffset:          make(map[string]Either[int, StructSubFieldAddress]),
+		idOffset:            make(map[int64]Either[int, StructSubFieldAddress]),
+		primaryKeyOffset:    -1,
+		partitionKeyOffset:  -1,
+		clusteringKeyOffset: -1,
+		dynamicFieldOffset:  -1,
+		loadFields:          NewSet(loadFields...),
 	}
 	for offset, field := range schema.Fields {
 		if _, ok := schemaHelper.nameOffset[field.Name]; ok {
@@ -340,8 +323,8 @@ func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFie
 		if _, ok := schemaHelper.idOffset[field.FieldID]; ok {
 			return nil, fmt.Errorf("duplicated fieldID: %d", field.FieldID)
 		}
-		schemaHelper.nameOffset[field.Name] = offset
-		schemaHelper.idOffset[field.FieldID] = offset
+		schemaHelper.nameOffset[field.Name] = NewLeft[int, StructSubFieldAddress](offset)
+		schemaHelper.idOffset[field.FieldID] = NewLeft[int, StructSubFieldAddress](offset)
 		if field.IsPrimaryKey {
 			if schemaHelper.primaryKeyOffset != -1 {
 				return nil, errors.New("primary key is not unique")
@@ -371,22 +354,17 @@ func CreateSchemaHelperWithLoadFields(schema *schemapb.CollectionSchema, loadFie
 		}
 	}
 	for structOffset, structField := range schema.StructFields {
-		if _, ok := schemaHelper.structFieldNameOffset[structField.Name]; ok {
-			return nil, fmt.Errorf("duplicated struct fieldName: %s", structField.Name)
-		}
-		if _, ok := schemaHelper.structFieldIDOffset[structField.FieldID]; ok {
-			return nil, fmt.Errorf("duplicated struct fieldID: %d", structField.FieldID)
-		}
-		schemaHelper.structSubFieldNameOffset[structField.Name] = make(map[string]int)
-
-		schemaHelper.structFieldNameOffset[structField.Name] = structOffset
-		schemaHelper.structFieldIDOffset[structField.FieldID] = structOffset
-
-		for offset, field := range structField.Fields {
-			if _, ok := schemaHelper.structSubFieldNameOffset[structField.Name][field.Name]; ok {
-				return nil, fmt.Errorf("duplicated struct field name: %s", field.Name)
+		for subFieldOffset, subField := range structField.Fields {
+			if _, ok := schemaHelper.nameOffset[subField.Name]; ok {
+				return nil, fmt.Errorf("duplicated sub fieldName: %s", subField.Name)
 			}
-			schemaHelper.structSubFieldNameOffset[structField.Name][field.Name] = offset
+			if _, ok := schemaHelper.idOffset[subField.FieldID]; ok {
+				return nil, fmt.Errorf("duplicated sub fieldID: %d", subField.FieldID)
+			}
+			schemaHelper.nameOffset[subField.Name] = NewRight[int, StructSubFieldAddress](StructSubFieldAddress{structOffset, subFieldOffset})
+			schemaHelper.idOffset[subField.FieldID] = NewRight[int, StructSubFieldAddress](StructSubFieldAddress{structOffset, subFieldOffset})
+
+			// todo(SpadeA): check more attributes
 		}
 	}
 
@@ -438,23 +416,12 @@ func (helper *SchemaHelper) GetFieldFromName(fieldName string) (*schemapb.FieldS
 	if !ok {
 		return nil, fmt.Errorf("failed to get field schema by name: fieldName(%s) not found", fieldName)
 	}
-	return helper.schema.Fields[offset], nil
-}
 
-func (helper *SchemaHelper) GetStructFieldFromName(fieldName string) (*schemapb.StructFieldSchema, error) {
-	offset, ok := helper.structFieldNameOffset[fieldName]
-	if !ok {
-		return nil, fmt.Errorf("failed to get struct field schema by name: fieldName(%s) not found", fieldName)
+	if offset.IsLeft() {
+		return helper.schema.Fields[offset.Left()], nil
+	} else {
+		return helper.schema.StructFields[offset.Right().structOffset].Fields[offset.Right().fieldOffset], nil
 	}
-	return helper.schema.StructFields[offset], nil
-}
-
-func (helper *SchemaHelper) GetStructSubFieldFromName(structFieldSchema *schemapb.StructFieldSchema, subFieldName string) (*schemapb.FieldSchema, error) {
-	offset, ok := helper.structSubFieldNameOffset[structFieldSchema.Name][subFieldName]
-	if !ok {
-		return nil, fmt.Errorf("failed to get struct sub field schema by name: structFieldName(%s), subFieldName(%s) not found", structFieldSchema.Name, subFieldName)
-	}
-	return structFieldSchema.Fields[offset], nil
 }
 
 // GetFieldFromNameDefaultJSON is used to find the schema by field name, if not exist, use json field
@@ -463,14 +430,18 @@ func (helper *SchemaHelper) GetFieldFromNameDefaultJSON(fieldName string) (*sche
 	if !ok {
 		return helper.getDefaultJSONField(fieldName)
 	}
+
 	var fieldSchema *schemapb.FieldSchema
-	if structAddr, ok := GetStructAddress(offset); ok {
-		fieldSchema = helper.schema.StructFields[structAddr.structOff].Fields[structAddr.fieldOff]
+	if offset.IsLeft() {
+		fieldSchema = helper.schema.Fields[offset.Left()]
+		if !helper.IsFieldLoaded(fieldSchema.GetFieldID()) {
+			return nil, errors.Newf("field %s is not loaded", fieldSchema)
+		}
 	} else {
-		fieldSchema = helper.schema.Fields[offset]
-	}
-	if !helper.IsFieldLoaded(fieldSchema.GetFieldID()) {
-		return nil, errors.Newf("field %s is not loaded", fieldSchema)
+		fieldSchema = helper.schema.StructFields[offset.Right().structOffset].Fields[offset.Right().fieldOffset]
+		if !helper.IsFieldLoaded(fieldSchema.GetFieldID()) {
+			return nil, errors.Newf("field %s is not loaded", fieldSchema)
+		}
 	}
 	return fieldSchema, nil
 }
@@ -493,7 +464,7 @@ func (helper *SchemaHelper) IsFieldTextMatchEnabled(fieldId int64) bool {
 }
 
 func (helper *SchemaHelper) getDefaultJSONField(fieldName string) (*schemapb.FieldSchema, error) {
-	// todo(SpadeA): consider struct fields
+	// todo(SpadeA): consider struct fields, maybe struct field should not support json?
 	for _, f := range helper.schema.GetFields() {
 		if f.DataType == schemapb.DataType_JSON && f.IsDynamic {
 			if !helper.IsFieldLoaded(f.GetFieldID()) {
@@ -513,7 +484,11 @@ func (helper *SchemaHelper) GetFieldFromID(fieldID int64) (*schemapb.FieldSchema
 	if !ok {
 		return nil, fmt.Errorf("fieldID(%d) not found", fieldID)
 	}
-	return helper.schema.Fields[offset], nil
+	if offset.IsLeft() {
+		return helper.schema.Fields[offset.Left()], nil
+	} else {
+		return helper.schema.StructFields[offset.Right().structOffset].Fields[offset.Right().fieldOffset], nil
+	}
 }
 
 // GetVectorDimFromID returns the dimension of specified field

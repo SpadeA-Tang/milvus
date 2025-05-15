@@ -178,6 +178,7 @@ func (s *schemaInfo) GetLoadFieldIDs(loadFields []string, skipDynamicField bool)
 	fieldIDs := typeutil.NewSet[int64]()
 	// fieldIDs := make([]int64, 0, len(loadFields))
 	fields := make([]*schemapb.FieldSchema, 0, len(loadFields))
+	// todo(SpadeA): check struct field
 	for _, name := range loadFields {
 		fieldSchema, err := s.schemaHelper.GetFieldFromName(name)
 		if err != nil {

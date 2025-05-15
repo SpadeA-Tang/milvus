@@ -1424,6 +1424,8 @@ func (loader *segmentLoader) checkSegmentSize(ctx context.Context, segmentLoadIn
 	mmapFieldCount := 0
 	for _, loadInfo := range segmentLoadInfos {
 		collection := loader.manager.Collection.Get(loadInfo.GetCollectionID())
+
+		// todo: binlogs in loadInfo is flattened (StructFields)
 		usage, err := getResourceUsageEstimateOfSegment(collection.Schema(), loadInfo, factor)
 		if err != nil {
 			log.Warn(

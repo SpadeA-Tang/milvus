@@ -39,8 +39,7 @@ Schema::ParseFrom(const milvus::proto::schema::CollectionSchema& schema_proto) {
 
     // NOTE: only two system
 
-    for (const milvus::proto::schema::FieldSchema& child :
-         schema_proto.fields()) {
+    auto process_field = [&schema, &schema_proto](const auto& child) {
         auto field_id = FieldId(child.fieldid());
 
         auto f = FieldMeta::ParseFrom(child);
@@ -57,6 +56,18 @@ Schema::ParseFrom(const milvus::proto::schema::CollectionSchema& schema_proto) {
             AssertInfo(!schema->get_dynamic_field_id().has_value(),
                        "repetitive dynamic field");
             schema->set_dynamic_field_id(field_id);
+        }
+    };
+
+    for (const milvus::proto::schema::FieldSchema& child :
+         schema_proto.fields()) {
+        process_field(child);
+    }
+
+    for (const milvus::proto::schema::StructFieldSchema& child :
+         schema_proto.struct_fields()) {
+        for (const auto& sub_field : child.fields()) {
+            process_field(sub_field);
         }
     }
 

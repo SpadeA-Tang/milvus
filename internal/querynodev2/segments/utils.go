@@ -261,6 +261,13 @@ func getFieldSchema(schema *schemapb.CollectionSchema, fieldID int64) (*schemapb
 			return field, nil
 		}
 	}
+	for _, structField := range schema.StructFields {
+		for _, field := range structField.Fields {
+			if field.FieldID == fieldID {
+				return field, nil
+			}
+		}
+	}
 	return nil, fmt.Errorf("field %d not found in schema", fieldID)
 }
 

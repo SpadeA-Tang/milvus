@@ -127,13 +127,10 @@ func (v *validateUtil) Validate(data []*schemapb.FieldData, helper *typeutil.Sch
 	}
 	for _, field := range data {
 		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-			structFieldSchema, err := helper.GetStructFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-			}
+			// todo(SpadeA): do more check for struct field itself
 
 			for _, subField := range structField.Structs.Fields {
-				subFieldSchema, err := helper.GetStructSubFieldFromName(structFieldSchema, subField.GetFieldName())
+				subFieldSchema, err := helper.GetFieldFromName(subField.GetFieldName())
 				if err != nil {
 					return err
 				}
@@ -300,14 +297,10 @@ func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, fieldSche
 func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows uint64) error {
 	for _, field := range data {
 		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-			structFieldSchema, err := schema.GetStructFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-
-			}
+			// todo(SpadeA): do more check for struct field itself
 
 			for _, subField := range structField.Structs.Fields {
-				subFieldSchema, err := schema.GetStructSubFieldFromName(structFieldSchema, subField.GetFieldName())
+				subFieldSchema, err := schema.GetFieldFromName(subField.GetFieldName())
 				if err != nil {
 					return err
 				}
@@ -342,13 +335,10 @@ func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil
 func (v *validateUtil) fillWithValue(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows int) error {
 	for _, field := range data {
 		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-			structFieldSchema, err := schema.GetStructFieldFromName(field.GetFieldName())
-			if err != nil {
-				return err
-			}
+			// todo(SpadeA): do more check for struct field itself
 
 			for _, subField := range structField.Structs.Fields {
-				subFieldSchema, err := schema.GetStructSubFieldFromName(structFieldSchema, subField.GetFieldName())
+				subFieldSchema, err := schema.GetFieldFromName(subField.GetFieldName())
 				if err != nil {
 					return err
 				}

@@ -435,18 +435,31 @@ func (bsw *BinlogStreamWriter) writeBinlogHeaders(w io.Writer) error {
 	return nil
 }
 
+func newBinlogWriter(collectionID, partitionID, segmentID UniqueID,
+	field *schemapb.FieldSchema) *BinlogStreamWriter {
+	return &BinlogStreamWriter{
+		collectionID: collectionID,
+		partitionID:  partitionID,
+		segmentID:    segmentID,
+		fieldSchema:  field,
+	}
+}
+
 func NewBinlogStreamWriters(collectionID, partitionID, segmentID UniqueID,
-	schema []*schemapb.FieldSchema,
+	schema *schemapb.CollectionSchema,
 ) map[FieldID]*BinlogStreamWriter {
-	bws := make(map[FieldID]*BinlogStreamWriter, len(schema))
-	for _, f := range schema {
-		bws[f.FieldID] = &BinlogStreamWriter{
-			collectionID: collectionID,
-			partitionID:  partitionID,
-			segmentID:    segmentID,
-			fieldSchema:  f,
+	bws := make(map[FieldID]*BinlogStreamWriter)
+
+	for _, f := range schema.Fields {
+		bws[f.FieldID] = newBinlogWriter(collectionID, partitionID, segmentID, f)
+	}
+
+	for _, structField := range schema.StructFields {
+		for _, subField := range structField.Fields {
+			bws[subField.FieldID] = newBinlogWriter(collectionID, partitionID, segmentID, subField)
 		}
 	}
+
 	return bws
 }
 
@@ -590,7 +603,7 @@ func (c *CompositeBinlogRecordWriter) Write(r Record) error {
 func (c *CompositeBinlogRecordWriter) initWriters() error {
 	if c.rw == nil {
 		// todo(SpadeA): consider struct fields
-		c.fieldWriters = NewBinlogStreamWriters(c.collectionID, c.partitionID, c.segmentID, c.schema.Fields)
+		c.fieldWriters = NewBinlogStreamWriters(c.collectionID, c.partitionID, c.segmentID, c.schema)
 		rws := make(map[FieldID]RecordWriter, len(c.fieldWriters))
 		for fid, w := range c.fieldWriters {
 			rw, err := w.GetRecordWriter()
