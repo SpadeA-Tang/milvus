@@ -34,27 +34,30 @@ import (
 )
 
 const (
-	CollectionID           = 1
-	PartitionID            = 1
-	SegmentID              = 1
-	RowIDField             = 0
-	TimestampField         = 1
-	BoolField              = 100
-	Int8Field              = 101
-	Int16Field             = 102
-	Int32Field             = 103
-	Int64Field             = 104
-	FloatField             = 105
-	DoubleField            = 106
-	StringField            = 107
-	BinaryVectorField      = 108
-	FloatVectorField       = 109
-	ArrayField             = 110
-	JSONField              = 111
-	Float16VectorField     = 112
-	BFloat16VectorField    = 113
-	SparseFloatVectorField = 114
-	Int8VectorField        = 115
+	CollectionID              = 1
+	PartitionID               = 1
+	SegmentID                 = 1
+	RowIDField                = 0
+	TimestampField            = 1
+	BoolField                 = 100
+	Int8Field                 = 101
+	Int16Field                = 102
+	Int32Field                = 103
+	Int64Field                = 104
+	FloatField                = 105
+	DoubleField               = 106
+	StringField               = 107
+	BinaryVectorField         = 108
+	FloatVectorField          = 109
+	ArrayField                = 110
+	JSONField                 = 111
+	Float16VectorField        = 112
+	BFloat16VectorField       = 113
+	SparseFloatVectorField    = 114
+	Int8VectorField           = 115
+	StructField               = 116
+	StructSubInt32Field       = 117
+	StructSubFloatVectorField = 118
 )
 
 func genTestCollectionMeta() *etcdpb.CollectionMeta {
@@ -206,6 +209,30 @@ func genTestCollectionMeta() *etcdpb.CollectionMeta {
 						{
 							Key:   common.DimKey,
 							Value: "4",
+						},
+					},
+				},
+			},
+			StructFields: []*schemapb.StructFieldSchema{
+				{
+					FieldID: StructField,
+					Name:    "field_struct",
+					Fields: []*schemapb.FieldSchema{
+						{
+							FieldID:       StructSubInt32Field,
+							Name:          "field_int",
+							Description:   "int",
+							DataType:      schemapb.DataType_Array,
+							ElementType:   schemapb.DataType_Int32,
+							IsStructField: true,
+						},
+						{
+							FieldID:       StructSubFloatVectorField,
+							Name:          "field_float",
+							Description:   "float",
+							DataType:      schemapb.DataType_Array,
+							ElementType:   schemapb.DataType_FloatVector,
+							IsStructField: true,
 						},
 					},
 				},

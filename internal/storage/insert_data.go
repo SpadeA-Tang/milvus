@@ -92,13 +92,16 @@ func NewInsertDataWithCap(schema *schemapb.CollectionSchema, cap int, withFuncti
 		return nil
 	}
 
-	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
-		appendField(field)
+		if err := appendField(field); err != nil {
+			return nil, err
+		}
 	}
 	for _, structField := range schema.StructFields {
 		for _, field := range structField.GetFields() {
-			appendField(field)
+			if err := appendField(field); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -143,6 +146,9 @@ func (i *InsertData) GetMemorySize() int {
 
 func (i *InsertData) Append(row map[FieldID]interface{}) error {
 	for fID, v := range row {
+		if fID == 117 {
+			fmt.Println("append", v)
+		}
 		field, ok := i.Data[fID]
 		if !ok {
 			return fmt.Errorf("Missing field when appending row, got %d", fID)
@@ -334,6 +340,13 @@ func NewFieldData(dataType schemapb.DataType, fieldSchema *schemapb.FieldSchema,
 		}
 		return data, nil
 	case schemapb.DataType_Array:
+		if fieldSchema.IsStructField && typeutil.IsVectorType(fieldSchema.GetElementType()) {
+			data := &ArrayVectorFieldData{
+				Data:        make([]*schemapb.VectorField, 0, cap),
+				ElementType: fieldSchema.GetElementType(),
+			}
+			return data, nil
+		}
 		data := &ArrayFieldData{
 			Data:        make([]*schemapb.ScalarField, 0, cap),
 			ElementType: fieldSchema.GetElementType(),
@@ -436,6 +449,11 @@ type Int8VectorFieldData struct {
 	Dim  int
 }
 
+type ArrayVectorFieldData struct {
+	ElementType schemapb.DataType
+	Data        []*schemapb.VectorField
+}
+
 func (dst *SparseFloatVectorFieldData) AppendAllRows(src *SparseFloatVectorFieldData) {
 	if len(src.Contents) == 0 {
 		return
@@ -465,6 +483,9 @@ func (data *BFloat16VectorFieldData) RowNum() int {
 }
 func (data *SparseFloatVectorFieldData) RowNum() int { return len(data.Contents) }
 func (data *Int8VectorFieldData) RowNum() int        { return len(data.Data) / data.Dim }
+func (data *ArrayVectorFieldData) RowNum() int {
+	return len(data.Data)
+}
 
 // GetRow implements FieldData.GetRow
 func (data *BoolFieldData) GetRow(i int) any {
@@ -561,6 +582,10 @@ func (data *Int8VectorFieldData) GetRow(i int) interface{} {
 	return data.Data[i*data.Dim : (i+1)*data.Dim]
 }
 
+func (data *ArrayVectorFieldData) GetRow(i int) interface{} {
+	return data.Data[i]
+}
+
 func (data *BoolFieldData) GetDataRows() any              { return data.Data }
 func (data *Int8FieldData) GetDataRows() any              { return data.Data }
 func (data *Int16FieldData) GetDataRows() any             { return data.Data }
@@ -577,6 +602,7 @@ func (data *Float16VectorFieldData) GetDataRows() any     { return data.Data }
 func (data *BFloat16VectorFieldData) GetDataRows() any    { return data.Data }
 func (data *SparseFloatVectorFieldData) GetDataRows() any { return data.Contents }
 func (data *Int8VectorFieldData) GetDataRows() any        { return data.Data }
+func (data *ArrayVectorFieldData) GetDataRows() any       { return data.Data }
 
 // AppendRow implements FieldData.AppendRow
 func (data *BoolFieldData) AppendRow(row interface{}) error {
@@ -810,6 +836,15 @@ func (data *Int8VectorFieldData) AppendRow(row interface{}) error {
 	return nil
 }
 
+func (data *ArrayVectorFieldData) AppendRow(row interface{}) error {
+	v, ok := row.(*schemapb.VectorField)
+	if !ok {
+		return merr.WrapErrParameterInvalid("[]*schemapb.VectorField", row, "Wrong row type")
+	}
+	data.Data = append(data.Data, v)
+	return nil
+}
+
 func (data *BoolFieldData) AppendRows(dataRows interface{}, validDataRows interface{}) error {
 	err := data.AppendDataRows(dataRows)
 	if err != nil {
@@ -935,6 +970,14 @@ func (data *SparseFloatVectorFieldData) AppendRows(dataRows interface{}, validDa
 }
 
 func (data *Int8VectorFieldData) AppendRows(dataRows interface{}, validDataRows interface{}) error {
+	err := data.AppendDataRows(dataRows)
+	if err != nil {
+		return err
+	}
+	return data.AppendValidDataRows(validDataRows)
+}
+
+func (data *ArrayVectorFieldData) AppendRows(dataRows interface{}, validDataRows interface{}) error {
 	err := data.AppendDataRows(dataRows)
 	if err != nil {
 		return err
@@ -1103,6 +1146,15 @@ func (data *Int8VectorFieldData) AppendDataRows(rows interface{}) error {
 	}
 	if len(v)%(data.Dim) != 0 {
 		return merr.WrapErrParameterInvalid(data.Dim, len(v), "Wrong vector size")
+	}
+	data.Data = append(data.Data, v...)
+	return nil
+}
+
+func (data *ArrayVectorFieldData) AppendDataRows(rows interface{}) error {
+	v, ok := rows.([]*schemapb.VectorField)
+	if !ok {
+		return merr.WrapErrParameterInvalid("[]*schemapb.VectorField", rows, "Wrong rows type")
 	}
 	data.Data = append(data.Data, v...)
 	return nil
@@ -1310,6 +1362,19 @@ func (data *Int8VectorFieldData) AppendValidDataRows(rows interface{}) error {
 	return nil
 }
 
+func (data *ArrayVectorFieldData) AppendValidDataRows(rows interface{}) error {
+	if rows != nil {
+		v, ok := rows.([]bool)
+		if !ok {
+			return merr.WrapErrParameterInvalid("[]bool", rows, "Wrong rows type")
+		}
+		if len(v) != 0 {
+			return merr.WrapErrParameterInvalidMsg("not support Nullable in vector")
+		}
+	}
+	return nil
+}
+
 // GetMemorySize implements FieldData.GetMemorySize
 func (data *BoolFieldData) GetMemorySize() int {
 	return binary.Size(data.Data) + binary.Size(data.ValidData) + binary.Size(data.Nullable)
@@ -1350,6 +1415,35 @@ func (data *SparseFloatVectorFieldData) GetMemorySize() int {
 
 func (data *Int8VectorFieldData) GetMemorySize() int { return binary.Size(data.Data) + 4 }
 
+func GetVectorSize(vector *schemapb.VectorField, vectorType schemapb.DataType) int {
+	size := 0
+	switch vectorType {
+	case schemapb.DataType_BinaryVector:
+		size += binary.Size(vector.GetBinaryVector()) + 4
+	case schemapb.DataType_FloatVector:
+		size += binary.Size(vector.GetFloatVector().Data) + 4
+	case schemapb.DataType_Float16Vector:
+		size += binary.Size(vector.GetFloat16Vector()) + 4
+	case schemapb.DataType_BFloat16Vector:
+		size += binary.Size(vector.GetBfloat16Vector()) + 4
+	case schemapb.DataType_SparseFloatVector:
+		panic("not implemented")
+	case schemapb.DataType_Int8Vector:
+		size += binary.Size(vector.GetInt8Vector()) + 4
+	default:
+		panic("unreachable")
+	}
+	return size
+}
+
+func (data *ArrayVectorFieldData) GetMemorySize() int {
+	var size int
+	for _, val := range data.Data {
+		size += GetVectorSize(val, data.ElementType)
+	}
+	return size
+}
+
 // GetDataType implements FieldData.GetDataType
 func (data *BoolFieldData) GetDataType() schemapb.DataType   { return schemapb.DataType_Bool }
 func (data *Int8FieldData) GetDataType() schemapb.DataType   { return schemapb.DataType_Int8 }
@@ -1383,6 +1477,10 @@ func (data *SparseFloatVectorFieldData) GetDataType() schemapb.DataType {
 
 func (data *Int8VectorFieldData) GetDataType() schemapb.DataType {
 	return schemapb.DataType_Int8Vector
+}
+
+func (data *ArrayVectorFieldData) GetDataType() schemapb.DataType {
+	return schemapb.DataType_Array
 }
 
 // why not binary.Size(data) directly? binary.Size(data) return -1
@@ -1470,6 +1568,10 @@ func (data *SparseFloatVectorFieldData) GetRowSize(i int) int {
 	return len(data.Contents[i])
 }
 
+func (data *ArrayVectorFieldData) GetRowSize(i int) int {
+	return GetVectorSize(data.Data[i], data.ElementType)
+}
+
 func (data *BoolFieldData) GetNullable() bool {
 	return data.Nullable
 }
@@ -1532,4 +1634,8 @@ func (data *ArrayFieldData) GetNullable() bool {
 
 func (data *JSONFieldData) GetNullable() bool {
 	return data.Nullable
+}
+
+func (data *ArrayVectorFieldData) GetNullable() bool {
+	return false
 }

@@ -213,7 +213,28 @@ func CalcColumnSize(column *schemapb.FieldData) int {
 	return res
 }
 
-func estimateFieldSize(field *schemapb.FieldData, rowOffset int) (int, error) {
+func CalcColumnSizeForVectorArray(column *schemapb.VectorField, vectorType schemapb.DataType) int {
+	res := 0
+	switch vectorType {
+	case schemapb.DataType_BinaryVector:
+		res += len(column.GetBinaryVector())
+	case schemapb.DataType_FloatVector:
+		res += len(column.GetFloatVector().Data) * 4
+	case schemapb.DataType_Float16Vector:
+		res += len(column.GetFloat16Vector()) * 2
+	case schemapb.DataType_BFloat16Vector:
+		res += len(column.GetBfloat16Vector()) * 2
+	case schemapb.DataType_SparseFloatVector:
+		panic("unimplemented")
+	case schemapb.DataType_Int8Vector:
+		res += len(column.GetInt8Vector())
+	default:
+		panic("Unknown data type:" + vectorType.String())
+	}
+	return res
+}
+
+func estimateFieldSize(field *schemapb.FieldData, rowOffset int, isStructField bool) (int, error) {
 	switch field.GetType() {
 	case schemapb.DataType_Bool, schemapb.DataType_Int8:
 		return 1, nil
@@ -229,6 +250,11 @@ func estimateFieldSize(field *schemapb.FieldData, rowOffset int) (int, error) {
 		}
 		return len(field.GetScalars().GetStringData().Data[rowOffset]), nil
 	case schemapb.DataType_Array:
+		if isStructField && field.GetVectors() != nil {
+			vectorType := field.GetVectors().GetArrayVector().GetElementType()
+			return CalcColumnSizeForVectorArray(field.GetVectors().GetArrayVector().GetData()[rowOffset], vectorType), nil
+		}
+
 		if rowOffset >= len(field.GetScalars().GetArrayData().GetData()) {
 			return 0, fmt.Errorf("offset out range of field datas")
 		}
@@ -267,7 +293,7 @@ func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, e
 	for _, field := range fieldsData {
 		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
 			for _, subField := range structField.Structs.Fields {
-				size, err := estimateFieldSize(subField, rowOffset)
+				size, err := estimateFieldSize(subField, rowOffset, true)
 				if err != nil {
 					return 0, err
 				}
@@ -276,7 +302,7 @@ func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, e
 			continue
 		}
 
-		size, err := estimateFieldSize(field, rowOffset)
+		size, err := estimateFieldSize(field, rowOffset, false)
 		if err != nil {
 			return 0, err
 		}
@@ -992,6 +1018,18 @@ func appendFieldData(dst []*schemapb.FieldData, fieldOffset int, dataOffset int6
 			}
 			/* #nosec G103 */
 			appendSize = int64(unsafe.Sizeof(srcVector.Int8Vector[dataOffset*dim : (dataOffset+1)*dim]))
+		case *schemapb.VectorField_ArrayVector:
+			if dstVector.GetArrayVector() == nil {
+				dstVector.Data = &schemapb.VectorField_ArrayVector{
+					ArrayVector: &schemapb.ArrayVector{
+						Data:        []*schemapb.VectorField{srcVector.ArrayVector.Data[dataOffset]},
+						Dim:         srcVector.ArrayVector.Dim,
+						ElementType: srcVector.ArrayVector.ElementType,
+					},
+				}
+			} else {
+				dstVector.GetArrayVector().Data = append(dstVector.GetArrayVector().Data, srcVector.ArrayVector.Data[dataOffset])
+			}
 		default:
 			log.Error("Not supported field type", zap.String("field type", fieldData.Type.String()))
 		}

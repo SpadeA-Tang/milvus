@@ -307,6 +307,11 @@ func getNumRowsOfScalarField(datas interface{}) uint64 {
 	return uint64(realTypeDatas.Len())
 }
 
+func getNumRowsOfVectorField(datas interface{}) uint64 {
+	realTypeDatas := reflect.ValueOf(datas)
+	return uint64(realTypeDatas.Len())
+}
+
 func GetNumRowsOfFloatVectorField(fDatas []float32, dim int64) (uint64, error) {
 	if dim <= 0 {
 		return 0, fmt.Errorf("dim(%d) should be greater than 0", dim)
@@ -365,6 +370,15 @@ func GetNumRowsOfInt8VectorField(iDatas []byte, dim int64) (uint64, error) {
 	return uint64(int64(l) / dim), nil
 }
 
+func IsVectorField(dataType schemapb.DataType) bool {
+	return dataType == schemapb.DataType_FloatVector ||
+		dataType == schemapb.DataType_BinaryVector ||
+		dataType == schemapb.DataType_Float16Vector ||
+		dataType == schemapb.DataType_BFloat16Vector ||
+		dataType == schemapb.DataType_SparseFloatVector ||
+		dataType == schemapb.DataType_Int8Vector
+}
+
 // GetNumRowOfFieldDataWithSchema returns num of rows with schema specification.
 func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, fieldSchema *schemapb.FieldSchema) (uint64, error) {
 	var fieldNumRows uint64
@@ -383,7 +397,11 @@ func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, fieldSchema *
 	case schemapb.DataType_String, schemapb.DataType_VarChar, schemapb.DataType_Text:
 		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetStringData().GetData())
 	case schemapb.DataType_Array:
-		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetArrayData().GetData())
+		if fieldSchema.IsStructField && IsVectorField(fieldSchema.GetElementType()) {
+			fieldNumRows = getNumRowsOfVectorField(fieldData.GetVectors().GetArrayVector().GetData())
+		} else {
+			fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetArrayData().GetData())
+		}
 	case schemapb.DataType_JSON:
 		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetJsonData().GetData())
 	case schemapb.DataType_FloatVector:

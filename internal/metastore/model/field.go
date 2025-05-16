@@ -23,6 +23,7 @@ type Field struct {
 	DefaultValue     *schemapb.ValueField
 	ElementType      schemapb.DataType
 	Nullable         bool
+	IsStructField    bool
 }
 
 func (f *Field) Available() bool {
@@ -47,6 +48,7 @@ func (f *Field) Clone() *Field {
 		DefaultValue:     f.DefaultValue,
 		ElementType:      f.ElementType,
 		Nullable:         f.Nullable,
+		IsStructField:    f.IsStructField,
 	}
 }
 
@@ -78,7 +80,8 @@ func (f *Field) Equal(other Field) bool {
 		f.DefaultValue == other.DefaultValue &&
 		f.ElementType == other.ElementType &&
 		f.IsFunctionOutput == other.IsFunctionOutput &&
-		f.Nullable == other.Nullable
+		f.Nullable == other.Nullable &&
+		f.IsStructField == other.IsStructField
 }
 
 func CheckFieldsEqual(fieldsA, fieldsB []*Field) bool {
@@ -119,6 +122,7 @@ func MarshalFieldModel(field *Field) *schemapb.FieldSchema {
 		DefaultValue:     field.DefaultValue,
 		ElementType:      field.ElementType,
 		Nullable:         field.Nullable,
+		IsStructField:    field.IsStructField,
 	}
 }
 
@@ -155,6 +159,7 @@ func UnmarshalFieldModel(fieldSchema *schemapb.FieldSchema) *Field {
 		DefaultValue:     fieldSchema.DefaultValue,
 		ElementType:      fieldSchema.ElementType,
 		Nullable:         fieldSchema.Nullable,
+		IsStructField:    fieldSchema.IsStructField,
 	}
 }
 

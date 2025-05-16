@@ -745,7 +745,8 @@ func NewArrayFieldData(fieldName string, numRows int) *schemapb.FieldData {
 			Scalars: &schemapb.ScalarField{
 				Data: &schemapb.ScalarField_ArrayData{
 					ArrayData: &schemapb.ArrayArray{
-						Data: GenerateArrayOfIntArray(numRows),
+						Data:        GenerateArrayOfIntArray(numRows),
+						ElementType: schemapb.DataType_Int32,
 					},
 				},
 			},
@@ -762,7 +763,9 @@ func NewArrayVectorFieldData(fieldName string, numRows, dim int) *schemapb.Field
 				Dim: int64(dim),
 				Data: &schemapb.VectorField_ArrayVector{
 					ArrayVector: &schemapb.ArrayVector{
-						Data: GenerateArrayOfFloatVectorArray(numRows, dim),
+						Data:        GenerateArrayOfFloatVectorArray(numRows, dim),
+						ElementType: schemapb.DataType_FloatVector,
+						Dim:         int64(dim),
 					},
 				},
 			},

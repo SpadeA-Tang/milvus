@@ -175,6 +175,8 @@ func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, fieldSche
 		return merr.WrapErrParameterInvalid(schemaDim, dataDim, msg)
 	}
 
+	// todo(SpadeA): for struct vector type(which is a array type), do we need to check concrete element data?
+
 	switch field.GetType() {
 	case schemapb.DataType_FloatVector:
 		dim, err := typeutil.GetDim(fieldSchema)
@@ -380,6 +382,7 @@ func (v *validateUtil) fillWithNullValue(field *schemapb.FieldData, fieldSchema 
 		return err
 	}
 
+	// todo(SpadeA): consider struct field
 	switch field.Field.(type) {
 	case *schemapb.FieldData_Scalars:
 		switch sd := field.GetScalars().GetData().(type) {
@@ -924,6 +927,11 @@ func (v *validateUtil) checkArrayElement(array *schemapb.ArrayArray, field *sche
 }
 
 func (v *validateUtil) checkArrayFieldData(field *schemapb.FieldData, fieldSchema *schemapb.FieldSchema) error {
+	if fieldSchema.IsStructField {
+		// todo(SpadeA): validate struct field
+		return nil
+	}
+
 	data := field.GetScalars().GetArrayData()
 	if data == nil {
 		elementTypeStr := fieldSchema.GetElementType().String()

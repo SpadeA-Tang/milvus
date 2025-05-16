@@ -699,13 +699,22 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 			}
 
 		case schemapb.DataType_Array:
-			srcData := srcField.GetScalars().GetArrayData().GetData()
-			validData := srcField.GetValidData()
+			if field.IsStructField && typeutil.IsVectorType(field.GetElementType()) {
+				srcData := srcField.GetVectors().GetArrayVector().GetData()
 
-			fieldData = &ArrayFieldData{
-				ElementType: field.GetElementType(),
-				Data:        srcData,
-				ValidData:   validData,
+				fieldData = &ArrayVectorFieldData{
+					ElementType: field.GetElementType(),
+					Data:        srcData,
+				}
+			} else {
+				srcData := srcField.GetScalars().GetArrayData().GetData()
+				validData := srcField.GetValidData()
+
+				fieldData = &ArrayFieldData{
+					ElementType: field.GetElementType(),
+					Data:        srcData,
+					ValidData:   validData,
+				}
 			}
 
 		case schemapb.DataType_JSON:
