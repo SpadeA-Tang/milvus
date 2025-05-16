@@ -58,6 +58,7 @@ type DescriptorEventDataFixPart struct {
 	StartTimestamp  typeutil.Timestamp
 	EndTimestamp    typeutil.Timestamp
 	PayloadDataType schemapb.DataType
+	ElementDataType schemapb.DataType
 }
 
 // SetEventTimeStamp set the timestamp value of DescriptorEventDataFixPart.

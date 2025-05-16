@@ -414,7 +414,7 @@ func TestProxy(t *testing.T) {
 	structField := "structField"
 	// nlist := 10
 	// nq := 10
-	// var segmentIDs []int64
+	var segmentIDs []int64
 
 	// an int64 field (pk) & a float vector field
 	constructCollectionSchema := func() *schemapb.CollectionSchema {
@@ -1061,45 +1061,46 @@ func TestProxy(t *testing.T) {
 
 	// TODO(dragondriver): proxy.Delete()
 
-	// flushed := true
-	// wg.Add(1)
-	// t.Run("flush", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	resp, err := proxy.Flush(ctx, &milvuspb.FlushRequest{
-	// 		Base:            nil,
-	// 		DbName:          dbName,
-	// 		CollectionNames: []string{collectionName},
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// 	segmentIDs = resp.CollSegIDs[collectionName].Data
-	// 	log.Info("flush collection", zap.Int64s("segments to be flushed", segmentIDs))
+	flushed := true
+	wg.Add(1)
+	t.Run("flush", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.Flush(ctx, &milvuspb.FlushRequest{
+			Base:            nil,
+			DbName:          dbName,
+			CollectionNames: []string{collectionName},
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		segmentIDs = resp.CollSegIDs[collectionName].Data
+		log.Info("flush collection", zap.Int64s("segments to be flushed", segmentIDs))
 
-	// 	f := func() bool {
-	// 		resp, err := proxy.GetFlushState(ctx, &milvuspb.GetFlushStateRequest{
-	// 			SegmentIDs: segmentIDs,
-	// 		})
-	// 		if err != nil {
-	// 			return false
-	// 		}
-	// 		return resp.GetFlushed()
-	// 	}
+		f := func() bool {
+			resp, err := proxy.GetFlushState(ctx, &milvuspb.GetFlushStateRequest{
+				SegmentIDs: segmentIDs,
+			})
+			if err != nil {
+				return false
+			}
+			return resp.GetFlushed()
+		}
 
-	// 	// waiting for flush operation to be done
-	// 	counter := 0
-	// 	for !f() {
-	// 		if counter > 100 {
-	// 			flushed = false
-	// 			break
-	// 		}
-	// 		// avoid too frequent rpc call
-	// 		time.Sleep(100 * time.Millisecond)
-	// 		counter++
-	// 	}
-	// })
-	// if !flushed {
-	// 	log.Warn("flush operation was not sure to be done")
-	// }
+		// waiting for flush operation to be done
+		counter := 0
+		for !f() {
+			if counter > 100 {
+				flushed = false
+				break
+			}
+			// avoid too frequent rpc call
+			time.Sleep(100 * time.Millisecond)
+			counter++
+		}
+	})
+	if !flushed {
+		log.Warn("flush operation was not sure to be done")
+	}
+
 	// wg.Add(1)
 	// t.Run("get statistics after flush", func(t *testing.T) {
 	// 	defer wg.Done()

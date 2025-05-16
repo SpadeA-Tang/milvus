@@ -365,15 +365,27 @@ func AddFieldDataToPayload(eventWriter *insertEventWriter, dataType schemapb.Dat
 			}
 		}
 	case schemapb.DataType_Array:
-		for i, singleArray := range singleData.(*ArrayFieldData).Data {
-			isValid := true
-			if len(singleData.(*ArrayFieldData).ValidData) != 0 {
-				isValid = singleData.(*ArrayFieldData).ValidData[i]
+		switch typedData := singleData.(type) {
+		case *ArrayFieldData:
+			for i, singleArray := range typedData.Data {
+				isValid := true
+				if len(typedData.ValidData) != 0 {
+					isValid = typedData.ValidData[i]
+				}
+				if err = eventWriter.AddOneArrayToPayload(singleArray, isValid); err != nil {
+					return err
+				}
 			}
-			if err = eventWriter.AddOneArrayToPayload(singleArray, isValid); err != nil {
-				return err
+		case *ArrayVectorFieldData:
+			for _, singleArray := range typedData.Data {
+				if err = eventWriter.AddOneVectorArrayToPayload(singleArray); err != nil {
+					return err
+				}
 			}
+		default:
+			return fmt.Errorf("undefined array type %T", singleData)
 		}
+
 	case schemapb.DataType_JSON:
 		for i, singleJSON := range singleData.(*JSONFieldData).Data {
 			isValid := true

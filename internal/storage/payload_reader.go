@@ -24,15 +24,17 @@ import (
 
 // PayloadReader reads data from payload
 type PayloadReader struct {
-	reader   *file.Reader
-	colType  schemapb.DataType
-	numRows  int64
-	nullable bool
+	reader          *file.Reader
+	colType         schemapb.DataType
+	elementDataType schemapb.DataType
+	numRows         int64
+	nullable        bool
 }
 
 var _ PayloadReaderInterface = (*PayloadReader)(nil)
 
-func NewPayloadReader(colType schemapb.DataType, buf []byte, nullable bool) (*PayloadReader, error) {
+func NewPayloadReader(colType schemapb.DataType, elementDataType schemapb.DataType,
+	buf []byte, nullable bool) (*PayloadReader, error) {
 	if len(buf) == 0 {
 		return nil, errors.New("create Payload reader failed, buffer is empty")
 	}
@@ -40,7 +42,7 @@ func NewPayloadReader(colType schemapb.DataType, buf []byte, nullable bool) (*Pa
 	if err != nil {
 		return nil, err
 	}
-	return &PayloadReader{reader: parquetReader, colType: colType, numRows: parquetReader.NumRows(), nullable: nullable}, nil
+	return &PayloadReader{reader: parquetReader, colType: colType, elementDataType: elementDataType, numRows: parquetReader.NumRows(), nullable: nullable}, nil
 }
 
 // GetDataFromPayload returns data,length from payload, returns err if failed
@@ -96,8 +98,13 @@ func (r *PayloadReader) GetDataFromPayload() (interface{}, []bool, int, error) {
 		val, validData, err := r.GetStringFromPayload()
 		return val, validData, 0, err
 	case schemapb.DataType_Array:
-		val, validData, err := r.GetArrayFromPayload()
-		return val, validData, 0, err
+		if typeutil.IsVectorType(r.elementDataType) {
+			val, err := r.GetVectorArrayFromPayload()
+			return val, nil, 0, err
+		} else {
+			val, validData, err := r.GetArrayFromPayload()
+			return val, validData, 0, err
+		}
 	case schemapb.DataType_JSON:
 		val, validData, err := r.GetJSONFromPayload()
 		return val, validData, 0, err
@@ -414,6 +421,10 @@ func (r *PayloadReader) GetArrayFromPayload() ([]*schemapb.ScalarField, []bool, 
 		return nil, nil, err
 	}
 	return value, nil, nil
+}
+
+func (r *PayloadReader) GetVectorArrayFromPayload() ([]*schemapb.VectorField, error) {
+	panic("not implemented")
 }
 
 func (r *PayloadReader) GetJSONFromPayload() ([][]byte, []bool, error) {

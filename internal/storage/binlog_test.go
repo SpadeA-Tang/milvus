@@ -201,7 +201,7 @@ func TestInsertBinlog(t *testing.T) {
 
 	// insert e1, payload
 	e1Payload := buf[pos:e1NxtPos]
-	e1r, err := NewPayloadReader(schemapb.DataType_Int64, e1Payload, false)
+	e1r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e1Payload, false)
 	assert.NoError(t, err)
 	e1a, valids, err := e1r.GetInt64FromPayload()
 	assert.NoError(t, err)
@@ -244,7 +244,7 @@ func TestInsertBinlog(t *testing.T) {
 
 	// insert e2, payload
 	e2Payload := buf[pos:]
-	e2r, err := NewPayloadReader(schemapb.DataType_Int64, e2Payload, false)
+	e2r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e2Payload, false)
 	assert.NoError(t, err)
 	e2a, valids, err := e2r.GetInt64FromPayload()
 	assert.NoError(t, err)
@@ -452,7 +452,7 @@ func TestDeleteBinlog(t *testing.T) {
 
 	// insert e1, payload
 	e1Payload := buf[pos:e1NxtPos]
-	e1r, err := NewPayloadReader(schemapb.DataType_Int64, e1Payload, false)
+	e1r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e1Payload, false)
 	assert.NoError(t, err)
 	e1a, valids, err := e1r.GetInt64FromPayload()
 	assert.NoError(t, err)
@@ -495,7 +495,7 @@ func TestDeleteBinlog(t *testing.T) {
 
 	// insert e2, payload
 	e2Payload := buf[pos:]
-	e2r, err := NewPayloadReader(schemapb.DataType_Int64, e2Payload, false)
+	e2r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e2Payload, false)
 	assert.NoError(t, err)
 	e2a, valids, err := e2r.GetInt64FromPayload()
 	assert.NoError(t, err)
@@ -703,7 +703,7 @@ func TestDDLBinlog1(t *testing.T) {
 
 	// insert e1, payload
 	e1Payload := buf[pos:e1NxtPos]
-	e1r, err := NewPayloadReader(schemapb.DataType_Int64, e1Payload, false)
+	e1r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e1Payload, false)
 	assert.NoError(t, err)
 	e1a, valids, err := e1r.GetInt64FromPayload()
 	assert.Nil(t, valids)
@@ -746,7 +746,7 @@ func TestDDLBinlog1(t *testing.T) {
 
 	// insert e2, payload
 	e2Payload := buf[pos:]
-	e2r, err := NewPayloadReader(schemapb.DataType_Int64, e2Payload, false)
+	e2r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e2Payload, false)
 	assert.NoError(t, err)
 	e2a, valids, err := e2r.GetInt64FromPayload()
 	assert.Nil(t, valids)
@@ -953,7 +953,7 @@ func TestDDLBinlog2(t *testing.T) {
 
 	// insert e1, payload
 	e1Payload := buf[pos:e1NxtPos]
-	e1r, err := NewPayloadReader(schemapb.DataType_Int64, e1Payload, false)
+	e1r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e1Payload, false)
 	assert.NoError(t, err)
 	e1a, valids, err := e1r.GetInt64FromPayload()
 	assert.Nil(t, valids)
@@ -996,7 +996,7 @@ func TestDDLBinlog2(t *testing.T) {
 
 	// insert e2, payload
 	e2Payload := buf[pos:]
-	e2r, err := NewPayloadReader(schemapb.DataType_Int64, e2Payload, false)
+	e2r, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, e2Payload, false)
 	assert.NoError(t, err)
 	e2a, valids, err := e2r.GetInt64FromPayload()
 	assert.Nil(t, valids)

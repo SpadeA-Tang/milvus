@@ -781,6 +781,8 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 	return idata, nil
 }
 
+// FieldData in StructField will be flattened to separated FieldData in InsertData.
+// FieldData {Field: StructField { FieldData1, FieldData2 }} -> InsertData {FieldData1, FieldData2}
 func InsertMsgToInsertData(msg *msgstream.InsertMsg, schema *schemapb.CollectionSchema) (idata *InsertData, err error) {
 	if msg.IsRowBased() {
 		return RowBasedInsertMsgToInsertData(msg, schema, true)

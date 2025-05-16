@@ -701,6 +701,26 @@ func (w *NativePayloadWriter) AddInt8VectorToPayload(data []int8, dim int) error
 	return nil
 }
 
+func (w *NativePayloadWriter) AddOneVectorArrayToPayload(data *schemapb.VectorField) error {
+	if w.finished {
+		return errors.New("can't append data to finished vector array payload")
+	}
+
+	bytes, err := proto.Marshal(data)
+	if err != nil {
+		return errors.New("Marshal VectorField failed")
+	}
+
+	builder, ok := w.builder.(*array.BinaryBuilder)
+	if !ok {
+		return errors.New("failed to cast VectorArrayBuilder")
+	}
+
+	builder.Append(bytes)
+
+	return nil
+}
+
 func (w *NativePayloadWriter) FinishPayloadWriter() error {
 	if w.finished {
 		return errors.New("can't reuse a finished writer")

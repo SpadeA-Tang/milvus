@@ -177,14 +177,14 @@ func TestInsertEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(dt, pBuf, false)
+		pR, err := NewPayloadReader(dt, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 		values, _, _, err := pR.GetDataFromPayload()
 		assert.NoError(t, err)
 		assert.Equal(t, values, ev)
 		pR.Close()
 
-		r, err := newEventReader(dt, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(dt, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 		payload, nulls, _, err := r.GetDataFromPayload()
 		assert.NoError(t, err)
@@ -366,7 +366,7 @@ func TestInsertEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 
 		s, _, err := pR.GetStringFromPayload()
@@ -376,7 +376,7 @@ func TestInsertEvent(t *testing.T) {
 		assert.Equal(t, s[2], "abcdefg")
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 
 		s, _, err = pR.GetStringFromPayload()
@@ -420,7 +420,7 @@ func TestDeleteEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 
 		s, _, err := pR.GetStringFromPayload()
@@ -431,7 +431,7 @@ func TestDeleteEvent(t *testing.T) {
 
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 
 		s, _, err = pR.GetStringFromPayload()
@@ -478,14 +478,14 @@ func TestCreateCollectionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(createCollectionEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_Int64, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 		values, _, _, err := pR.GetDataFromPayload()
 		assert.NoError(t, err)
 		assert.Equal(t, values, []int64{1, 2, 3, 4, 5, 6})
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_Int64, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 		payload, _, _, err := r.GetDataFromPayload()
 		assert.NoError(t, err)
@@ -522,7 +522,7 @@ func TestCreateCollectionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 
 		s, _, err := pR.GetStringFromPayload()
@@ -533,7 +533,7 @@ func TestCreateCollectionEvent(t *testing.T) {
 
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), true)
+		r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), true)
 		assert.NoError(t, err)
 
 		s, _, err = pR.GetStringFromPayload()
@@ -580,14 +580,14 @@ func TestDropCollectionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(createCollectionEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_Int64, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 		values, _, _, err := pR.GetDataFromPayload()
 		assert.NoError(t, err)
 		assert.Equal(t, values, []int64{1, 2, 3, 4, 5, 6})
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_Int64, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 		payload, _, _, err := r.GetDataFromPayload()
 		assert.NoError(t, err)
@@ -624,7 +624,7 @@ func TestDropCollectionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 
 		s, _, err := pR.GetStringFromPayload()
@@ -635,7 +635,7 @@ func TestDropCollectionEvent(t *testing.T) {
 
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 
 		s, _, err = r.GetStringFromPayload()
@@ -682,14 +682,14 @@ func TestCreatePartitionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(createCollectionEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_Int64, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 		values, _, _, err := pR.GetDataFromPayload()
 		assert.NoError(t, err)
 		assert.Equal(t, values, []int64{1, 2, 3, 4, 5, 6})
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_Int64, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 		payload, _, _, err := r.GetDataFromPayload()
 		assert.NoError(t, err)
@@ -726,7 +726,7 @@ func TestCreatePartitionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 
 		s, _, err := pR.GetStringFromPayload()
@@ -737,7 +737,7 @@ func TestCreatePartitionEvent(t *testing.T) {
 
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 
 		s, _, err = pR.GetStringFromPayload()
@@ -784,14 +784,14 @@ func TestDropPartitionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(createCollectionEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_Int64, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_Int64, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 		values, _, _, err := pR.GetDataFromPayload()
 		assert.NoError(t, err)
 		assert.Equal(t, values, []int64{1, 2, 3, 4, 5, 6})
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_Int64, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 		payload, _, _, err := r.GetDataFromPayload()
 		assert.NoError(t, err)
@@ -828,7 +828,7 @@ func TestDropPartitionEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(insertEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 
 		s, _, err := pR.GetStringFromPayload()
@@ -839,7 +839,7 @@ func TestDropPartitionEvent(t *testing.T) {
 
 		pR.Close()
 
-		r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), false)
+		r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 		assert.NoError(t, err)
 
 		s, _, err = pR.GetStringFromPayload()
@@ -879,7 +879,7 @@ func TestIndexFileEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(indexFileEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_String, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_String, schemapb.DataType_None, pBuf, false)
 		assert.NoError(t, err)
 		assert.Equal(t, pR.numRows, int64(1))
 		value, _, err := pR.GetStringFromPayload()
@@ -916,7 +916,7 @@ func TestIndexFileEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(indexFileEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_Int8, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_Int8, schemapb.DataType_None, pBuf, false)
 		assert.Equal(t, pR.numRows, int64(len(payload)))
 		assert.NoError(t, err)
 		value, _, err := pR.GetByteFromPayload()
@@ -950,7 +950,7 @@ func TestIndexFileEvent(t *testing.T) {
 
 		payloadOffset := binary.Size(eventHeader{}) + binary.Size(indexFileEventData{})
 		pBuf := wBuf[payloadOffset:]
-		pR, err := NewPayloadReader(schemapb.DataType_Int8, pBuf, false)
+		pR, err := NewPayloadReader(schemapb.DataType_Int8, schemapb.DataType_None, pBuf, false)
 		assert.Equal(t, pR.numRows, int64(len(payload)))
 		assert.NoError(t, err)
 		value, _, err := pR.GetByteFromPayload()
@@ -1061,7 +1061,7 @@ func TestReadFixPartError(t *testing.T) {
 
 func TestEventReaderError(t *testing.T) {
 	buf := new(bytes.Buffer)
-	r, err := newEventReader(schemapb.DataType_Int64, buf, false)
+	r, err := newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, buf, false)
 	assert.Nil(t, r)
 	assert.Error(t, err)
 
@@ -1069,7 +1069,7 @@ func TestEventReaderError(t *testing.T) {
 	err = header.Write(buf)
 	assert.NoError(t, err)
 
-	r, err = newEventReader(schemapb.DataType_Int64, buf, false)
+	r, err = newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, buf, false)
 	assert.Nil(t, r)
 	assert.Error(t, err)
 
@@ -1078,7 +1078,7 @@ func TestEventReaderError(t *testing.T) {
 	err = header.Write(buf)
 	assert.NoError(t, err)
 
-	r, err = newEventReader(schemapb.DataType_Int64, buf, false)
+	r, err = newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, buf, false)
 	assert.Nil(t, r)
 	assert.Error(t, err)
 
@@ -1095,7 +1095,7 @@ func TestEventReaderError(t *testing.T) {
 	err = binary.Write(buf, common.Endian, insertData)
 	assert.NoError(t, err)
 
-	r, err = newEventReader(schemapb.DataType_Int64, buf, false)
+	r, err = newEventReader(schemapb.DataType_Int64, schemapb.DataType_None, buf, false)
 	assert.Nil(t, r)
 	assert.Error(t, err)
 }
@@ -1115,7 +1115,7 @@ func TestEventClose(t *testing.T) {
 	w.Close()
 
 	wBuf := buf.Bytes()
-	r, err := newEventReader(schemapb.DataType_String, bytes.NewBuffer(wBuf), false)
+	r, err := newEventReader(schemapb.DataType_String, schemapb.DataType_None, bytes.NewBuffer(wBuf), false)
 	assert.NoError(t, err)
 
 	r.Close()
