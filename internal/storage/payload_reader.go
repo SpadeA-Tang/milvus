@@ -401,7 +401,7 @@ func (r *PayloadReader) GetStringFromPayload() ([]string, []bool, error) {
 }
 
 func (r *PayloadReader) GetArrayFromPayload() ([]*schemapb.ScalarField, []bool, error) {
-	if r.colType != schemapb.DataType_Array {
+	if r.colType != schemapb.DataType_Array || typeutil.IsVectorType(r.elementDataType) {
 		return nil, nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("failed to get array from datatype %v", r.colType.String()))
 	}
 
@@ -424,7 +424,19 @@ func (r *PayloadReader) GetArrayFromPayload() ([]*schemapb.ScalarField, []bool, 
 }
 
 func (r *PayloadReader) GetVectorArrayFromPayload() ([]*schemapb.VectorField, error) {
-	panic("not implemented")
+	if r.colType != schemapb.DataType_Array || !typeutil.IsVectorType(r.elementDataType) {
+		return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("failed to get vector from datatype %v", r.colType.String()))
+	}
+
+	value, err := readByteAndConvert(r, func(bytes parquet.ByteArray) *schemapb.VectorField {
+		v := &schemapb.VectorField{}
+		proto.Unmarshal(bytes, v)
+		return v
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func (r *PayloadReader) GetJSONFromPayload() ([][]byte, []bool, error) {
