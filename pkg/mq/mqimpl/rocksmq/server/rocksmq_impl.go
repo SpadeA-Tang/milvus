@@ -744,7 +744,6 @@ func (rmq *rocksmq) Produce(topicName string, messages []ProducerMessage) ([]Uni
 	msgIDs := make([]UniqueID, msgLen)
 	for i := 0; i < msgLen && idStart+UniqueID(i) < idEnd; i++ {
 		msgID := idStart + UniqueID(i)
-		log.Info("debug=== produce msg", zap.Any("msgID", msgID))
 		key := path.Join(topicName, strconv.FormatInt(msgID, 10))
 		batch.PutCF(rmq.cfh[0], []byte(key), messages[i].Payload)
 		msgIDs[i] = msgID

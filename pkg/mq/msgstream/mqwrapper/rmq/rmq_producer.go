@@ -14,9 +14,6 @@ package rmq
 import (
 	"context"
 
-	"go.uber.org/zap"
-
-	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/metrics"
 	"github.com/milvus-io/milvus/pkg/v2/mq/common"
 	"github.com/milvus-io/milvus/pkg/v2/mq/mqimpl/rocksmq/client"
@@ -41,8 +38,6 @@ func (rp *rmqProducer) Topic() string {
 func (rp *rmqProducer) Send(ctx context.Context, message *common.ProducerMessage) (common.MessageID, error) {
 	start := timerecord.NewTimeRecorder("send msg to stream")
 	metrics.MsgStreamOpCounter.WithLabelValues(metrics.SendMsgLabel, metrics.TotalLabel).Inc()
-
-	log.Info("debug=== send msg", zap.Any("topic", rp.Topic()))
 
 	id, err := rp.p.Send(message)
 	if err != nil {

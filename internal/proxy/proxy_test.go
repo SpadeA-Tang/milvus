@@ -67,6 +67,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/v2/util/etcd"
 	"github.com/milvus-io/milvus/pkg/v2/util/funcutil"
 	"github.com/milvus-io/milvus/pkg/v2/util/merr"
+	"github.com/milvus-io/milvus/pkg/v2/util/metric"
 	"github.com/milvus-io/milvus/pkg/v2/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/v2/util/testutils"
 	"github.com/milvus-io/milvus/pkg/v2/util/typeutil"
@@ -404,15 +405,15 @@ func TestProxy(t *testing.T) {
 	shardsNum := common.DefaultShardsNum
 	int64Field := "int64"
 	floatVecField := "fVec"
-	binaryVecField := "bVec"
+	// binaryVecField := "bVec"
 	dim := 128
 	rowNum := 3000
-	// floatIndexName := "float_index"
+	floatIndexName := "float_index"
 	// binaryIndexName := "binary_index"
-	structId := "structI32"
-	structVec := "structVec"
-	structField := "structField"
-	// nlist := 10
+	// structId := "structI32"
+	// structVec := "structVec"
+	// structField := "structField"
+	nlist := 10
 	// nq := 10
 	var segmentIDs []int64
 
@@ -443,67 +444,67 @@ func TestProxy(t *testing.T) {
 			IndexParams: nil,
 			AutoID:      false,
 		}
-		bVec := &schemapb.FieldSchema{
-			FieldID:      102,
-			Name:         binaryVecField,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_BinaryVector,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.DimKey,
-					Value: strconv.Itoa(dim),
-				},
-			},
-			IndexParams: nil,
-			AutoID:      false,
-		}
+		// bVec := &schemapb.FieldSchema{
+		// 	FieldID:      102,
+		// 	Name:         binaryVecField,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_BinaryVector,
+		// 	TypeParams: []*commonpb.KeyValuePair{
+		// 		{
+		// 			Key:   common.DimKey,
+		// 			Value: strconv.Itoa(dim),
+		// 		},
+		// 	},
+		// 	IndexParams: nil,
+		// 	AutoID:      false,
+		// }
 
-		// struct schema fields
-		sId := &schemapb.FieldSchema{
-			FieldID:      103,
-			Name:         structId,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_Array,
-			ElementType:  schemapb.DataType_Int32,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.MaxCapacityKey,
-					Value: "100",
-				},
-			},
-			IndexParams:   nil,
-			AutoID:        false,
-			IsStructField: true,
-		}
-		sVec := &schemapb.FieldSchema{
-			FieldID:      104,
-			Name:         structVec,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_Array,
-			ElementType:  schemapb.DataType_FloatVector,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.DimKey,
-					Value: strconv.Itoa(dim),
-				},
-				{
-					Key:   common.MaxCapacityKey,
-					Value: "100",
-				},
-			},
-			IndexParams:   nil,
-			AutoID:        false,
-			IsStructField: true,
-		}
-		structF := &schemapb.StructFieldSchema{
-			FieldID:            105,
-			Name:               structField,
-			EnableDynamicField: false,
-			Fields:             []*schemapb.FieldSchema{sId, sVec},
-		}
+		// // struct schema fields
+		// sId := &schemapb.FieldSchema{
+		// 	FieldID:      103,
+		// 	Name:         structId,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_Array,
+		// 	ElementType:  schemapb.DataType_Int32,
+		// 	TypeParams: []*commonpb.KeyValuePair{
+		// 		{
+		// 			Key:   common.MaxCapacityKey,
+		// 			Value: "100",
+		// 		},
+		// 	},
+		// 	IndexParams:   nil,
+		// 	AutoID:        false,
+		// 	IsStructField: true,
+		// }
+		// sVec := &schemapb.FieldSchema{
+		// 	FieldID:      104,
+		// 	Name:         structVec,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_Array,
+		// 	ElementType:  schemapb.DataType_FloatVector,
+		// 	TypeParams: []*commonpb.KeyValuePair{
+		// 		{
+		// 			Key:   common.DimKey,
+		// 			Value: strconv.Itoa(dim),
+		// 		},
+		// 		{
+		// 			Key:   common.MaxCapacityKey,
+		// 			Value: "100",
+		// 		},
+		// 	},
+		// 	IndexParams:   nil,
+		// 	AutoID:        false,
+		// 	IsStructField: true,
+		// }
+		// structF := &schemapb.StructFieldSchema{
+		// 	FieldID:            105,
+		// 	Name:               structField,
+		// 	EnableDynamicField: false,
+		// 	Fields:             []*schemapb.FieldSchema{sId},
+		// }
 
 		return &schemapb.CollectionSchema{
 			Name:        collectionName,
@@ -512,9 +513,9 @@ func TestProxy(t *testing.T) {
 			Fields: []*schemapb.FieldSchema{
 				pk,
 				fVec,
-				bVec,
+				// bVec,
 			},
-			StructFields: []*schemapb.StructFieldSchema{structF},
+			// StructFields: []*schemapb.StructFieldSchema{structF},
 		}
 	}
 	schema := constructCollectionSchema()
@@ -534,15 +535,15 @@ func TestProxy(t *testing.T) {
 
 	constructCollectionInsertRequest := func() *milvuspb.InsertRequest {
 		fVecColumn := newFloatVectorFieldData(floatVecField, rowNum, dim)
-		bVecColumn := newBinaryVectorFieldData(binaryVecField, rowNum, dim)
-		structColumn := newStructFieldData(schema.StructFields[0], structField, rowNum, dim)
+		// bVecColumn := newBinaryVectorFieldData(binaryVecField, rowNum, dim)
+		// structColumn := newStructFieldData(schema.StructFields[0], structField, rowNum, dim)
 		hashKeys := testutils.GenerateHashKeys(rowNum)
 		return &milvuspb.InsertRequest{
 			Base:           nil,
 			DbName:         dbName,
 			CollectionName: collectionName,
 			PartitionName:  "",
-			FieldsData:     []*schemapb.FieldData{fVecColumn, bVecColumn, structColumn},
+			FieldsData:     []*schemapb.FieldData{fVecColumn},
 			HashKeys:       hashKeys,
 			NumRows:        uint32(rowNum),
 		}
@@ -597,63 +598,63 @@ func TestProxy(t *testing.T) {
 	// 	}
 	// }
 
-	// constructCreateIndexRequest := func(dataType schemapb.DataType) *milvuspb.CreateIndexRequest {
-	// 	req := &milvuspb.CreateIndexRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 	}
-	// 	switch dataType {
-	// 	case schemapb.DataType_FloatVector:
-	// 		{
-	// 			req.FieldName = floatVecField
-	// 			req.IndexName = floatIndexName
-	// 			req.ExtraParams = []*commonpb.KeyValuePair{
-	// 				{
-	// 					Key:   common.DimKey,
-	// 					Value: strconv.Itoa(dim),
-	// 				},
-	// 				{
-	// 					Key:   common.MetricTypeKey,
-	// 					Value: metric.L2,
-	// 				},
-	// 				{
-	// 					Key:   common.IndexTypeKey,
-	// 					Value: "IVF_FLAT",
-	// 				},
-	// 				{
-	// 					Key:   "nlist",
-	// 					Value: strconv.Itoa(nlist),
-	// 				},
-	// 			}
-	// 		}
-	// 	case schemapb.DataType_BinaryVector:
-	// 		{
-	// 			req.FieldName = binaryVecField
-	// 			req.IndexName = binaryIndexName
-	// 			req.ExtraParams = []*commonpb.KeyValuePair{
-	// 				{
-	// 					Key:   common.DimKey,
-	// 					Value: strconv.Itoa(dim),
-	// 				},
-	// 				{
-	// 					Key:   common.MetricTypeKey,
-	// 					Value: metric.JACCARD,
-	// 				},
-	// 				{
-	// 					Key:   common.IndexTypeKey,
-	// 					Value: "BIN_IVF_FLAT",
-	// 				},
-	// 				{
-	// 					Key:   "nlist",
-	// 					Value: strconv.Itoa(nlist),
-	// 				},
-	// 			}
-	// 		}
-	// 	}
+	constructCreateIndexRequest := func(dataType schemapb.DataType) *milvuspb.CreateIndexRequest {
+		req := &milvuspb.CreateIndexRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+		}
+		switch dataType {
+		case schemapb.DataType_FloatVector:
+			{
+				req.FieldName = floatVecField
+				req.IndexName = floatIndexName
+				req.ExtraParams = []*commonpb.KeyValuePair{
+					{
+						Key:   common.DimKey,
+						Value: strconv.Itoa(dim),
+					},
+					{
+						Key:   common.MetricTypeKey,
+						Value: metric.L2,
+					},
+					{
+						Key:   common.IndexTypeKey,
+						Value: "IVF_FLAT",
+					},
+					{
+						Key:   "nlist",
+						Value: strconv.Itoa(nlist),
+					},
+				}
+			}
+			// case schemapb.DataType_BinaryVector:
+			// 	{
+			// 		req.FieldName = binaryVecField
+			// 		req.IndexName = binaryIndexName
+			// 		req.ExtraParams = []*commonpb.KeyValuePair{
+			// 			{
+			// 				Key:   common.DimKey,
+			// 				Value: strconv.Itoa(dim),
+			// 			},
+			// 			{
+			// 				Key:   common.MetricTypeKey,
+			// 				Value: metric.JACCARD,
+			// 			},
+			// 			{
+			// 				Key:   common.IndexTypeKey,
+			// 				Value: "BIN_IVF_FLAT",
+			// 			},
+			// 			{
+			// 				Key:   "nlist",
+			// 				Value: strconv.Itoa(nlist),
+			// 			},
+			// 		}
+			// 	}
+		}
 
-	// 	return req
-	// }
+		return req
+	}
 
 	wg.Add(1)
 	t.Run("create collection", func(t *testing.T) {
@@ -1101,247 +1102,247 @@ func TestProxy(t *testing.T) {
 		log.Warn("flush operation was not sure to be done")
 	}
 
-	// wg.Add(1)
-	// t.Run("get statistics after flush", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	if !flushed {
-	// 		t.Skip("flush operation was not done")
-	// 	}
-	// 	resp, err := proxy.GetStatistics(ctx, &milvuspb.GetStatisticsRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// 	rowNumStr := funcutil.KeyValuePair2Map(resp.Stats)["row_count"]
-	// 	assert.Equal(t, strconv.Itoa(rowNum), rowNumStr)
+	wg.Add(1)
+	t.Run("get statistics after flush", func(t *testing.T) {
+		defer wg.Done()
+		if !flushed {
+			t.Skip("flush operation was not done")
+		}
+		resp, err := proxy.GetStatistics(ctx, &milvuspb.GetStatisticsRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		rowNumStr := funcutil.KeyValuePair2Map(resp.Stats)["row_count"]
+		assert.Equal(t, strconv.Itoa(rowNum), rowNumStr)
 
-	// 	// get statistics of other collection -> fail
-	// 	resp, err = proxy.GetStatistics(ctx, &milvuspb.GetStatisticsRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: otherCollectionName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// })
-	// wg.Add(1)
-	// t.Run("create index for floatVec field", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	req := constructCreateIndexRequest(schemapb.DataType_FloatVector)
+		// get statistics of other collection -> fail
+		resp, err = proxy.GetStatistics(ctx, &milvuspb.GetStatisticsRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: otherCollectionName,
+		})
+		assert.NoError(t, err)
+		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	})
+	wg.Add(1)
+	t.Run("create index for floatVec field", func(t *testing.T) {
+		defer wg.Done()
+		req := constructCreateIndexRequest(schemapb.DataType_FloatVector)
 
-	// 	resp, err := proxy.CreateIndex(ctx, req)
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
-	// })
+		resp, err := proxy.CreateIndex(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	})
 
-	// wg.Add(1)
-	// t.Run("alter_index", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	req := &milvuspb.AlterIndexRequest{
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		IndexName:      floatIndexName,
-	// 		ExtraParams: []*commonpb.KeyValuePair{
-	// 			{
-	// 				Key:   common.MmapEnabledKey,
-	// 				Value: "true",
-	// 			},
-	// 		},
-	// 	}
+	wg.Add(1)
+	t.Run("alter_index", func(t *testing.T) {
+		defer wg.Done()
+		req := &milvuspb.AlterIndexRequest{
+			DbName:         dbName,
+			CollectionName: collectionName,
+			IndexName:      floatIndexName,
+			ExtraParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.MmapEnabledKey,
+					Value: "true",
+				},
+			},
+		}
 
-	// 	resp, err := proxy.AlterIndex(ctx, req)
-	// 	err = merr.CheckRPCCall(resp, err)
-	// 	assert.NoError(t, err)
-	// })
+		resp, err := proxy.AlterIndex(ctx, req)
+		err = merr.CheckRPCCall(resp, err)
+		assert.NoError(t, err)
+	})
 
-	// wg.Add(1)
-	// t.Run("describe index", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	resp, err := proxy.DescribeIndex(ctx, &milvuspb.DescribeIndexRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		FieldName:      floatVecField,
-	// 		IndexName:      "",
-	// 	})
-	// 	err = merr.CheckRPCCall(resp, err)
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, floatIndexName, resp.IndexDescriptions[0].IndexName)
-	// 	enableMmap, _ := common.IsMmapDataEnabled(resp.IndexDescriptions[0].GetParams()...)
-	// 	assert.True(t, enableMmap, "params: %+v", resp.IndexDescriptions[0])
+	wg.Add(1)
+	t.Run("describe index", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.DescribeIndex(ctx, &milvuspb.DescribeIndexRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			FieldName:      floatVecField,
+			IndexName:      "",
+		})
+		err = merr.CheckRPCCall(resp, err)
+		assert.NoError(t, err)
+		assert.Equal(t, floatIndexName, resp.IndexDescriptions[0].IndexName)
+		enableMmap, _ := common.IsMmapDataEnabled(resp.IndexDescriptions[0].GetParams()...)
+		assert.True(t, enableMmap, "params: %+v", resp.IndexDescriptions[0])
 
-	// 	// disable mmap then the tests below could continue
-	// 	req := &milvuspb.AlterIndexRequest{
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		IndexName:      floatIndexName,
-	// 		ExtraParams: []*commonpb.KeyValuePair{
-	// 			{
-	// 				Key:   common.MmapEnabledKey,
-	// 				Value: "false",
-	// 			},
-	// 		},
-	// 	}
-	// 	status, err := proxy.AlterIndex(ctx, req)
-	// 	err = merr.CheckRPCCall(status, err)
-	// 	assert.NoError(t, err)
-	// })
+		// disable mmap then the tests below could continue
+		req := &milvuspb.AlterIndexRequest{
+			DbName:         dbName,
+			CollectionName: collectionName,
+			IndexName:      floatIndexName,
+			ExtraParams: []*commonpb.KeyValuePair{
+				{
+					Key:   common.MmapEnabledKey,
+					Value: "false",
+				},
+			},
+		}
+		status, err := proxy.AlterIndex(ctx, req)
+		err = merr.CheckRPCCall(status, err)
+		assert.NoError(t, err)
+	})
 
-	// wg.Add(1)
-	// t.Run("describe index with indexName", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	resp, err := proxy.DescribeIndex(ctx, &milvuspb.DescribeIndexRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		FieldName:      floatVecField,
-	// 		IndexName:      floatIndexName,
-	// 	})
-	// 	err = merr.CheckRPCCall(resp, err)
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// })
+	wg.Add(1)
+	t.Run("describe index with indexName", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.DescribeIndex(ctx, &milvuspb.DescribeIndexRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			FieldName:      floatVecField,
+			IndexName:      floatIndexName,
+		})
+		err = merr.CheckRPCCall(resp, err)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	})
 
-	// wg.Add(1)
-	// t.Run("get index statistics", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	resp, err := proxy.GetIndexStatistics(ctx, &milvuspb.GetIndexStatisticsRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		IndexName:      "",
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// 	assert.Equal(t, floatIndexName, resp.IndexDescriptions[0].IndexName)
-	// })
+	wg.Add(1)
+	t.Run("get index statistics", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.GetIndexStatistics(ctx, &milvuspb.GetIndexStatisticsRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			IndexName:      "",
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		assert.Equal(t, floatIndexName, resp.IndexDescriptions[0].IndexName)
+	})
 
-	// wg.Add(1)
-	// t.Run("get index build progress", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	resp, err := proxy.GetIndexBuildProgress(ctx, &milvuspb.GetIndexBuildProgressRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		FieldName:      floatVecField,
-	// 		IndexName:      floatIndexName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// })
+	wg.Add(1)
+	t.Run("get index build progress", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.GetIndexBuildProgress(ctx, &milvuspb.GetIndexBuildProgressRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			FieldName:      floatVecField,
+			IndexName:      floatIndexName,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	})
 
-	// wg.Add(1)
-	// t.Run("get index state", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	resp, err := proxy.GetIndexState(ctx, &milvuspb.GetIndexStateRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 		FieldName:      floatVecField,
-	// 		IndexName:      floatIndexName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
-	// })
+	wg.Add(1)
+	t.Run("get index state", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.GetIndexState(ctx, &milvuspb.GetIndexStateRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			FieldName:      floatVecField,
+			IndexName:      floatIndexName,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	})
 
-	// wg.Add(1)
-	// t.Run("load collection not all vecFields with index", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	{
-	// 		stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
-	// 			DbName:         dbName,
-	// 			CollectionName: collectionName,
-	// 		})
-	// 		assert.NoError(t, err)
-	// 		assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
-	// 		assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
-	// 	}
+	wg.Add(1)
+	t.Run("load collection not all vecFields with index", func(t *testing.T) {
+		defer wg.Done()
+		{
+			stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
+				DbName:         dbName,
+				CollectionName: collectionName,
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
+			assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
+		}
 
-	// 	resp, err := proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetErrorCode())
-	// })
+		resp, err := proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+		})
+		assert.NoError(t, err)
+		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.GetErrorCode())
+	})
 
-	// wg.Add(1)
-	// t.Run("create index for binVec field", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	req := constructCreateIndexRequest(schemapb.DataType_BinaryVector)
+	wg.Add(1)
+	t.Run("create index for binVec field", func(t *testing.T) {
+		defer wg.Done()
+		req := constructCreateIndexRequest(schemapb.DataType_BinaryVector)
 
-	// 	resp, err := proxy.CreateIndex(ctx, req)
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
-	// })
+		resp, err := proxy.CreateIndex(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	})
 
-	// loaded := true
-	// wg.Add(1)
-	// t.Run("load collection", func(t *testing.T) {
-	// 	defer wg.Done()
-	// 	{
-	// 		stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
-	// 			DbName:         dbName,
-	// 			CollectionName: collectionName,
-	// 		})
-	// 		assert.NoError(t, err)
-	// 		assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
-	// 		assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
-	// 	}
+	loaded := true
+	wg.Add(1)
+	t.Run("load collection", func(t *testing.T) {
+		defer wg.Done()
+		{
+			stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
+				DbName:         dbName,
+				CollectionName: collectionName,
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
+			assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
+		}
 
-	// 	resp, err := proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: collectionName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+		resp, err := proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 
-	// 	// load other collection -> fail
-	// 	resp, err = proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
-	// 		Base:           nil,
-	// 		DbName:         dbName,
-	// 		CollectionName: otherCollectionName,
-	// 	})
-	// 	assert.NoError(t, err)
-	// 	assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+		// load other collection -> fail
+		resp, err = proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: otherCollectionName,
+		})
+		assert.NoError(t, err)
+		assert.NotEqual(t, commonpb.ErrorCode_Success, resp.ErrorCode)
 
-	// 	f := func() bool {
-	// 		resp, err := proxy.ShowCollections(ctx, &milvuspb.ShowCollectionsRequest{
-	// 			Base:            nil,
-	// 			DbName:          dbName,
-	// 			TimeStamp:       0,
-	// 			Type:            milvuspb.ShowType_InMemory,
-	// 			CollectionNames: []string{collectionName},
-	// 		})
-	// 		assert.NoError(t, err)
-	// 		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		f := func() bool {
+			resp, err := proxy.ShowCollections(ctx, &milvuspb.ShowCollectionsRequest{
+				Base:            nil,
+				DbName:          dbName,
+				TimeStamp:       0,
+				Type:            milvuspb.ShowType_InMemory,
+				CollectionNames: []string{collectionName},
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
 
-	// 		for idx, name := range resp.CollectionNames {
-	// 			if name == collectionName && resp.InMemoryPercentages[idx] == 100 {
-	// 				return true
-	// 			}
-	// 		}
+			for idx, name := range resp.CollectionNames {
+				if name == collectionName && resp.InMemoryPercentages[idx] == 100 {
+					return true
+				}
+			}
 
-	// 		return false
-	// 	}
+			return false
+		}
 
-	// 	// waiting for collection to be loaded
-	// 	counter := 0
-	// 	for !f() {
-	// 		if counter > 100 {
-	// 			loaded = false
-	// 			break
-	// 		}
-	// 		// avoid too frequent rpc call
-	// 		time.Sleep(100 * time.Millisecond)
-	// 		counter++
-	// 	}
-	// 	assert.True(t, loaded)
-	// })
+		// waiting for collection to be loaded
+		counter := 0
+		for !f() {
+			if counter > 100 {
+				loaded = false
+				break
+			}
+			// avoid too frequent rpc call
+			time.Sleep(100 * time.Millisecond)
+			counter++
+		}
+		assert.True(t, loaded)
+	})
 
 	// wg.Add(1)
 	// t.Run("show in-memory collections", func(t *testing.T) {
