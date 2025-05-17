@@ -37,7 +37,7 @@ import (
 
 /* #nosec G103 */
 func TestInsertBinlog(t *testing.T) {
-	w := NewInsertBinlogWriter(schemapb.DataType_Int64, 10, 20, 30, 40, false)
+	w := NewInsertBinlogWriter(schemapb.DataType_Int64, schemapb.DataType_None, 10, 20, 30, 40, false)
 
 	e1, err := w.NextInsertEventWriter()
 	assert.NoError(t, err)
@@ -137,6 +137,11 @@ func TestInsertBinlog(t *testing.T) {
 	colType := UnsafeReadInt32(buf, pos)
 	assert.Equal(t, schemapb.DataType(colType), schemapb.DataType_Int64)
 	pos += int(unsafe.Sizeof(colType))
+
+	// descriptor data fix, element type
+	elementType := UnsafeReadInt32(buf, pos)
+	assert.Equal(t, schemapb.DataType(elementType), schemapb.DataType_None)
+	pos += int(unsafe.Sizeof(elementType))
 
 	// descriptor data, post header lengths
 	for i := DescriptorEventType; i < EventTypeEnd; i++ {
@@ -389,6 +394,11 @@ func TestDeleteBinlog(t *testing.T) {
 	assert.Equal(t, schemapb.DataType(colType), schemapb.DataType_Int64)
 	pos += int(unsafe.Sizeof(colType))
 
+	// descriptor data fix, element type
+	elementType := UnsafeReadInt32(buf, pos)
+	assert.Equal(t, schemapb.DataType(elementType), schemapb.DataType_None)
+	pos += int(unsafe.Sizeof(elementType))
+
 	// descriptor data, post header lengths
 	for i := DescriptorEventType; i < EventTypeEnd; i++ {
 		size := getEventFixPartSize(i)
@@ -640,6 +650,11 @@ func TestDDLBinlog1(t *testing.T) {
 	assert.Equal(t, schemapb.DataType(colType), schemapb.DataType_Int64)
 	pos += int(unsafe.Sizeof(colType))
 
+	// descriptor data fix, element type
+	elementType := UnsafeReadInt32(buf, pos)
+	assert.Equal(t, schemapb.DataType(elementType), schemapb.DataType_None)
+	pos += int(unsafe.Sizeof(elementType))
+
 	// descriptor data, post header lengths
 	for i := DescriptorEventType; i < EventTypeEnd; i++ {
 		size := getEventFixPartSize(i)
@@ -890,6 +905,11 @@ func TestDDLBinlog2(t *testing.T) {
 	assert.Equal(t, schemapb.DataType(colType), schemapb.DataType_Int64)
 	pos += int(unsafe.Sizeof(colType))
 
+	// descriptor data fix, element type
+	elementType := UnsafeReadInt32(buf, pos)
+	assert.Equal(t, schemapb.DataType(elementType), schemapb.DataType_None)
+	pos += int(unsafe.Sizeof(elementType))
+
 	// descriptor data, post header lengths
 	for i := DescriptorEventType; i < EventTypeEnd; i++ {
 		size := getEventFixPartSize(i)
@@ -1135,6 +1155,11 @@ func TestIndexFileBinlog(t *testing.T) {
 	assert.Equal(t, schemapb.DataType(colType), schemapb.DataType_Int8)
 	pos += int(unsafe.Sizeof(colType))
 
+	// descriptor data fix, element type
+	elementType := UnsafeReadInt32(buf, pos)
+	assert.Equal(t, schemapb.DataType(elementType), schemapb.DataType_None)
+	pos += int(unsafe.Sizeof(elementType))
+
 	// descriptor data, post header lengths
 	for i := DescriptorEventType; i < EventTypeEnd; i++ {
 		size := getEventFixPartSize(i)
@@ -1264,6 +1289,11 @@ func TestIndexFileBinlogV2(t *testing.T) {
 	assert.Equal(t, schemapb.DataType(colType), schemapb.DataType_String)
 	pos += int(unsafe.Sizeof(colType))
 
+	// descriptor data fix, element type
+	elementType := UnsafeReadInt32(buf, pos)
+	assert.Equal(t, schemapb.DataType(elementType), schemapb.DataType_None)
+	pos += int(unsafe.Sizeof(elementType))
+
 	// descriptor data, post header lengths
 	for i := DescriptorEventType; i < EventTypeEnd; i++ {
 		size := getEventFixPartSize(i)
@@ -1325,7 +1355,7 @@ func TestNewBinlogReaderError(t *testing.T) {
 	assert.Nil(t, reader)
 	assert.Error(t, err)
 
-	w := NewInsertBinlogWriter(schemapb.DataType_Int64, 10, 20, 30, 40, false)
+	w := NewInsertBinlogWriter(schemapb.DataType_Int64, schemapb.DataType_None, 10, 20, 30, 40, false)
 
 	w.SetEventTimeStamp(1000, 2000)
 
@@ -1364,7 +1394,7 @@ func TestNewBinlogReaderError(t *testing.T) {
 }
 
 func TestNewBinlogWriterTsError(t *testing.T) {
-	w := NewInsertBinlogWriter(schemapb.DataType_Int64, 10, 20, 30, 40, false)
+	w := NewInsertBinlogWriter(schemapb.DataType_Int64, schemapb.DataType_None, 10, 20, 30, 40, false)
 
 	_, err := w.GetBuffer()
 	assert.Error(t, err)
@@ -1392,7 +1422,7 @@ func TestNewBinlogWriterTsError(t *testing.T) {
 }
 
 func TestInsertBinlogWriterCloseError(t *testing.T) {
-	insertWriter := NewInsertBinlogWriter(schemapb.DataType_Int64, 10, 20, 30, 40, false)
+	insertWriter := NewInsertBinlogWriter(schemapb.DataType_Int64, schemapb.DataType_None, 10, 20, 30, 40, false)
 	e1, err := insertWriter.NextInsertEventWriter()
 	assert.NoError(t, err)
 
@@ -1515,7 +1545,7 @@ func (e *testEvent) SetOffset(offset int32) {
 var _ EventWriter = (*testEvent)(nil)
 
 func TestWriterListError(t *testing.T) {
-	insertWriter := NewInsertBinlogWriter(schemapb.DataType_Int64, 10, 20, 30, 40, false)
+	insertWriter := NewInsertBinlogWriter(schemapb.DataType_Int64, schemapb.DataType_None, 10, 20, 30, 40, false)
 	sizeTotal := 2000000
 	insertWriter.baseBinlogWriter.descriptorEventData.AddExtra(originalSizeKey, fmt.Sprintf("%v", sizeTotal))
 	errorEvent := &testEvent{}

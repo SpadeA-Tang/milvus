@@ -70,7 +70,7 @@ func (suite *ReaderSuite) SetupTest() {
 
 func createBinlogBuf(t *testing.T, field *schemapb.FieldSchema, data storage.FieldData) []byte {
 	dataType := field.GetDataType()
-	w := storage.NewInsertBinlogWriter(dataType, 1, 1, 1, field.GetFieldID(), field.GetNullable())
+	w := storage.NewInsertBinlogWriter(dataType, field.ElementType, 1, 1, 1, field.GetFieldID(), field.GetNullable())
 	assert.NotNil(t, w)
 	defer w.Close()
 
