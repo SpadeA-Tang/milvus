@@ -406,6 +406,9 @@ ChunkedSegmentSealedImpl::LoadFieldData(FieldId field_id, FieldDataInfo& data) {
                     column = std::move(col);
                     break;
                 }
+                case milvus::DataType::VECTOR_ARRAY: {
+                    PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+                }
                 default: {
                     PanicInfo(DataTypeInvalid,
                               fmt::format("unsupported data type", data_type));
@@ -568,6 +571,9 @@ ChunkedSegmentSealedImpl::MapFieldData(const FieldId field_id,
                 // sparse_column->Seal(std::move(indices));
                 column = std::move(sparse_column);
                 break;
+            }
+            case milvus::DataType::VECTOR_ARRAY: {
+                PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
             }
             default: {
                 PanicInfo(DataTypeInvalid,
@@ -1730,6 +1736,11 @@ ChunkedSegmentSealedImpl::get_raw_data(FieldId field_id,
                 ret->mutable_vectors()->mutable_int8_vector()->data());
             break;
         }
+        case DataType::VECTOR_ARRAY: {
+            PanicInfo(DataTypeInvalid,
+                      fmt::format("VECTOR_ARRAY is not implemented"));
+        }
+
         default: {
             PanicInfo(DataTypeInvalid,
                       fmt::format("unsupported data type {}",

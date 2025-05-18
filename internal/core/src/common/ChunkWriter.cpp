@@ -382,6 +382,9 @@ create_chunk(const FieldMeta& field_meta,
             w = std::make_shared<SparseFloatVectorChunkWriter>(nullable);
             break;
         }
+        case milvus::DataType::VECTOR_ARRAY: {
+            PanicInfo(Unsupported, "VECTOR_ARRAY");
+        }
         default:
             PanicInfo(Unsupported, "Unsupported data type");
     }
@@ -485,6 +488,9 @@ create_chunk(const FieldMeta& field_meta,
             w = std::make_shared<SparseFloatVectorChunkWriter>(
                 file, file_offset, nullable);
             break;
+        }
+        case milvus::DataType::VECTOR_ARRAY: {
+            PanicInfo(Unsupported, "VECTOR_ARRAY");
         }
         default:
             PanicInfo(Unsupported, "Unsupported data type");

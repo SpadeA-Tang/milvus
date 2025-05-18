@@ -47,6 +47,8 @@ VectorBase::set_data_raw(ssize_t element_offset,
         } else if (field_meta.get_data_type() == DataType::VECTOR_INT8) {
             return set_data_raw(
                 element_offset, VEC_FIELD_DATA(data, int8), element_count);
+        } else if (field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
+            PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
         } else {
             PanicInfo(DataTypeInvalid, "unsupported vector type");
         }

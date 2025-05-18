@@ -92,6 +92,7 @@ enum class DataType {
     VECTOR_BFLOAT16 = 103,
     VECTOR_SPARSE_FLOAT = 104,
     VECTOR_INT8 = 105,
+    VECTOR_ARRAY = 106,
 };
 
 using Timestamp = uint64_t;  // TODO: use TiKV-like timestamp
@@ -327,7 +328,7 @@ IsJsonDataType(DataType data_type) {
 
 inline bool
 IsArrayDataType(DataType data_type) {
-    return data_type == DataType::ARRAY;
+    return data_type == DataType::ARRAY || data_type == DataType::VECTOR_ARRAY;
 }
 
 inline bool
@@ -648,6 +649,15 @@ struct TypeTraits<DataType::VECTOR_FLOAT> {
     static constexpr const char* Name = "VECTOR_FLOAT";
 };
 
+template <>
+struct TypeTraits<DataType::VECTOR_ARRAY> {
+    using NativeType = void;
+    static constexpr DataType TypeKind = DataType::VECTOR_ARRAY;
+    static constexpr bool IsPrimitiveType = false;
+    static constexpr bool IsFixedWidth = false;
+    static constexpr const char* Name = "VECTOR_ARRAY";
+};
+
 inline DataType
 FromValCase(milvus::proto::plan::GenericValue::ValCase val_case) {
     switch (val_case) {
@@ -731,6 +741,9 @@ struct fmt::formatter<milvus::DataType> : formatter<string_view> {
                 break;
             case milvus::DataType::VECTOR_INT8:
                 name = "VECTOR_INT8";
+                break;
+            case milvus::DataType::VECTOR_ARRAY:
+                name = "VECTOR_ARRAY";
                 break;
         }
         return formatter<string_view>::format(name, ctx);

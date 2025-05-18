@@ -274,6 +274,9 @@ FieldDataImpl<Type, is_type_entire_row>::FillFieldData(
             }
             return FillFieldData(values.data(), element_count);
         }
+        case DataType::VECTOR_ARRAY: {
+            PanicInfo(Unsupported, "VECTOR_ARRAY");
+        }
         default: {
             PanicInfo(DataTypeInvalid,
                       GetName() + "::FillFieldData" +
@@ -394,6 +397,9 @@ FieldDataImpl<Type, is_type_entire_row>::FillFieldData(
             FixedVector<Array> values(element_count);
             return FillFieldData(
                 values.data(), valid_data_ptr.get(), element_count);
+        }
+        case DataType::VECTOR_ARRAY: {
+            PanicInfo(Unsupported, "VECTOR_ARRAY");
         }
         default: {
             PanicInfo(DataTypeInvalid,

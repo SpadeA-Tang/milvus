@@ -319,6 +319,9 @@ CreateArrowBuilder(DataType data_type, int dim) {
             return std::make_shared<arrow::FixedSizeBinaryBuilder>(
                 arrow::fixed_size_binary(dim * sizeof(int8)));
         }
+        case DataType::VECTOR_ARRAY: {
+            PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+        }
         default: {
             PanicInfo(
                 DataTypeInvalid, "unsupported vector data type {}", data_type);
@@ -882,6 +885,8 @@ CreateFieldData(const DataType& type,
         case DataType::VECTOR_INT8:
             return std::make_shared<FieldData<Int8Vector>>(
                 dim, type, total_num_rows);
+        case DataType::VECTOR_ARRAY:
+            PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
         default:
             PanicInfo(DataTypeInvalid,
                       "CreateFieldData not support data type " +

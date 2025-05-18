@@ -210,6 +210,8 @@ SegmentInternalInterface::FillTargetEntry(
         } else {
             col = bulk_subscript(field_id, offsets, size);
         }
+
+        // todo(SpadeA): consider vector array?
         if (field_meta.get_data_type() == DataType::ARRAY) {
             col->mutable_scalars()->mutable_array_data()->set_element_type(
                 proto::schema::DataType(field_meta.get_element_type()));

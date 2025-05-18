@@ -224,7 +224,7 @@ class FieldMeta {
             Assert(string_info_.has_value());
             return string_info_->max_length;
         } else if (IsVariableDataType(type_)) {
-            return type_ == DataType::ARRAY ? ARRAY_SIZE : JSON_SIZE;
+            return IsArrayDataType(type_) ? ARRAY_SIZE : JSON_SIZE;
         } else {
             return GetDataTypeSize(type_);
         }

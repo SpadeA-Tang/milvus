@@ -214,6 +214,9 @@ GetRawDataSizeOfDataArray(const DataArray* data,
                 result += data->vectors().sparse_float_vector().ByteSizeLong();
                 break;
             }
+            case DataType::VECTOR_ARRAY: {
+                PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+            }
             default: {
                 PanicInfo(
                     DataTypeInvalid,
@@ -617,6 +620,8 @@ MergeDataArray(std::vector<MergeBase>& merge_bases,
                 auto data = VEC_FIELD_DATA(src_field_data, int8);
                 auto obj = vector_array->mutable_int8_vector();
                 obj->assign(data, dim * sizeof(int8));
+            } else if (field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
+                PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
             } else {
                 PanicInfo(DataTypeInvalid,
                           fmt::format("unsupported datatype {}", data_type));

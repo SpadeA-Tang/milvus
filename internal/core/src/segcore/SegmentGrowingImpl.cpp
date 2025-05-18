@@ -716,6 +716,8 @@ SegmentGrowingImpl::bulk_subscript(FieldId field_id,
                 seg_offsets,
                 count,
                 result->mutable_vectors()->mutable_int8_vector()->data());
+        } else if (field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
+            PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
         } else {
             PanicInfo(DataTypeInvalid, "logical error");
         }

@@ -58,6 +58,9 @@ PaddingSize(const DataType& type) {
             return FILE_ARRAY_PADDING;
         case DataType::VECTOR_SPARSE_FLOAT:
             return SPARSE_FLOAT_PADDING;
+        case DataType::VECTOR_ARRAY:
+            // todo: do something?
+            return 0;
         default:
             break;
     }

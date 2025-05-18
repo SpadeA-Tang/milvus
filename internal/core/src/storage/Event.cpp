@@ -250,8 +250,10 @@ BaseEventData::Serialize() {
         auto field_data = payload_reader->get_field_data();
         auto data_type = field_data->get_data_type();
         std::shared_ptr<PayloadWriter> payload_writer;
-        if (IsVectorDataType(data_type) &&
-            !IsSparseFloatVectorDataType(data_type)) {
+        if (data_type == DataType::VECTOR_ARRAY) {
+            PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+        } else if (IsVectorDataType(data_type) &&
+                   !IsSparseFloatVectorDataType(data_type)) {
             payload_writer = std::make_unique<PayloadWriter>(
                 data_type, field_data->get_dim(), field_data->IsNullable());
         } else {
