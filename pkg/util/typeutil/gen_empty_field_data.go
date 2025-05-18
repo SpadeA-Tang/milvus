@@ -279,6 +279,8 @@ func GenEmptyFieldData(field *schemapb.FieldSchema) (*schemapb.FieldData, error)
 		return genEmptySparseFloatVectorFieldData(field)
 	case schemapb.DataType_Int8Vector:
 		return genEmptyInt8VectorFieldData(field)
+	case schemapb.DataType_ArrayOfVector:
+		panic("unimplemented")
 	default:
 		return nil, fmt.Errorf("unsupported data type: %s", dataType.String())
 	}

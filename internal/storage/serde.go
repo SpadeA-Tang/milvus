@@ -391,6 +391,12 @@ var serdeMap = func() map[schemapb.DataType]serdeEntry {
 						return true
 					}
 				}
+				if vv, ok := v.(*schemapb.VectorField); ok {
+					if bytes, err := proto.Marshal(vv); err == nil {
+						builder.Append(bytes)
+						return true
+					}
+				}
 			}
 			return false
 		},
@@ -398,6 +404,7 @@ var serdeMap = func() map[schemapb.DataType]serdeEntry {
 
 	m[schemapb.DataType_Array] = byteEntry
 	m[schemapb.DataType_JSON] = byteEntry
+	m[schemapb.DataType_ArrayOfVector] = byteEntry
 
 	fixedSizeDeserializer := func(a arrow.Array, i int) (any, bool) {
 		if a.IsNull(i) {

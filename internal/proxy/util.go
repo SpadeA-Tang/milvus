@@ -513,6 +513,12 @@ func ValidateField(field *schemapb.FieldSchema, schema *schemapb.CollectionSchem
 			return err
 		}
 	}
+
+	if field.DataType == schemapb.DataType_ArrayOfVector {
+		// todo(SpadeA):
+		println("array of vector")
+	}
+
 	// TODO should remove the index params in the field schema
 	indexParams := funcutil.KeyValuePair2Map(field.GetIndexParams())
 	if err = ValidateAutoIndexMmapConfig(isVectorType, indexParams); err != nil {

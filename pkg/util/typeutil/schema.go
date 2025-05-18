@@ -170,6 +170,8 @@ func estimateSizeBy(schema *schemapb.CollectionSchema, policy getVariableFieldLe
 					break
 				}
 			}
+		case schemapb.DataType_ArrayOfVector:
+			panic("unimplemented")
 		}
 	}
 	return res, nil
@@ -250,11 +252,6 @@ func estimateFieldSize(field *schemapb.FieldData, rowOffset int, isStructField b
 		}
 		return len(field.GetScalars().GetStringData().Data[rowOffset]), nil
 	case schemapb.DataType_Array:
-		if isStructField && field.GetVectors() != nil {
-			vectorType := field.GetVectors().GetArrayVector().GetElementType()
-			return CalcColumnSizeForVectorArray(field.GetVectors().GetArrayVector().GetData()[rowOffset], vectorType), nil
-		}
-
 		if rowOffset >= len(field.GetScalars().GetArrayData().GetData()) {
 			return 0, fmt.Errorf("offset out range of field datas")
 		}
@@ -283,6 +280,12 @@ func estimateFieldSize(field *schemapb.FieldData, rowOffset int, isStructField b
 		return len(vec.Contents[rowOffset]), nil
 	case schemapb.DataType_Int8Vector:
 		return int(field.GetVectors().GetDim()), nil
+	case schemapb.DataType_ArrayOfVector:
+		arrayVector := field.GetVectors().GetArrayVector()
+		if rowOffset >= len(arrayVector.GetData()) {
+			return 0, fmt.Errorf("offset out range of field datas")
+		}
+		return CalcColumnSizeForVectorArray(arrayVector.GetData()[rowOffset], arrayVector.GetElementType()), nil
 	default:
 		panic("Unknown data type:" + field.GetType().String())
 	}
@@ -633,7 +636,7 @@ func IsJSONType(dataType schemapb.DataType) bool {
 }
 
 func IsArrayType(dataType schemapb.DataType) bool {
-	return dataType == schemapb.DataType_Array
+	return dataType == schemapb.DataType_Array || dataType == schemapb.DataType_ArrayOfVector
 }
 
 // IsFloatingType returns true if input is a floating type, otherwise false
@@ -1315,12 +1318,16 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 	for _, srcFieldData := range src {
 		if structField, ok := srcFieldData.Field.(*schemapb.FieldData_Structs); ok {
 			for _, subField := range structField.Structs.Fields {
-				mergeFieldData(subField)
+				if err := mergeFieldData(subField); err != nil {
+					return err
+				}
 			}
 			continue
 		}
 
-		mergeFieldData(srcFieldData)
+		if err := mergeFieldData(srcFieldData); err != nil {
+			return err
+		}
 	}
 
 	return nil

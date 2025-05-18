@@ -340,17 +340,9 @@ func NewFieldData(dataType schemapb.DataType, fieldSchema *schemapb.FieldSchema,
 		}
 		return data, nil
 	case schemapb.DataType_Array:
-		if fieldSchema.IsStructField && typeutil.IsVectorType(fieldSchema.GetElementType()) {
-			data := &ArrayVectorFieldData{
-				Data:        make([]*schemapb.VectorField, 0, cap),
-				ElementType: fieldSchema.GetElementType(),
-			}
-			return data, nil
-		}
-		data := &ArrayFieldData{
-			Data:        make([]*schemapb.ScalarField, 0, cap),
-			ElementType: fieldSchema.GetElementType(),
-			Nullable:    fieldSchema.GetNullable(),
+		data := &JSONFieldData{
+			Data:     make([][]byte, 0, cap),
+			Nullable: fieldSchema.GetNullable(),
 		}
 		if fieldSchema.GetNullable() {
 			data.ValidData = make([]bool, 0, cap)
@@ -364,6 +356,12 @@ func NewFieldData(dataType schemapb.DataType, fieldSchema *schemapb.FieldSchema,
 		}
 		if fieldSchema.GetNullable() {
 			data.ValidData = make([]bool, 0, cap)
+		}
+		return data, nil
+	case schemapb.DataType_ArrayOfVector:
+		data := &ArrayVectorFieldData{
+			Data:        make([]*schemapb.VectorField, 0, cap),
+			ElementType: fieldSchema.GetElementType(),
 		}
 		return data, nil
 	default:
@@ -450,6 +448,7 @@ type Int8VectorFieldData struct {
 }
 
 type ArrayVectorFieldData struct {
+	Dim         int64
 	ElementType schemapb.DataType
 	Data        []*schemapb.VectorField
 }
@@ -1480,7 +1479,7 @@ func (data *Int8VectorFieldData) GetDataType() schemapb.DataType {
 }
 
 func (data *ArrayVectorFieldData) GetDataType() schemapb.DataType {
-	return schemapb.DataType_Array
+	return schemapb.DataType_ArrayOfVector
 }
 
 // why not binary.Size(data) directly? binary.Size(data) return -1

@@ -307,7 +307,7 @@ func getNumRowsOfScalarField(datas interface{}) uint64 {
 	return uint64(realTypeDatas.Len())
 }
 
-func getNumRowsOfVectorField(datas interface{}) uint64 {
+func getNumRowsOfArrayVectorField(datas interface{}) uint64 {
 	realTypeDatas := reflect.ValueOf(datas)
 	return uint64(realTypeDatas.Len())
 }
@@ -380,9 +380,13 @@ func IsVectorField(dataType schemapb.DataType) bool {
 }
 
 // GetNumRowOfFieldDataWithSchema returns num of rows with schema specification.
-func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, fieldSchema *schemapb.FieldSchema) (uint64, error) {
+func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, helper *typeutil.SchemaHelper) (uint64, error) {
 	var fieldNumRows uint64
 	var err error
+	fieldSchema, err := helper.GetFieldFromName(fieldData.GetFieldName())
+	if err != nil {
+		return 0, err
+	}
 	switch fieldSchema.GetDataType() {
 	case schemapb.DataType_Bool:
 		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetBoolData().GetData())
@@ -397,11 +401,7 @@ func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, fieldSchema *
 	case schemapb.DataType_String, schemapb.DataType_VarChar, schemapb.DataType_Text:
 		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetStringData().GetData())
 	case schemapb.DataType_Array:
-		if fieldSchema.IsStructField && IsVectorField(fieldSchema.GetElementType()) {
-			fieldNumRows = getNumRowsOfVectorField(fieldData.GetVectors().GetArrayVector().GetData())
-		} else {
-			fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetArrayData().GetData())
-		}
+		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetArrayData().GetData())
 	case schemapb.DataType_JSON:
 		fieldNumRows = getNumRowsOfScalarField(fieldData.GetScalars().GetJsonData().GetData())
 	case schemapb.DataType_FloatVector:
@@ -436,6 +436,8 @@ func GetNumRowOfFieldDataWithSchema(fieldData *schemapb.FieldData, fieldSchema *
 		if err != nil {
 			return 0, err
 		}
+	case schemapb.DataType_ArrayOfVector:
+		fieldNumRows = getNumRowsOfArrayVectorField(fieldData.GetVectors().GetArrayVector().GetData())
 	default:
 		return 0, fmt.Errorf("%s is not supported now", fieldSchema.GetDataType())
 	}
@@ -505,6 +507,8 @@ func GetNumRowOfFieldData(fieldData *schemapb.FieldData) (uint64, error) {
 			if err != nil {
 				return 0, err
 			}
+		case *schemapb.VectorField_ArrayVector:
+			fieldNumRows = getNumRowsOfArrayVectorField(vectorField.GetArrayVector().GetData())
 		default:
 			return 0, fmt.Errorf("%s is not supported now", vectorFieldType)
 		}

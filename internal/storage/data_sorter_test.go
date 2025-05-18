@@ -144,6 +144,21 @@ func TestDataSorter(t *testing.T) {
 					DataType:     schemapb.DataType_SparseFloatVector,
 				},
 			},
+			StructFields: []*schemapb.StructFieldSchema{
+				{
+					FieldID: 113,
+					Name:    "field_struct",
+					Fields: []*schemapb.FieldSchema{
+						{
+							FieldID:     114,
+							Name:        "field_sturct_float_vector",
+							Description: "float",
+							DataType:    schemapb.DataType_ArrayOfVector,
+							ElementType: schemapb.DataType_FloatVector,
+						},
+					},
+				},
+			},
 		},
 	}
 

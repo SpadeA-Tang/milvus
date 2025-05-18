@@ -1450,6 +1450,7 @@ func (h *HandlersV2) createCollection(ctx context.Context, c *gin.Context, anyRe
 			allOutputFields = append(allOutputFields, function.OutputFieldNames...)
 		}
 
+		// todo(SpadeA): consider struct fields
 		for _, field := range httpReq.Schema.Fields {
 			fieldDataType, ok := schemapb.DataType_value[field.DataType]
 			if !ok {

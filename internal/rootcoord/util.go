@@ -398,7 +398,7 @@ func checkFieldSchema(fieldSchemas []*schemapb.FieldSchema) error {
 				return merr.WrapErrParameterInvalidMsg(msg)
 			}
 			dtype := fieldSchema.GetDataType()
-			if dtype == schemapb.DataType_Array || dtype == schemapb.DataType_JSON || typeutil.IsVectorType(dtype) {
+			if dtype == schemapb.DataType_Array || dtype == schemapb.DataType_ArrayOfVector || dtype == schemapb.DataType_JSON || typeutil.IsVectorType(dtype) {
 				msg := fmt.Sprintf("type not support default_value, type:%s, name:%s", fieldSchema.GetDataType().String(), fieldSchema.GetName())
 				return merr.WrapErrParameterInvalidMsg(msg)
 			}

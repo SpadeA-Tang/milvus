@@ -329,6 +329,9 @@ func FieldDataColumn(fd *schemapb.FieldData, begin, end int) (Column, error) {
 		}
 		return NewColumnInt8Vector(fd.GetFieldName(), dim, vector), nil
 
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
+
 	default:
 		return nil, fmt.Errorf("unsupported data type %s", fd.GetType())
 	}

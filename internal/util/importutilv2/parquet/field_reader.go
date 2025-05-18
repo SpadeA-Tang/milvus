@@ -205,6 +205,8 @@ func (c *FieldReader) Next(count int64) (any, any, error) {
 		}
 		data, err := ReadArrayData(c, count)
 		return data, nil, err
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
 	default:
 		return nil, nil, merr.WrapErrImportFailed(fmt.Sprintf("unsupported data type '%s' for field '%s'",
 			c.field.GetDataType().String(), c.field.GetName()))

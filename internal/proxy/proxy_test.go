@@ -415,7 +415,7 @@ func TestProxy(t *testing.T) {
 	floatIndexName := "float_index"
 	binaryIndexName := "binary_index"
 	structId := "structI32"
-	structVec := "structVec"
+	// structVec := "structVec"
 	structField := "structField"
 	nlist := 10
 	nq := 10
@@ -478,36 +478,35 @@ func TestProxy(t *testing.T) {
 					Value: "100",
 				},
 			},
-			IndexParams:   nil,
-			AutoID:        false,
-			IsStructField: true,
+			IndexParams: nil,
+			AutoID:      false,
 		}
-		sVec := &schemapb.FieldSchema{
-			FieldID:      104,
-			Name:         structVec,
-			IsPrimaryKey: false,
-			Description:  "",
-			DataType:     schemapb.DataType_Array,
-			ElementType:  schemapb.DataType_FloatVector,
-			TypeParams: []*commonpb.KeyValuePair{
-				{
-					Key:   common.DimKey,
-					Value: strconv.Itoa(dim),
-				},
-				{
-					Key:   common.MaxCapacityKey,
-					Value: "100",
-				},
-			},
-			IndexParams:   nil,
-			AutoID:        false,
-			IsStructField: true,
-		}
+		// sVec := &schemapb.FieldSchema{
+		// 	FieldID:      104,
+		// 	Name:         structVec,
+		// 	IsPrimaryKey: false,
+		// 	Description:  "",
+		// 	DataType:     schemapb.DataType_Array,
+		// 	ElementType:  schemapb.DataType_FloatVector,
+		// 	TypeParams: []*commonpb.KeyValuePair{
+		// 		{
+		// 			Key:   common.DimKey,
+		// 			Value: strconv.Itoa(dim),
+		// 		},
+		// 		{
+		// 			Key:   common.MaxCapacityKey,
+		// 			Value: "100",
+		// 		},
+		// 	},
+		// 	IndexParams:   nil,
+		// 	AutoID:        false,
+		// 	IsStructField: true,
+		// }
 		structF := &schemapb.StructFieldSchema{
 			FieldID:            105,
 			Name:               structField,
 			EnableDynamicField: false,
-			Fields:             []*schemapb.FieldSchema{sId, sVec},
+			Fields:             []*schemapb.FieldSchema{sId},
 		}
 
 		return &schemapb.CollectionSchema{

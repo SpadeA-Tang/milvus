@@ -98,13 +98,11 @@ func (r *PayloadReader) GetDataFromPayload() (interface{}, []bool, int, error) {
 		val, validData, err := r.GetStringFromPayload()
 		return val, validData, 0, err
 	case schemapb.DataType_Array:
-		if typeutil.IsVectorType(r.elementDataType) {
-			val, err := r.GetVectorArrayFromPayload()
-			return val, nil, 0, err
-		} else {
-			val, validData, err := r.GetArrayFromPayload()
-			return val, validData, 0, err
-		}
+		val, validData, err := r.GetArrayFromPayload()
+		return val, validData, 0, err
+	case schemapb.DataType_ArrayOfVector:
+		val, err := r.GetVectorArrayFromPayload()
+		return val, nil, 0, err
 	case schemapb.DataType_JSON:
 		val, validData, err := r.GetJSONFromPayload()
 		return val, validData, 0, err
@@ -401,7 +399,7 @@ func (r *PayloadReader) GetStringFromPayload() ([]string, []bool, error) {
 }
 
 func (r *PayloadReader) GetArrayFromPayload() ([]*schemapb.ScalarField, []bool, error) {
-	if r.colType != schemapb.DataType_Array || typeutil.IsVectorType(r.elementDataType) {
+	if r.colType != schemapb.DataType_Array {
 		return nil, nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("failed to get array from datatype %v", r.colType.String()))
 	}
 
@@ -424,7 +422,7 @@ func (r *PayloadReader) GetArrayFromPayload() ([]*schemapb.ScalarField, []bool, 
 }
 
 func (r *PayloadReader) GetVectorArrayFromPayload() ([]*schemapb.VectorField, error) {
-	if r.colType != schemapb.DataType_Array || !typeutil.IsVectorType(r.elementDataType) {
+	if r.colType != schemapb.DataType_ArrayOfVector {
 		return nil, merr.WrapErrParameterInvalidMsg(fmt.Sprintf("failed to get vector from datatype %v", r.colType.String()))
 	}
 

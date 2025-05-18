@@ -377,6 +377,8 @@ func (r *rowParser) parseEntity(field *schemapb.FieldSchema, obj string) (any, e
 			return nil, err
 		}
 		return scalarFieldData, nil
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
 	default:
 		return nil, fmt.Errorf("parse csv failed, unsupport data type: %s",
 			field.GetDataType().String())

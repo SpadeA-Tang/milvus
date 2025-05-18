@@ -365,27 +365,15 @@ func AddFieldDataToPayload(eventWriter *insertEventWriter, dataType schemapb.Dat
 			}
 		}
 	case schemapb.DataType_Array:
-		switch typedData := singleData.(type) {
-		case *ArrayFieldData:
-			for i, singleArray := range typedData.Data {
-				isValid := true
-				if len(typedData.ValidData) != 0 {
-					isValid = typedData.ValidData[i]
-				}
-				if err = eventWriter.AddOneArrayToPayload(singleArray, isValid); err != nil {
-					return err
-				}
+		for i, singleArray := range singleData.(*ArrayFieldData).Data {
+			isValid := true
+			if len(singleData.(*ArrayFieldData).ValidData) != 0 {
+				isValid = singleData.(*ArrayFieldData).ValidData[i]
 			}
-		case *ArrayVectorFieldData:
-			for _, singleArray := range typedData.Data {
-				if err = eventWriter.AddOneVectorArrayToPayload(singleArray); err != nil {
-					return err
-				}
+			if err = eventWriter.AddOneArrayToPayload(singleArray, isValid); err != nil {
+				return err
 			}
-		default:
-			return fmt.Errorf("undefined array type %T", singleData)
 		}
-
 	case schemapb.DataType_JSON:
 		for i, singleJSON := range singleData.(*JSONFieldData).Data {
 			isValid := true
@@ -419,6 +407,12 @@ func AddFieldDataToPayload(eventWriter *insertEventWriter, dataType schemapb.Dat
 	case schemapb.DataType_Int8Vector:
 		if err = eventWriter.AddInt8VectorToPayload(singleData.(*Int8VectorFieldData).Data, singleData.(*Int8VectorFieldData).Dim); err != nil {
 			return err
+		}
+	case schemapb.DataType_ArrayOfVector:
+		for _, singleArray := range singleData.(*ArrayVectorFieldData).Data {
+			if err = eventWriter.AddOneVectorArrayToPayload(singleArray); err != nil {
+				return err
+			}
 		}
 	default:
 		return fmt.Errorf("undefined data type %d", dataType)
@@ -508,6 +502,27 @@ func (insertCodec *InsertCodec) DeserializeInto(fieldBinlogs []*Blob, rowNum int
 	}
 
 	return collectionID, partitionID, segmentID, nil
+}
+
+func GetVectorElementType(data *schemapb.VectorField) schemapb.DataType {
+	switch data.Data.(type) {
+	case *schemapb.VectorField_FloatVector:
+		return schemapb.DataType_FloatVector
+	case *schemapb.VectorField_BinaryVector:
+		return schemapb.DataType_BinaryVector
+	case *schemapb.VectorField_Float16Vector:
+		return schemapb.DataType_Float16Vector
+	case *schemapb.VectorField_Bfloat16Vector:
+		return schemapb.DataType_BFloat16Vector
+	case *schemapb.VectorField_Int8Vector:
+		return schemapb.DataType_Int8Vector
+	case *schemapb.VectorField_SparseFloatVector:
+		return schemapb.DataType_SparseFloatVector
+	case *schemapb.VectorField_ArrayVector:
+		panic("unexpect vector element type")
+	default:
+		panic("unreacheable")
+	}
 }
 
 func AddInsertData(dataType schemapb.DataType, data interface{}, insertData *InsertData, fieldID int64, rowNum int, eventReader *EventReader, dim int, validData []bool) (dataLength int, err error) {
@@ -723,6 +738,24 @@ func AddInsertData(dataType schemapb.DataType, data interface{}, insertData *Ins
 		int8VectorFieldData.Dim = dim
 		insertData.Data[fieldID] = int8VectorFieldData
 		return length, nil
+
+	case schemapb.DataType_ArrayOfVector:
+		singleData := data.([]*schemapb.VectorField)
+		if len(singleData) == 0 {
+			return 0, nil
+		}
+
+		if fieldData == nil {
+			fieldData = &ArrayVectorFieldData{Data: make([]*schemapb.VectorField, 0, rowNum),
+				Dim:         singleData[0].Dim,
+				ElementType: GetVectorElementType(singleData[0]),
+			}
+		}
+		arrayVectorFieldData := fieldData.(*ArrayVectorFieldData)
+
+		arrayVectorFieldData.Data = append(arrayVectorFieldData.Data, singleData...)
+		insertData.Data[fieldID] = arrayVectorFieldData
+		return len(singleData), nil
 
 	default:
 		return 0, fmt.Errorf("undefined data type %d", dataType)

@@ -410,6 +410,8 @@ func checkAndSetData(body []byte, collSchema *schemapb.CollectionSchema) (error,
 						return merr.WrapErrParameterInvalid(schemapb.DataType_name[int32(fieldType)], dataString, err.Error()), reallyDataArray, validDataMap
 					}
 					reallyData[fieldName] = vectorArray
+				case schemapb.DataType_ArrayOfVector:
+					panic("not implemented")
 				case schemapb.DataType_Bool:
 					result, err := cast.ToBoolE(dataString)
 					if err != nil {
@@ -802,6 +804,8 @@ func anyToColumns(rows []map[string]interface{}, validDataMap map[string][]bool,
 			data = make([][]int8, 0, rowsLen)
 			dim, _ := getDim(field)
 			nameDims[field.Name] = dim
+		case schemapb.DataType_ArrayOfVector:
+			panic("not implemented")
 		default:
 			return nil, fmt.Errorf("the type(%v) of field(%v) is not supported, use other sdk please", field.DataType, field.Name)
 		}
@@ -906,6 +910,8 @@ func anyToColumns(rows []map[string]interface{}, validDataMap map[string][]bool,
 				nameColumns[field.Name] = append(nameColumns[field.Name].([][]byte), content)
 			case schemapb.DataType_Int8Vector:
 				nameColumns[field.Name] = append(nameColumns[field.Name].([][]int8), candi.v.Interface().([]int8))
+			case schemapb.DataType_ArrayOfVector:
+				panic("not implemented")
 			default:
 				return nil, fmt.Errorf("the type(%v) of field(%v) is not supported, use other sdk please", field.DataType, field.Name)
 			}
@@ -1123,6 +1129,8 @@ func anyToColumns(rows []map[string]interface{}, validDataMap map[string][]bool,
 					},
 				},
 			}
+		case schemapb.DataType_ArrayOfVector:
+			panic("not implemented")
 		default:
 			return nil, fmt.Errorf("the type(%v) of field(%v) is not supported, use other sdk please", colData.Type, name)
 		}
@@ -1352,6 +1360,8 @@ func buildQueryResp(rowsNum int64, needFields []string, fieldDataList []*schemap
 				rowsNum = int64(len(fieldDataList[0].GetVectors().GetSparseFloatVector().Contents))
 			case schemapb.DataType_Int8Vector:
 				rowsNum = int64(len(fieldDataList[0].GetVectors().GetInt8Vector())) / fieldDataList[0].GetVectors().GetDim()
+			case schemapb.DataType_ArrayOfVector:
+				panic("not implemented")
 			default:
 				return nil, fmt.Errorf("the type(%v) of field(%v) is not supported, use other sdk please", fieldDataList[0].Type, fieldDataList[0].FieldName)
 			}
@@ -1483,6 +1493,8 @@ func buildQueryResp(rowsNum int64, needFields []string, fieldDataList []*schemap
 							}
 						}
 					}
+				case schemapb.DataType_ArrayOfVector:
+					panic("not implemented")
 				default:
 					row[fieldDataList[j].FieldName] = ""
 				}
@@ -1841,6 +1853,8 @@ func generateTemplateArrayData(list []interface{}) *schemapb.TemplateArrayValue 
 				},
 			},
 		}
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
 	// won't happen
 	default:
 		panic(fmt.Sprintf("Unexpected data(%v) type when generateTemplateArrayData, please check it!", list))

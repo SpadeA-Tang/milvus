@@ -9,6 +9,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/v2/proto/planpb"
 )
 
+// todo(SpadeA): consider struct fields
 func convertArrayValue(templateName string, templateValue *schemapb.TemplateArrayValue) (*planpb.GenericValue, error) {
 	var arrayValues []*planpb.GenericValue
 	var elementType schemapb.DataType

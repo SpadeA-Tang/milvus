@@ -115,6 +115,8 @@ func (v *validateUtil) validateFieldData(field *schemapb.FieldData, fieldSchema 
 		if err := v.checkArrayFieldData(field, fieldSchema); err != nil {
 			return err
 		}
+	case schemapb.DataType_ArrayOfVector:
+		// todo(SpadeA): validate array of vector
 
 	default:
 	}
@@ -165,7 +167,7 @@ func (v *validateUtil) Validate(data []*schemapb.FieldData, helper *typeutil.Sch
 	return nil
 }
 
-func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, fieldSchema *schemapb.FieldSchema, schema *typeutil.SchemaHelper, numRows uint64) error {
+func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, schema *typeutil.SchemaHelper, numRows uint64) error {
 	errNumRowsMismatch := func(fieldName string, fieldNumRows uint64) error {
 		msg := fmt.Sprintf("the num_rows (%d) of field (%s) is not equal to passed num_rows (%d)", fieldNumRows, fieldName, numRows)
 		return merr.WrapErrParameterInvalid(numRows, fieldNumRows, msg)
@@ -173,6 +175,11 @@ func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, fieldSche
 	errDimMismatch := func(fieldName string, dataDim int64, schemaDim int64) error {
 		msg := fmt.Sprintf("the dim (%d) of field data(%s) is not equal to schema dim (%d)", dataDim, fieldName, schemaDim)
 		return merr.WrapErrParameterInvalid(schemaDim, dataDim, msg)
+	}
+
+	fieldSchema, err := schema.GetFieldFromName(field.GetFieldName())
+	if err != nil {
+		return err
 	}
 
 	// todo(SpadeA): for struct vector type(which is a array type), do we need to check concrete element data?
@@ -280,7 +287,7 @@ func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, fieldSche
 		}
 	default:
 		// error won't happen here.
-		n, err := funcutil.GetNumRowOfFieldDataWithSchema(field, fieldSchema)
+		n, err := funcutil.GetNumRowOfFieldDataWithSchema(field, schema)
 		if err != nil {
 			return err
 		}
@@ -302,24 +309,14 @@ func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil
 			// todo(SpadeA): do more check for struct field itself
 
 			for _, subField := range structField.Structs.Fields {
-				subFieldSchema, err := schema.GetFieldFromName(subField.GetFieldName())
-				if err != nil {
-					return err
-				}
-
-				if err := v.checkAlignedForField(subField, subFieldSchema, schema, numRows); err != nil {
+				if err := v.checkAlignedForField(subField, schema, numRows); err != nil {
 					return err
 				}
 			}
 
 			continue
 		}
-		f, err := schema.GetFieldFromName(field.GetFieldName())
-		if err != nil {
-			return err
-		}
-
-		if err := v.checkAlignedForField(field, f, schema, numRows); err != nil {
+		if err := v.checkAlignedForField(field, schema, numRows); err != nil {
 			return err
 		}
 	}
@@ -927,11 +924,6 @@ func (v *validateUtil) checkArrayElement(array *schemapb.ArrayArray, field *sche
 }
 
 func (v *validateUtil) checkArrayFieldData(field *schemapb.FieldData, fieldSchema *schemapb.FieldSchema) error {
-	if fieldSchema.IsStructField {
-		// todo(SpadeA): validate struct field
-		return nil
-	}
-
 	data := field.GetScalars().GetArrayData()
 	if data == nil {
 		elementTypeStr := fieldSchema.GetElementType().String()

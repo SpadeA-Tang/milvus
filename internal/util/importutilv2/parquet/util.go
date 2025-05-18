@@ -246,6 +246,8 @@ func convertToArrowDataType(field *schemapb.FieldSchema, isArray bool) (arrow.Da
 			Nullable: true,
 			Metadata: arrow.Metadata{},
 		}), nil
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
 	default:
 		return nil, merr.WrapErrParameterInvalidMsg("unsupported data type %v", dataType.String())
 	}

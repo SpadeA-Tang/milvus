@@ -242,6 +242,12 @@ func (w *NativePayloadWriter) AddDataToPayload(data interface{}, validData []boo
 			return merr.WrapErrParameterInvalidMsg("incorrect data type")
 		}
 		return w.AddInt8VectorToPayload(val, w.dim.GetValue())
+	case schemapb.DataType_ArrayOfVector:
+		val, ok := data.(*schemapb.VectorField)
+		if !ok {
+			return merr.WrapErrParameterInvalidMsg("incorrect data type")
+		}
+		return w.AddOneVectorArrayToPayload(val)
 	default:
 		return errors.New("unsupported datatype")
 	}
@@ -827,6 +833,8 @@ func MilvusDataTypeToArrowType(dataType schemapb.DataType, dim int) arrow.DataTy
 		return &arrow.FixedSizeBinaryType{
 			ByteWidth: dim,
 		}
+	case schemapb.DataType_ArrayOfVector:
+		return &arrow.BinaryType{}
 	default:
 		panic("unsupported data type")
 	}

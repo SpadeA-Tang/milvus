@@ -122,7 +122,6 @@ func MarshalFieldModel(field *Field) *schemapb.FieldSchema {
 		DefaultValue:     field.DefaultValue,
 		ElementType:      field.ElementType,
 		Nullable:         field.Nullable,
-		IsStructField:    field.IsStructField,
 	}
 }
 
@@ -159,7 +158,6 @@ func UnmarshalFieldModel(fieldSchema *schemapb.FieldSchema) *Field {
 		DefaultValue:     fieldSchema.DefaultValue,
 		ElementType:      fieldSchema.ElementType,
 		Nullable:         fieldSchema.Nullable,
-		IsStructField:    fieldSchema.IsStructField,
 	}
 }
 

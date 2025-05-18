@@ -448,6 +448,8 @@ func (r *rowParser) parseEntity(fieldID int64, obj any) (any, error) {
 			return nil, err
 		}
 		return scalarFieldData, nil
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
 	default:
 		return nil, fmt.Errorf("parse json failed, unsupport data type: %s",
 			r.id2Field[fieldID].GetDataType().String())
@@ -596,6 +598,8 @@ func (r *rowParser) parseNullableEntity(fieldID int64, obj any) (any, error) {
 			return nil, err
 		}
 		return scalarFieldData, nil
+	case schemapb.DataType_ArrayOfVector:
+		panic("not implemented")
 	default:
 		return nil, fmt.Errorf("parse json failed, unsupport data type: %s",
 			r.id2Field[fieldID].GetDataType().String())

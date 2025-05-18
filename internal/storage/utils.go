@@ -699,22 +699,13 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 			}
 
 		case schemapb.DataType_Array:
-			if field.IsStructField && typeutil.IsVectorType(field.GetElementType()) {
-				srcData := srcField.GetVectors().GetArrayVector().GetData()
+			srcData := srcField.GetScalars().GetArrayData().GetData()
+			validData := srcField.GetValidData()
 
-				fieldData = &ArrayVectorFieldData{
-					ElementType: field.GetElementType(),
-					Data:        srcData,
-				}
-			} else {
-				srcData := srcField.GetScalars().GetArrayData().GetData()
-				validData := srcField.GetValidData()
-
-				fieldData = &ArrayFieldData{
-					ElementType: field.GetElementType(),
-					Data:        srcData,
-					ValidData:   validData,
-				}
+			fieldData = &ArrayFieldData{
+				ElementType: field.GetElementType(),
+				Data:        srcData,
+				ValidData:   validData,
 			}
 
 		case schemapb.DataType_JSON:
@@ -724,6 +715,15 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 			fieldData = &JSONFieldData{
 				Data:      srcData,
 				ValidData: validData,
+			}
+
+		case schemapb.DataType_ArrayOfVector:
+			arrayVector := srcField.GetVectors().GetArrayVector()
+
+			fieldData = &ArrayVectorFieldData{
+				ElementType: field.GetElementType(),
+				Data:        arrayVector.GetData(),
+				Dim:         arrayVector.GetDim(),
 			}
 
 		default:
@@ -1371,6 +1371,23 @@ func TransferInsertDataToInsertRecord(insertData *InsertData) (*segcorepb.Insert
 					Vectors: &schemapb.VectorField{
 						Data: &schemapb.VectorField_Int8Vector{
 							Int8Vector: dataBytes,
+						},
+						Dim: int64(rawData.Dim),
+					},
+				},
+			}
+		case *ArrayVectorFieldData:
+			fieldData = &schemapb.FieldData{
+				Type:    schemapb.DataType_ArrayOfVector,
+				FieldId: fieldID,
+				Field: &schemapb.FieldData_Vectors{
+					Vectors: &schemapb.VectorField{
+						Data: &schemapb.VectorField_ArrayVector{
+							ArrayVector: &schemapb.ArrayVector{
+								Data:        rawData.Data,
+								ElementType: rawData.ElementType,
+								Dim:         int64(rawData.Dim),
+							},
 						},
 						Dim: int64(rawData.Dim),
 					},

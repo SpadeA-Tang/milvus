@@ -237,7 +237,7 @@ func validateHeader(npyReader *npy.Reader, field *schemapb.FieldSchema, dim int)
 		if len(shape) != 1 {
 			return wrapShapeError(len(shape), 1, field)
 		}
-	case schemapb.DataType_None, schemapb.DataType_Array:
+	case schemapb.DataType_None, schemapb.DataType_Array, schemapb.DataType_ArrayOfVector:
 		return merr.WrapErrImportFailed(fmt.Sprintf("unsupported data type: %s", field.GetDataType().String()))
 
 	default:
