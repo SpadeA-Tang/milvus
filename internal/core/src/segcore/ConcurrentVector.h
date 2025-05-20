@@ -258,6 +258,8 @@ class ConcurrentVectorImpl : public VectorBase {
                              std::is_same_v<Type, int>) {
             // only for testing
             PanicInfo(NotImplemented, "unimplemented");
+        } else if constexpr (std::is_same_v<Type, ArrayVector>) {
+            PanicInfo(NotImplemented, "unimplemented");
         } else {
             auto chunk_data = chunks_ptr_->get_chunk_data(chunk_id);
             auto chunk_size = chunks_ptr_->get_chunk_size(chunk_id);
@@ -329,6 +331,8 @@ class ConcurrentVectorImpl : public VectorBase {
         } else if constexpr (std::is_same_v<Type, int64_t> ||  // NOLINT
                              std::is_same_v<Type, int>) {
             // only for testing
+            PanicInfo(NotImplemented, "unimplemented");
+        } else if constexpr (std::is_same_v<Type, ArrayVector>) {
             PanicInfo(NotImplemented, "unimplemented");
         } else {
             static_assert(
@@ -533,6 +537,20 @@ class ConcurrentVector<Array> : public ConcurrentVectorImpl<Array, true> {
         auto chunk_id = element_index / size_per_chunk_;
         auto chunk_offset = element_index % size_per_chunk_;
         return chunks_ptr_->view_element(chunk_id, chunk_offset);
+    }
+};
+
+template <>
+class ConcurrentVector<ArrayVector>
+    : public ConcurrentVectorImpl<ArrayVector, false> {
+ public:
+    explicit ConcurrentVector(
+        int64_t dim,
+        int64_t size_per_chunk,
+        storage::MmapChunkDescriptorPtr mmap_descriptor = nullptr,
+        ThreadSafeValidDataPtr valid_data_ptr = nullptr)
+        : ConcurrentVectorImpl<ArrayVector, false>::ConcurrentVectorImpl(
+              dim, size_per_chunk, std::move(mmap_descriptor), valid_data_ptr) {
     }
 };
 

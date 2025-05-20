@@ -239,8 +239,8 @@ func (it *InsertMsg) CheckAligned() error {
 	rowNums := it.NRows()
 	if it.IsColumnBased() {
 		for _, field := range it.FieldsData {
-			if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-				for _, structField := range structField.Structs.GetFields() {
+			if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+				for _, structField := range structField.ArrayStruct.GetFields() {
 					fieldNumRows, err := funcutil.GetNumRowOfFieldData(structField)
 					if err != nil {
 						return err

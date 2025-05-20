@@ -101,6 +101,24 @@ class Schema {
         return field_id;
     }
 
+    // array of vector type
+    FieldId
+    AddDebugArrayVectorField(const std::string& name,
+                             DataType element_type,
+                             int64_t dim,
+                             std::optional<knowhere::MetricType> metric_type) {
+        auto field_id = FieldId(debug_id);
+        debug_id++;
+        auto field_meta = FieldMeta(FieldName(name),
+                                    field_id,
+                                    DataType::VECTOR_ARRAY,
+                                    element_type,
+                                    dim,
+                                    metric_type);
+        this->AddField(std::move(field_meta));
+        return field_id;
+    }
+
     // scalar type
     void
     AddField(const FieldName& name,
@@ -175,6 +193,19 @@ class Schema {
              bool nullable) {
         auto field_meta = FieldMeta(
             name, id, data_type, dim, metric_type, false, std::nullopt);
+        this->AddField(std::move(field_meta));
+    }
+
+    // array of vector type
+    void
+    AddField(const FieldName& name,
+             const FieldId id,
+             DataType data_type,
+             DataType element_type,
+             int64_t dim,
+             std::optional<knowhere::MetricType> metric_type) {
+        auto field_meta =
+            FieldMeta(name, id, data_type, element_type, dim, metric_type);
         this->AddField(std::move(field_meta));
     }
 

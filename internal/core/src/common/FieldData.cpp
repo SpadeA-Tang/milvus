@@ -24,6 +24,7 @@
 #include "common/FieldDataInterface.h"
 #include "common/Json.h"
 #include "simdjson/padded_string.h"
+#include "common/ArrayVector.h"
 
 namespace milvus {
 
@@ -275,7 +276,20 @@ FieldDataImpl<Type, is_type_entire_row>::FillFieldData(
             return FillFieldData(values.data(), element_count);
         }
         case DataType::VECTOR_ARRAY: {
-            PanicInfo(Unsupported, "VECTOR_ARRAY");
+            auto array_array =
+                std::dynamic_pointer_cast<arrow::BinaryArray>(array);
+            std::vector<ArrayVector> values(element_count);
+            for (size_t index = 0; index < element_count; ++index) {
+                VectorArray field_data;
+                if (array_array->GetString(index) == "") {
+                    PanicInfo(DataTypeInvalid, "empty vector array");
+                }
+                auto success =
+                    field_data.ParseFromString(array_array->GetString(index));
+                AssertInfo(success, "parse from string failed");
+                values[index] = ArrayVector(field_data);
+            }
+            return FillFieldData(values.data(), element_count);
         }
         default: {
             PanicInfo(DataTypeInvalid,
@@ -429,6 +443,7 @@ template class FieldDataImpl<float, false>;
 template class FieldDataImpl<float16, false>;
 template class FieldDataImpl<bfloat16, false>;
 template class FieldDataImpl<knowhere::sparse::SparseRow<float>, true>;
+template class FieldDataImpl<ArrayVector, true>;
 
 FieldDataPtr
 InitScalarFieldData(const DataType& type, bool nullable, int64_t cap_rows) {

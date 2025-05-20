@@ -39,10 +39,10 @@
 #include "mmap/Utils.h"
 #include "common/FieldData.h"
 #include "common/FieldDataInterface.h"
-#include "common/Array.h"
 #include "knowhere/dataset.h"
 #include "monitor/prometheus_client.h"
 #include "storage/MmapChunkManager.h"
+#include "common/ArrayVector.h"
 
 namespace milvus {
 

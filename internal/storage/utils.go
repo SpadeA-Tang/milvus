@@ -521,8 +521,8 @@ func RowBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemap
 func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemapb.CollectionSchema) (idata *InsertData, err error) {
 	srcFields := make(map[FieldID]*schemapb.FieldData)
 	for _, field := range msg.FieldsData {
-		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-			for _, subField := range structField.Structs.Fields {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			for _, subField := range structField.ArrayStruct.Fields {
 				srcFields[subField.FieldId] = subField
 			}
 			continue

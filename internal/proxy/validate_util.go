@@ -117,7 +117,13 @@ func (v *validateUtil) validateFieldData(field *schemapb.FieldData, fieldSchema 
 		}
 	case schemapb.DataType_ArrayOfVector:
 		// todo(SpadeA): validate array of vector
-
+	case schemapb.DataType_ArrayOfStruct:
+		arrayStructField := field.GetArrayStruct()
+		for _, subField := range arrayStructField.Fields {
+			if err := v.validateFieldData(subField, fieldSchema); err != nil {
+				return err
+			}
+		}
 	default:
 	}
 	return nil
@@ -128,10 +134,10 @@ func (v *validateUtil) Validate(data []*schemapb.FieldData, helper *typeutil.Sch
 		return merr.WrapErrServiceInternal("nil schema helper provided for Validation")
 	}
 	for _, field := range data {
-		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
 			// todo(SpadeA): do more check for struct field itself
 
-			for _, subField := range structField.Structs.Fields {
+			for _, subField := range structField.ArrayStruct.Fields {
 				subFieldSchema, err := helper.GetFieldFromName(subField.GetFieldName())
 				if err != nil {
 					return err
@@ -305,10 +311,10 @@ func (v *validateUtil) checkAlignedForField(field *schemapb.FieldData, schema *t
 
 func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows uint64) error {
 	for _, field := range data {
-		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
 			// todo(SpadeA): do more check for struct field itself
 
-			for _, subField := range structField.Structs.Fields {
+			for _, subField := range structField.ArrayStruct.Fields {
 				if err := v.checkAlignedForField(subField, schema, numRows); err != nil {
 					return err
 				}
@@ -333,10 +339,10 @@ func (v *validateUtil) checkAligned(data []*schemapb.FieldData, schema *typeutil
 // after fillWithValue, only nullable field will has valid_data, the length of all data will be passed num_rows
 func (v *validateUtil) fillWithValue(data []*schemapb.FieldData, schema *typeutil.SchemaHelper, numRows int) error {
 	for _, field := range data {
-		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
 			// todo(SpadeA): do more check for struct field itself
 
-			for _, subField := range structField.Structs.Fields {
+			for _, subField := range structField.ArrayStruct.Fields {
 				subFieldSchema, err := schema.GetFieldFromName(subField.GetFieldName())
 				if err != nil {
 					return err

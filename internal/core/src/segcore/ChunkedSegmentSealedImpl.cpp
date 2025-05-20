@@ -54,6 +54,7 @@
 #include "storage/Util.h"
 #include "storage/ThreadPools.h"
 #include "storage/MmapManager.h"
+#include "common/ArrayVector.h"
 
 namespace milvus::segcore {
 

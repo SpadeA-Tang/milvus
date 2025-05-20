@@ -539,6 +539,28 @@ CreateVectorDataArrayFrom(const void* data_raw,
             obj->assign(data, length * sizeof(int8));
             break;
         }
+        case DataType::VECTOR_ARRAY: {
+            auto data = reinterpret_cast<const VectorArray*>(data_raw);
+            auto vector_type = field_meta.get_element_type();
+            switch (vector_type) {
+                case DataType::VECTOR_FLOAT: {
+                    auto obj = vector_array->mutable_array_vector();
+                    obj->set_element_type(
+                        milvus::proto::schema::DataType::FloatVector);
+                    obj->set_dim(dim);
+                    for (auto i = 0; i < count; i++) {
+                        *(obj->mutable_data()->Add()) = data[i];
+                    }
+                    break;
+                }
+                default: {
+                    PanicInfo(NotImplemented,
+                              fmt::format("not implemented vector type {}",
+                                          vector_type));
+                }
+            }
+            break;
+        }
         default: {
             PanicInfo(DataTypeInvalid,
                       fmt::format("unsupported datatype {}", data_type));

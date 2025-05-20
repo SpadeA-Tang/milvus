@@ -30,9 +30,8 @@ func TestEstimateEntitySizeForStruct(t *testing.T) {
 				Value: "100",
 			},
 		},
-		IndexParams:   nil,
-		AutoID:        false,
-		IsStructField: true,
+		IndexParams: nil,
+		AutoID:      false,
 	}
 	sVec := &schemapb.FieldSchema{
 		FieldID:      104,
@@ -51,9 +50,8 @@ func TestEstimateEntitySizeForStruct(t *testing.T) {
 				Value: "10",
 			},
 		},
-		IndexParams:   nil,
-		AutoID:        false,
-		IsStructField: true,
+		IndexParams: nil,
+		AutoID:      false,
 	}
 	schema := &schemapb.StructFieldSchema{
 		FieldID:            105,

@@ -294,8 +294,8 @@ func estimateFieldSize(field *schemapb.FieldData, rowOffset int, isStructField b
 func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, error) {
 	res := 0
 	for _, field := range fieldsData {
-		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-			for _, subField := range structField.Structs.Fields {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			for _, subField := range structField.ArrayStruct.Fields {
 				size, err := estimateFieldSize(subField, rowOffset, true)
 				if err != nil {
 					return 0, err
@@ -1043,23 +1043,23 @@ func appendFieldData(dst []*schemapb.FieldData, fieldOffset int, dataOffset int6
 // AppendFieldData appends fields data of specified index from src to dst
 func AppendFieldData(dst, src []*schemapb.FieldData, idx int64) (appendSize int64) {
 	for i, fieldData := range src {
-		if structField, ok := fieldData.Field.(*schemapb.FieldData_Structs); ok {
+		if structField, ok := fieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
 			if dst[i] == nil {
 				// Initialize the sub fields of struct so that we can append data from src to it
-				subFieldsData := make([]*schemapb.FieldData, len(structField.Structs.Fields))
+				subFieldsData := make([]*schemapb.FieldData, len(structField.ArrayStruct.Fields))
 				dst[i] = &schemapb.FieldData{
 					Type:      fieldData.Type,
 					FieldName: fieldData.FieldName,
 					FieldId:   fieldData.FieldId,
-					Field: &schemapb.FieldData_Structs{
-						Structs: &schemapb.StructField{
+					Field: &schemapb.FieldData_ArrayStruct{
+						ArrayStruct: &schemapb.ArrayStructField{
 							Fields: subFieldsData,
 						},
 					},
 				}
 			}
-			for j, subFieldData := range structField.Structs.Fields {
-				appendSize += appendFieldData(dst[i].GetStructs().Fields, j, idx, subFieldData)
+			for j, subFieldData := range structField.ArrayStruct.Fields {
+				appendSize += appendFieldData(dst[i].GetArrayStruct().Fields, j, idx, subFieldData)
 			}
 		}
 
@@ -1132,8 +1132,8 @@ func DeleteFieldData(dst []*schemapb.FieldData) {
 func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error {
 	fieldID2Data := make(map[int64]*schemapb.FieldData)
 	for _, data := range dst {
-		if structField, ok := data.Field.(*schemapb.FieldData_Structs); ok {
-			for _, subField := range structField.Structs.Fields {
+		if structField, ok := data.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			for _, subField := range structField.ArrayStruct.Fields {
 				fieldID2Data[subField.FieldId] = subField
 			}
 			continue
@@ -1316,8 +1316,8 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 	}
 
 	for _, srcFieldData := range src {
-		if structField, ok := srcFieldData.Field.(*schemapb.FieldData_Structs); ok {
-			for _, subField := range structField.Structs.Fields {
+		if structField, ok := srcFieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			for _, subField := range structField.ArrayStruct.Fields {
 				if err := mergeFieldData(subField); err != nil {
 					return err
 				}

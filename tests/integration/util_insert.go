@@ -54,7 +54,7 @@ func NewStructFieldData(schema *schemapb.StructFieldSchema, fieldName string, nu
 		Type:      schemapb.DataType_Array,
 		FieldName: fieldName,
 		Field: &schemapb.FieldData_Structs{
-			Structs: &schemapb.StructField{
+			Structs: &schemapb.ArrayStructField{
 				Fields: []*schemapb.FieldData{},
 			},
 		},

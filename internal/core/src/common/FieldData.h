@@ -81,6 +81,25 @@ class FieldData<Array> : public FieldDataArrayImpl {
 };
 
 template <>
+class FieldData<ArrayVector> : public FieldDataArrayVectorImpl {
+ public:
+    explicit FieldData(int64_t dim,
+                       DataType data_type,
+                       int64_t buffered_num_rows = 0)
+        : FieldDataArrayVectorImpl(data_type, buffered_num_rows),
+          element_dim_(dim) {
+    }
+
+    int64_t
+    get_dim() const override {
+        return element_dim_;
+    }
+
+ private:
+    int64_t element_dim_;
+};
+
+template <>
 class FieldData<FloatVector> : public FieldDataImpl<float, false> {
  public:
     explicit FieldData(int64_t dim,

@@ -29,6 +29,7 @@
 #include "simdjson/common_defs.h"
 #include "sys/mman.h"
 #include "common/Types.h"
+#include "common/ArrayVector.h"
 
 namespace milvus {
 constexpr uint64_t MMAP_STRING_PADDING = 1;

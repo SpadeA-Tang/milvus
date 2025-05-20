@@ -1060,22 +1060,22 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 
 			// verify the data type is array and element type is struct
 
-			fd, ok := fieldData.Field.(*schemapb.FieldData_Structs)
+			fd, ok := fieldData.Field.(*schemapb.FieldData_ArrayStruct)
 			if !ok {
-				return fmt.Errorf("field convert FieldData_Structs fail in fieldData, fieldName: %s,"+
+				return fmt.Errorf("field convert FieldData_ArrayStruct fail in fieldData, fieldName: %s,"+
 					" collectionName:%s", fieldData.FieldName, schema.Name)
 			}
-			if len(fd.Structs.Fields) != len(structFieldSchema.GetFields()) {
+			if len(fd.ArrayStruct.Fields) != len(structFieldSchema.GetFields()) {
 				return fmt.Errorf("length of fields of struct field mismatch length of the fields in schema, fieldName: %s,"+
 					" collectionName:%s, fieldData fields length:%d, schema fields length:%d",
-					fieldData.FieldName, schema.Name, len(fd.Structs.Fields), len(structFieldSchema.GetFields()))
+					fieldData.FieldName, schema.Name, len(fd.ArrayStruct.Fields), len(structFieldSchema.GetFields()))
 			}
 
 			for _, field := range structFieldSchema.GetFields() {
 				fieldName2FieldSchema[field.Name] = field
 			}
 
-			for _, subFieldData := range fd.Structs.Fields {
+			for _, subFieldData := range fd.ArrayStruct.Fields {
 				if fieldSchema, ok := fieldName2FieldSchema[subFieldData.FieldName]; ok {
 					subFieldData.FieldId = fieldSchema.FieldID
 					subFieldData.Type = fieldSchema.DataType

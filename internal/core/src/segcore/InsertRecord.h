@@ -547,7 +547,9 @@ struct InsertRecord {
                     field_id, field_meta.get_dim(), size_per_chunk);
                 return;
             } else if (field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
-                PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+                this->append_data<ArrayVector>(
+                    field_id, field_meta.get_dim(), size_per_chunk);
+                return;
             } else {
                 PanicInfo(DataTypeInvalid,
                           fmt::format("unsupported vector type",

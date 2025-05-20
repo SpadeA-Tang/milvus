@@ -252,8 +252,8 @@ func GenerateArrayOfStringArray(numRows int) []*schemapb.ScalarField {
 func GenerateArrayOfStructArray(schema *schemapb.StructFieldSchema, numRows int, dim int) []*schemapb.FieldData {
 	ret := make([]*schemapb.FieldData, 0, numRows)
 	for _, field := range schema.Fields {
-		if field.DataType != schemapb.DataType_Array {
-			panic("Only Array type is supported for StructField")
+		if field.DataType != schemapb.DataType_Array && field.DataType != schemapb.DataType_ArrayOfVector {
+			panic("Only Array or ArrayOfVector type is supported for StructField")
 		}
 
 		switch field.GetElementType() {
@@ -270,10 +270,10 @@ func GenerateArrayOfStructArray(schema *schemapb.StructFieldSchema, numRows int,
 	return ret
 }
 
-// func GenerateArrayOfStructFieldArray(numRows int) []*schemapb.StructField {
-// 	ret := make([]*schemapb.StructField, 0, numRows)
+// func GenerateArrayOfStructFieldArray(numRows int) []*schemapb.ArrayStructField {
+// 	ret := make([]*schemapb.ArrayStructField, 0, numRows)
 // 	for i := 0; i < numRows; i++ {
-// 		ret = append(ret, &schemapb.StructField{})
+// 		ret = append(ret, &schemapb.ArrayStructField{})
 // 	}
 // 	return ret
 // }
@@ -756,7 +756,7 @@ func NewArrayFieldData(fieldName string, numRows int) *schemapb.FieldData {
 
 func NewArrayVectorFieldData(fieldName string, numRows, dim int) *schemapb.FieldData {
 	return &schemapb.FieldData{
-		Type:      schemapb.DataType_Array,
+		Type:      schemapb.DataType_ArrayOfVector,
 		FieldName: fieldName,
 		Field: &schemapb.FieldData_Vectors{
 			Vectors: &schemapb.VectorField{
@@ -1025,10 +1025,10 @@ func GenerateScalarFieldDataWithValue(dType schemapb.DataType, fieldName string,
 
 func GenerateStructFieldData(schema *schemapb.StructFieldSchema, fieldName string, numRow int, dim int) *schemapb.FieldData {
 	fieldData := &schemapb.FieldData{
-		Type:      schemapb.DataType_Array,
+		Type:      schemapb.DataType_ArrayOfStruct,
 		FieldName: fieldName,
-		Field: &schemapb.FieldData_Structs{
-			Structs: &schemapb.StructField{
+		Field: &schemapb.FieldData_ArrayStruct{
+			ArrayStruct: &schemapb.ArrayStructField{
 				Fields: GenerateArrayOfStructArray(schema, numRow, dim),
 			},
 		},

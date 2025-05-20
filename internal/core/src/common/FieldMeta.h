@@ -126,6 +126,22 @@ class FieldMeta {
         Assert(!nullable);
     }
 
+    // array of vector type
+    FieldMeta(FieldName name,
+              FieldId id,
+              DataType type,
+              DataType element_type,
+              int64_t dim,
+              std::optional<knowhere::MetricType> metric_type)
+        : name_(std::move(name)),
+          id_(id),
+          type_(type),
+          element_type_(element_type),
+          vector_info_(VectorInfo{dim, std::move(metric_type)}) {
+        Assert(type_ == DataType::VECTOR_ARRAY);
+        Assert(IsVectorDataType(element_type_));
+    }
+
     int64_t
     get_dim() const {
         Assert(IsVectorDataType(type_));

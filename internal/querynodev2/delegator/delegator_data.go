@@ -96,8 +96,8 @@ func flattenInsertData(insertData *InsertData) {
 	flattenedInsertData := make([]*schemapb.FieldData, 0, len(insertData.InsertRecord.FieldsData)+10)
 
 	for _, field := range insertData.InsertRecord.FieldsData {
-		if structField, ok := field.Field.(*schemapb.FieldData_Structs); ok {
-			for _, structFieldData := range structField.Structs.Fields {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			for _, structFieldData := range structField.ArrayStruct.Fields {
 				flattenedInsertData = append(flattenedInsertData, structFieldData)
 			}
 		} else {

@@ -35,6 +35,7 @@
 #include "common/EasyAssert.h"
 #include "common/Array.h"
 #include "knowhere/dataset.h"
+#include "common/ArrayVector.h"
 
 namespace milvus {
 
@@ -798,6 +799,34 @@ class FieldDataArrayImpl : public FieldDataImpl<Array, true> {
                                 bool nullable,
                                 int64_t total_num_rows = 0)
         : FieldDataImpl<Array, true>(1, data_type, nullable, total_num_rows) {
+    }
+
+    int64_t
+    DataSize() const override {
+        int64_t data_size = 0;
+        for (size_t offset = 0; offset < length(); ++offset) {
+            data_size += data_[offset].byte_size();
+        }
+        return data_size;
+    }
+
+    int64_t
+    DataSize(ssize_t offset) const override {
+        AssertInfo(offset < get_num_rows(),
+                   "field data subscript out of range");
+        AssertInfo(offset < length(),
+                   "subscript position don't has valid value");
+        return data_[offset].byte_size();
+    }
+};
+
+// is_type_entire_row set be true as each element in data_ is a ArrayVector
+class FieldDataArrayVectorImpl : public FieldDataImpl<ArrayVector, true> {
+ public:
+    explicit FieldDataArrayVectorImpl(DataType data_type,
+                                      int64_t total_num_rows = 0)
+        : FieldDataImpl<ArrayVector, true>(
+              1, data_type, false, total_num_rows) {
     }
 
     int64_t
