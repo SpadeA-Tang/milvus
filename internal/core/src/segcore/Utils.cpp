@@ -368,6 +368,16 @@ CreateVectorDataArray(int64_t count, const FieldMeta& field_meta) {
             obj->resize(length);
             break;
         }
+        case DataType::VECTOR_ARRAY: {
+            auto obj = vector_array->mutable_array_vector();
+            obj->set_element_type(static_cast<milvus::proto::schema::DataType>(
+                field_meta.get_element_type()));
+            obj->mutable_data()->Reserve(count);
+            for (int i = 0; i < count; i++) {
+                *(obj->mutable_data()->Add()) = proto::schema::VectorField();
+            }
+            break;
+        }
         default: {
             PanicInfo(DataTypeInvalid,
                       fmt::format("unsupported datatype {}", data_type));

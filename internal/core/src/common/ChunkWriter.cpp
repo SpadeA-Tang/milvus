@@ -230,7 +230,7 @@ ArrayChunkWriter::finish() {
 }
 
 void
-VectorArrayChunkWriter::write(const arrow::ArrayVector& arrow_array_vec) {
+ArrayVectorChunkWriter::write(const arrow::ArrayVector& arrow_array_vec) {
     auto size = 0;
     std::vector<ArrayVector> array_vectors;
     array_vectors.reserve(arrow_array_vec.size());
@@ -287,12 +287,12 @@ VectorArrayChunkWriter::write(const arrow::ArrayVector& arrow_array_vec) {
 }
 
 std::shared_ptr<Chunk>
-VectorArrayChunkWriter::finish() {
+ArrayVectorChunkWriter::finish() {
     char padding[MMAP_ARRAY_PADDING];
     target_->write(padding, MMAP_ARRAY_PADDING);
 
     auto [data, size] = target_->get();
-    return std::make_shared<VectorArrayChunk>(
+    return std::make_shared<ArrayVectorChunk>(
         dim_, row_nums_, data, size, element_type_);
 }
 
@@ -450,7 +450,7 @@ create_chunk(const FieldMeta& field_meta,
             break;
         }
         case milvus::DataType::VECTOR_ARRAY: {
-            w = std::make_shared<VectorArrayChunkWriter>(
+            w = std::make_shared<ArrayVectorChunkWriter>(
                 dim, field_meta.get_element_type());
             break;
         }

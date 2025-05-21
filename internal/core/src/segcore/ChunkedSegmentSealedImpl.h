@@ -320,6 +320,14 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
                               int64_t count,
                               google::protobuf::RepeatedPtrField<T>* dst);
 
+    template <typename T>
+    static void
+    bulk_subscript_array_vector_impl(
+        const ChunkedColumnBase* column,
+        const int64_t* seg_offsets,
+        int64_t count,
+        google::protobuf::RepeatedPtrField<T>* dst);
+
     static void
     bulk_subscript_impl(int64_t element_sizeof,
                         const ChunkedColumnBase* field,

@@ -219,14 +219,14 @@ class ArrayChunkWriter : public ChunkWriterBase {
     const milvus::DataType element_type_;
 };
 
-class VectorArrayChunkWriter : public ChunkWriterBase {
+class ArrayVectorChunkWriter : public ChunkWriterBase {
  public:
-    VectorArrayChunkWriter(int64_t dim,
+    ArrayVectorChunkWriter(int64_t dim,
                            const milvus::DataType element_type)
         : ChunkWriterBase(false), element_type_(element_type), dim_(dim) {
     }
 
-    VectorArrayChunkWriter(const milvus::DataType element_type,
+    ArrayVectorChunkWriter(const milvus::DataType element_type,
                            File& file,
                            size_t offset)
         : ChunkWriterBase(file, offset, false), element_type_(element_type) {

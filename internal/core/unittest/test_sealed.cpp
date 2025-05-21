@@ -2385,7 +2385,7 @@ TEST(Sealed, QueryAllFields) {
     // auto int8_vector_values = dataset.get_col<int8>(int8_vec);
     auto array_vec_values = dataset.get_col<VectorArray>(array_vec);
 
-    // auto ids_ds = GenRandomIds(dataset_size);
+    auto ids_ds = GenRandomIds(dataset_size);
     // auto bool_result =
     //     segment->bulk_subscript(bool_field, ids_ds->GetIds(), dataset_size);
     // auto int8_result =
@@ -2394,8 +2394,8 @@ TEST(Sealed, QueryAllFields) {
     //     segment->bulk_subscript(int16_field, ids_ds->GetIds(), dataset_size);
     // auto int32_result =
     //     segment->bulk_subscript(int32_field, ids_ds->GetIds(), dataset_size);
-    // auto int64_result =
-    //     segment->bulk_subscript(int64_field, ids_ds->GetIds(), dataset_size);
+    auto int64_result =
+        segment->bulk_subscript(int64_field, ids_ds->GetIds(), dataset_size);
     // auto float_result =
     //     segment->bulk_subscript(float_field, ids_ds->GetIds(), dataset_size);
     // auto double_result =
@@ -2424,12 +2424,14 @@ TEST(Sealed, QueryAllFields) {
     //     segment->bulk_subscript(bfloat16_vec, ids_ds->GetIds(), dataset_size);
     // auto int8_vec_result =
     //     segment->bulk_subscript(int8_vec, ids_ds->GetIds(), dataset_size);
+    auto array_vec_result =
+        segment->bulk_subscript(array_vec, ids_ds->GetIds(), dataset_size);
 
     // EXPECT_EQ(bool_result->scalars().bool_data().data_size(), dataset_size);
     // EXPECT_EQ(int8_result->scalars().int_data().data_size(), dataset_size);
     // EXPECT_EQ(int16_result->scalars().int_data().data_size(), dataset_size);
     // EXPECT_EQ(int32_result->scalars().int_data().data_size(), dataset_size);
-    // EXPECT_EQ(int64_result->scalars().long_data().data_size(), dataset_size);
+    EXPECT_EQ(int64_result->scalars().long_data().data_size(), dataset_size);
     // EXPECT_EQ(float_result->scalars().float_data().data_size(), dataset_size);
     // EXPECT_EQ(double_result->scalars().double_data().data_size(), dataset_size);
     // EXPECT_EQ(varchar_result->scalars().string_data().data_size(),
@@ -2455,12 +2457,14 @@ TEST(Sealed, QueryAllFields) {
     //           dataset_size);
     // EXPECT_EQ(float_array_result->scalars().array_data().data_size(),
     //           dataset_size);
+    EXPECT_EQ(array_vec_result->vectors().array_vector().data_size(),
+              dataset_size);
 
     // EXPECT_EQ(bool_result->valid_data_size(), 0);
     // EXPECT_EQ(int8_result->valid_data_size(), 0);
     // EXPECT_EQ(int16_result->valid_data_size(), 0);
     // EXPECT_EQ(int32_result->valid_data_size(), 0);
-    // EXPECT_EQ(int64_result->valid_data_size(), 0);
+    EXPECT_EQ(int64_result->valid_data_size(), 0);
     // EXPECT_EQ(float_result->valid_data_size(), 0);
     // EXPECT_EQ(double_result->valid_data_size(), 0);
     // EXPECT_EQ(varchar_result->valid_data_size(), 0);
@@ -2471,6 +2475,7 @@ TEST(Sealed, QueryAllFields) {
     // EXPECT_EQ(string_array_result->valid_data_size(), 0);
     // EXPECT_EQ(double_array_result->valid_data_size(), 0);
     // EXPECT_EQ(float_array_result->valid_data_size(), 0);
+    EXPECT_EQ(array_vec_result->valid_data_size(), 0);
 }
 
 TEST(Sealed, QueryAllNullableFields) {

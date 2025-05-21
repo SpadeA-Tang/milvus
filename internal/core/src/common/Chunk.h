@@ -326,14 +326,16 @@ class ArrayChunk : public Chunk {
     uint32_t* offsets_lens_;
 };
 
-class VectorArrayChunk : public Chunk {
+class ArrayVectorChunk : public Chunk {
  public:
-    VectorArrayChunk(int64_t dim,
+    ArrayVectorChunk(int64_t dim,
                      int32_t row_nums,
                      char* data,
                      uint64_t size,
                      milvus::DataType element_type)
-        : Chunk(row_nums, data, size, false), dim_(dim) {
+        : Chunk(row_nums, data, size, false),
+          dim_(dim),
+          element_type_(element_type) {
         offsets_lens_ = reinterpret_cast<uint32_t*>(data);
     }
 
@@ -344,6 +346,8 @@ class VectorArrayChunk : public Chunk {
         auto len = offsets_lens_[idx_off + 1];
         auto next_offset = offsets_lens_[idx_off + 2];
         auto data_ptr = data_ + offset;
+        return ArrayVectorView(
+            data_ptr, dim_, len, next_offset - offset, element_type_);
     }
 
     std::vector<ArrayVectorView>
@@ -359,12 +363,13 @@ class VectorArrayChunk : public Chunk {
     const char*
     ValueAt(int64_t idx) const override {
         PanicInfo(ErrorCode::Unsupported,
-                  "VectorArrayChunk::ValueAt is not supported");
+                  "ArrayVectorChunk::ValueAt is not supported");
     }
 
  private:
     int64_t dim_;
     uint32_t* offsets_lens_;
+    milvus::DataType element_type_;
 };
 
 class SparseFloatVectorChunk : public Chunk {

@@ -444,4 +444,49 @@ class ChunkedArrayColumn : public ChunkedColumnBase {
             ->Views(offset_len);
     }
 };
+
+class ChunkedArrayVectorColumn : public ChunkedColumnBase {
+ public:
+    explicit ChunkedArrayVectorColumn(const FieldMeta& field_meta)
+        : ChunkedColumnBase(field_meta) {
+    }
+
+    explicit ChunkedArrayVectorColumn(
+        const FieldMeta& field_meta,
+        const std::vector<std::shared_ptr<Chunk>>& chunks)
+        : ChunkedColumnBase(field_meta) {
+        for (auto& chunk : chunks) {
+            AddChunk(chunk);
+        }
+    }
+
+    ~ChunkedArrayVectorColumn() override = default;
+
+    SpanBase
+    Span(int64_t chunk_id) const override {
+        PanicInfo(ErrorCode::NotImplemented,
+                  "span() interface is not implemented for arr chunk column");
+    }
+
+    ArrayVectorView
+    operator[](const int i) const {
+        auto [chunk_id, offset_in_chunk] = GetChunkIDByOffset(i);
+        return std::static_pointer_cast<ArrayVectorChunk>(chunks_[chunk_id])
+            ->View(offset_in_chunk);
+    }
+
+    VectorArray
+    RawAt(const int i) const {
+        auto [chunk_id, offset_in_chunk] = GetChunkIDByOffset(i);
+        return std::static_pointer_cast<ArrayVectorChunk>(chunks_[chunk_id])
+            ->View(offset_in_chunk)
+            .output_data();
+    }
+
+    std::vector<ArrayVectorView>
+    ArrayVectorViews(int64_t chunk_id) const {
+        return std::static_pointer_cast<ArrayVectorChunk>(chunks_[chunk_id])
+            ->Views();
+    }
+};
 }  // namespace milvus

@@ -409,7 +409,7 @@ ChunkedSegmentSealedImpl::LoadFieldData(FieldId field_id, FieldDataInfo& data) {
                 }
                 case milvus::DataType::VECTOR_ARRAY: {
                     auto var_column =
-                        std::make_shared<ChunkedArrayColumn>(field_meta);
+                        std::make_shared<ChunkedArrayVectorColumn>(field_meta);
                     std::shared_ptr<milvus::ArrowDataWrapper> r;
                     while (data.arrow_reader_channel->pop(r)) {
                         arrow::ArrayVector array_vec =
@@ -1426,6 +1426,20 @@ ChunkedSegmentSealedImpl::bulk_subscript_array_impl(
     }
 }
 
+template <typename T>
+void
+ChunkedSegmentSealedImpl::bulk_subscript_array_vector_impl(
+    const ChunkedColumnBase* column,
+    const int64_t* seg_offsets,
+    int64_t count,
+    google::protobuf::RepeatedPtrField<T>* dst) {
+    auto field = reinterpret_cast<const ChunkedArrayVectorColumn*>(column);
+    for (int64_t i = 0; i < count; ++i) {
+        auto offset = seg_offsets[i];
+        dst->at(i) = std::move(field->RawAt(offset));
+    }
+}
+
 // for dense vector
 void
 ChunkedSegmentSealedImpl::bulk_subscript_impl(int64_t element_sizeof,
@@ -1749,8 +1763,12 @@ ChunkedSegmentSealedImpl::get_raw_data(FieldId field_id,
             break;
         }
         case DataType::VECTOR_ARRAY: {
-            PanicInfo(DataTypeInvalid,
-                      fmt::format("VECTOR_ARRAY is not implemented"));
+            bulk_subscript_array_vector_impl(
+                column.get(),
+                seg_offsets,
+                count,
+                ret->mutable_vectors()->mutable_array_vector()->mutable_data());
+            break;
         }
 
         default: {

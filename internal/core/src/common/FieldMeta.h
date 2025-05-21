@@ -136,6 +136,7 @@ class FieldMeta {
         : name_(std::move(name)),
           id_(id),
           type_(type),
+          nullable_(false),
           element_type_(element_type),
           vector_info_(VectorInfo{dim, std::move(metric_type)}) {
         Assert(type_ == DataType::VECTOR_ARRAY);
