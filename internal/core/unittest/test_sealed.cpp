@@ -2460,6 +2460,25 @@ TEST(Sealed, QueryAllFields) {
     EXPECT_EQ(array_vec_result->vectors().array_vector().data_size(),
               dataset_size);
 
+    auto verify_floats = [](auto arr1, auto arr2) {
+        static constexpr float EPSILON = 1e-6;
+        EXPECT_EQ(arr1.size(), arr2.size());
+        for (int64_t i = 0; i < arr1.size(); ++i) {
+            EXPECT_NEAR(arr1[i], arr2[i], EPSILON);
+        }
+    };
+
+    for (int64_t i = 0; i < dataset_size; ++i) {
+        auto arrow_array = array_vec_result->vectors()
+                               .array_vector()
+                               .data()[i]
+                               .float_vector()
+                               .data();
+        auto expected_array =
+            array_vec_values[ids_ds->GetIds()[i]].float_vector().data();
+        verify_floats(arrow_array, expected_array);
+    }
+
     // EXPECT_EQ(bool_result->valid_data_size(), 0);
     // EXPECT_EQ(int8_result->valid_data_size(), 0);
     // EXPECT_EQ(int16_result->valid_data_size(), 0);

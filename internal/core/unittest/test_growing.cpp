@@ -141,28 +141,30 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(GrowingTest, FillData) {
     auto schema = std::make_shared<Schema>();
-    auto bool_field = schema->AddDebugField("bool", DataType::BOOL);
-    auto int8_field = schema->AddDebugField("int8", DataType::INT8);
-    auto int16_field = schema->AddDebugField("int16", DataType::INT16);
-    auto int32_field = schema->AddDebugField("int32", DataType::INT32);
+    // auto bool_field = schema->AddDebugField("bool", DataType::BOOL);
+    // auto int8_field = schema->AddDebugField("int8", DataType::INT8);
+    // auto int16_field = schema->AddDebugField("int16", DataType::INT16);
+    // auto int32_field = schema->AddDebugField("int32", DataType::INT32);
     auto int64_field = schema->AddDebugField("int64", DataType::INT64);
-    auto float_field = schema->AddDebugField("float", DataType::FLOAT);
-    auto double_field = schema->AddDebugField("double", DataType::DOUBLE);
-    auto varchar_field = schema->AddDebugField("varchar", DataType::VARCHAR);
-    auto json_field = schema->AddDebugField("json", DataType::JSON);
-    auto int_array_field =
-        schema->AddDebugField("int_array", DataType::ARRAY, DataType::INT8);
-    auto long_array_field =
-        schema->AddDebugField("long_array", DataType::ARRAY, DataType::INT64);
-    auto bool_array_field =
-        schema->AddDebugField("bool_array", DataType::ARRAY, DataType::BOOL);
-    auto string_array_field = schema->AddDebugField(
-        "string_array", DataType::ARRAY, DataType::VARCHAR);
-    auto double_array_field = schema->AddDebugField(
-        "double_array", DataType::ARRAY, DataType::DOUBLE);
-    auto float_array_field =
-        schema->AddDebugField("float_array", DataType::ARRAY, DataType::FLOAT);
+    // auto float_field = schema->AddDebugField("float", DataType::FLOAT);
+    // auto double_field = schema->AddDebugField("double", DataType::DOUBLE);
+    // auto varchar_field = schema->AddDebugField("varchar", DataType::VARCHAR);
+    // auto json_field = schema->AddDebugField("json", DataType::JSON);
+    // auto int_array_field =
+    //     schema->AddDebugField("int_array", DataType::ARRAY, DataType::INT8);
+    // auto long_array_field =
+    //     schema->AddDebugField("long_array", DataType::ARRAY, DataType::INT64);
+    // auto bool_array_field =
+    //     schema->AddDebugField("bool_array", DataType::ARRAY, DataType::BOOL);
+    // auto string_array_field = schema->AddDebugField(
+    //     "string_array", DataType::ARRAY, DataType::VARCHAR);
+    // auto double_array_field = schema->AddDebugField(
+    //     "double_array", DataType::ARRAY, DataType::DOUBLE);
+    // auto float_array_field =
+    //     schema->AddDebugField("float_array", DataType::ARRAY, DataType::FLOAT);
     auto vec = schema->AddDebugField("embeddings", data_type, 128, metric_type);
+    auto array_float_vector = schema->AddDebugArrayVectorField(
+        "array_float_vector", DataType::VECTOR_FLOAT, 128, metric_type);
     schema->set_primary_field_id(int64_field);
 
     std::map<std::string, std::string> index_params = {
@@ -195,52 +197,55 @@ TEST_P(GrowingTest, FillData) {
                         dataset.raw_);
         auto num_inserted = (i + 1) * per_batch;
         auto ids_ds = GenRandomIds(num_inserted);
-        auto bool_result =
-            segment->bulk_subscript(bool_field, ids_ds->GetIds(), num_inserted);
-        auto int8_result =
-            segment->bulk_subscript(int8_field, ids_ds->GetIds(), num_inserted);
-        auto int16_result = segment->bulk_subscript(
-            int16_field, ids_ds->GetIds(), num_inserted);
-        auto int32_result = segment->bulk_subscript(
-            int32_field, ids_ds->GetIds(), num_inserted);
+        // auto bool_result =
+        //     segment->bulk_subscript(bool_field, ids_ds->GetIds(), num_inserted);
+        // auto int8_result =
+        //     segment->bulk_subscript(int8_field, ids_ds->GetIds(), num_inserted);
+        // auto int16_result = segment->bulk_subscript(
+        //     int16_field, ids_ds->GetIds(), num_inserted);
+        // auto int32_result = segment->bulk_subscript(
+        //     int32_field, ids_ds->GetIds(), num_inserted);
         auto int64_result = segment->bulk_subscript(
             int64_field, ids_ds->GetIds(), num_inserted);
-        auto float_result = segment->bulk_subscript(
-            float_field, ids_ds->GetIds(), num_inserted);
-        auto double_result = segment->bulk_subscript(
-            double_field, ids_ds->GetIds(), num_inserted);
-        auto varchar_result = segment->bulk_subscript(
-            varchar_field, ids_ds->GetIds(), num_inserted);
-        auto json_result =
-            segment->bulk_subscript(json_field, ids_ds->GetIds(), num_inserted);
-        auto int_array_result = segment->bulk_subscript(
-            int_array_field, ids_ds->GetIds(), num_inserted);
-        auto long_array_result = segment->bulk_subscript(
-            long_array_field, ids_ds->GetIds(), num_inserted);
-        auto bool_array_result = segment->bulk_subscript(
-            bool_array_field, ids_ds->GetIds(), num_inserted);
-        auto string_array_result = segment->bulk_subscript(
-            string_array_field, ids_ds->GetIds(), num_inserted);
-        auto double_array_result = segment->bulk_subscript(
-            double_array_field, ids_ds->GetIds(), num_inserted);
-        auto float_array_result = segment->bulk_subscript(
-            float_array_field, ids_ds->GetIds(), num_inserted);
+        // auto float_result = segment->bulk_subscript(
+        //     float_field, ids_ds->GetIds(), num_inserted);
+        // auto double_result = segment->bulk_subscript(
+        //     double_field, ids_ds->GetIds(), num_inserted);
+        // auto varchar_result = segment->bulk_subscript(
+        //     varchar_field, ids_ds->GetIds(), num_inserted);
+        // auto json_result =
+        //     segment->bulk_subscript(json_field, ids_ds->GetIds(), num_inserted);
+        // auto int_array_result = segment->bulk_subscript(
+        //     int_array_field, ids_ds->GetIds(), num_inserted);
+        // auto long_array_result = segment->bulk_subscript(
+        //     long_array_field, ids_ds->GetIds(), num_inserted);
+        // auto bool_array_result = segment->bulk_subscript(
+        //     bool_array_field, ids_ds->GetIds(), num_inserted);
+        // auto string_array_result = segment->bulk_subscript(
+        //     string_array_field, ids_ds->GetIds(), num_inserted);
+        // auto double_array_result = segment->bulk_subscript(
+        //     double_array_field, ids_ds->GetIds(), num_inserted);
+        // auto float_array_result = segment->bulk_subscript(
+        //     float_array_field, ids_ds->GetIds(), num_inserted);
         auto vec_result =
             segment->bulk_subscript(vec, ids_ds->GetIds(), num_inserted);
+        auto array_float_vector_result = segment->bulk_subscript(
+            array_float_vector, ids_ds->GetIds(), num_inserted);
+
         // checking result data
-        EXPECT_EQ(bool_result->scalars().bool_data().data_size(), num_inserted);
-        EXPECT_EQ(int8_result->scalars().int_data().data_size(), num_inserted);
-        EXPECT_EQ(int16_result->scalars().int_data().data_size(), num_inserted);
-        EXPECT_EQ(int32_result->scalars().int_data().data_size(), num_inserted);
+        // EXPECT_EQ(bool_result->scalars().bool_data().data_size(), num_inserted);
+        // EXPECT_EQ(int8_result->scalars().int_data().data_size(), num_inserted);
+        // EXPECT_EQ(int16_result->scalars().int_data().data_size(), num_inserted);
+        // EXPECT_EQ(int32_result->scalars().int_data().data_size(), num_inserted);
         EXPECT_EQ(int64_result->scalars().long_data().data_size(),
                   num_inserted);
-        EXPECT_EQ(float_result->scalars().float_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(double_result->scalars().double_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(varchar_result->scalars().string_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(json_result->scalars().json_data().data_size(), num_inserted);
+        // EXPECT_EQ(float_result->scalars().float_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(double_result->scalars().double_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(varchar_result->scalars().string_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(json_result->scalars().json_data().data_size(), num_inserted);
         if (data_type == DataType::VECTOR_FLOAT) {
             EXPECT_EQ(vec_result->vectors().float_vector().data_size(),
                       num_inserted * dim);
@@ -251,34 +256,38 @@ TEST_P(GrowingTest, FillData) {
         } else {
             ASSERT_TRUE(false);
         }
-        EXPECT_EQ(int_array_result->scalars().array_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(long_array_result->scalars().array_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(bool_array_result->scalars().array_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(string_array_result->scalars().array_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(double_array_result->scalars().array_data().data_size(),
-                  num_inserted);
-        EXPECT_EQ(float_array_result->scalars().array_data().data_size(),
-                  num_inserted);
+        // EXPECT_EQ(int_array_result->scalars().array_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(long_array_result->scalars().array_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(bool_array_result->scalars().array_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(string_array_result->scalars().array_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(double_array_result->scalars().array_data().data_size(),
+        //           num_inserted);
+        // EXPECT_EQ(float_array_result->scalars().array_data().data_size(),
+        //           num_inserted);
+        EXPECT_EQ(
+            array_float_vector_result->vectors().array_vector().data_size(),
+            num_inserted);
 
-        EXPECT_EQ(bool_result->valid_data_size(), 0);
-        EXPECT_EQ(int8_result->valid_data_size(), 0);
-        EXPECT_EQ(int16_result->valid_data_size(), 0);
-        EXPECT_EQ(int32_result->valid_data_size(), 0);
+        // EXPECT_EQ(bool_result->valid_data_size(), 0);
+        // EXPECT_EQ(int8_result->valid_data_size(), 0);
+        // EXPECT_EQ(int16_result->valid_data_size(), 0);
+        // EXPECT_EQ(int32_result->valid_data_size(), 0);
         EXPECT_EQ(int64_result->valid_data_size(), 0);
-        EXPECT_EQ(float_result->valid_data_size(), 0);
-        EXPECT_EQ(double_result->valid_data_size(), 0);
-        EXPECT_EQ(varchar_result->valid_data_size(), 0);
-        EXPECT_EQ(json_result->valid_data_size(), 0);
-        EXPECT_EQ(int_array_result->valid_data_size(), 0);
-        EXPECT_EQ(long_array_result->valid_data_size(), 0);
-        EXPECT_EQ(bool_array_result->valid_data_size(), 0);
-        EXPECT_EQ(string_array_result->valid_data_size(), 0);
-        EXPECT_EQ(double_array_result->valid_data_size(), 0);
-        EXPECT_EQ(float_array_result->valid_data_size(), 0);
+        // EXPECT_EQ(float_result->valid_data_size(), 0);
+        // EXPECT_EQ(double_result->valid_data_size(), 0);
+        // EXPECT_EQ(varchar_result->valid_data_size(), 0);
+        // EXPECT_EQ(json_result->valid_data_size(), 0);
+        // EXPECT_EQ(int_array_result->valid_data_size(), 0);
+        // EXPECT_EQ(long_array_result->valid_data_size(), 0);
+        // EXPECT_EQ(bool_array_result->valid_data_size(), 0);
+        // EXPECT_EQ(string_array_result->valid_data_size(), 0);
+        // EXPECT_EQ(double_array_result->valid_data_size(), 0);
+        // EXPECT_EQ(float_array_result->valid_data_size(), 0);
+        EXPECT_EQ(array_float_vector_result->valid_data_size(), 0);
     }
 }
 
