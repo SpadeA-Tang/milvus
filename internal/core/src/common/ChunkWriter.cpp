@@ -230,6 +230,73 @@ ArrayChunkWriter::finish() {
 }
 
 void
+VectorArrayChunkWriter::write(const arrow::ArrayVector& arrow_array_vec) {
+    auto size = 0;
+    std::vector<ArrayVector> array_vectors;
+    array_vectors.reserve(arrow_array_vec.size());
+
+    for (const auto& data : arrow_array_vec) {
+        auto array = std::dynamic_pointer_cast<arrow::BinaryArray>(data);
+        for (size_t i = 0; i < array->length(); i++) {
+            auto str = array->GetView(i);
+            VectorArray vector_array;
+            vector_array.ParseFromArray(str.data(), str.size());
+            auto arr = ArrayVector(vector_array);
+            size += arr.byte_size();
+            array_vectors.push_back(std::move(arr));
+        }
+        row_nums_ += array->length();
+    }
+
+    // offsets + lens
+    size += sizeof(uint32_t) * (row_nums_ * 2 + 1) + MMAP_ARRAY_PADDING;
+    if (file_) {
+        target_ = std::make_shared<MmapChunkTarget>(*file_, file_offset_);
+    } else {
+        target_ = std::make_shared<MemChunkTarget>(size);
+    }
+
+    int offsets_num = row_nums_ + 1;
+    int len_num = row_nums_;
+    uint32_t offset_start_pos =
+        target_->tell() + sizeof(uint32_t) * (offsets_num + len_num);
+    std::vector<uint32_t> offsets(offsets_num);
+    std::vector<uint32_t> lens(len_num);
+    for (size_t i = 0; i < array_vectors.size(); i++) {
+        auto& arr = array_vectors[i];
+        offsets[i] = offset_start_pos;
+        lens[i] = arr.length();
+        offset_start_pos += arr.byte_size();
+    }
+    if (offsets_num > 0) {
+        offsets[offsets_num - 1] = offset_start_pos;
+    }
+
+    for (int i = 0; i < offsets.size(); i++) {
+        if (i == offsets.size() - 1) {
+            target_->write(&offsets[i], sizeof(uint32_t));
+            break;
+        }
+        target_->write(&offsets[i], sizeof(uint32_t));
+        target_->write(&lens[i], sizeof(uint32_t));
+    }
+
+    for (auto& arr : array_vectors) {
+        target_->write(arr.data(), arr.byte_size());
+    }
+}
+
+std::shared_ptr<Chunk>
+VectorArrayChunkWriter::finish() {
+    char padding[MMAP_ARRAY_PADDING];
+    target_->write(padding, MMAP_ARRAY_PADDING);
+
+    auto [data, size] = target_->get();
+    return std::make_shared<VectorArrayChunk>(
+        dim_, row_nums_, data, size, element_type_);
+}
+
+void
 SparseFloatVectorChunkWriter::write(const arrow::ArrayVector& array_vec) {
     auto size = 0;
     std::vector<std::string> strs;
@@ -383,7 +450,9 @@ create_chunk(const FieldMeta& field_meta,
             break;
         }
         case milvus::DataType::VECTOR_ARRAY: {
-            PanicInfo(Unsupported, "VECTOR_ARRAY");
+            w = std::make_shared<VectorArrayChunkWriter>(
+                dim, field_meta.get_element_type());
+            break;
         }
         default:
             PanicInfo(Unsupported, "Unsupported data type");

@@ -49,7 +49,7 @@ TEST(VectorArray, TestConstructVectorArray) {
     auto float_vector_array = ArrayVector(field_float_vector_array);
     ASSERT_EQ(float_vector_array.length(), N);
     ASSERT_EQ(float_vector_array.dim(), dim);
-    ASSERT_EQ(float_vector_array.element_type(), DataType::VECTOR_FLOAT);
+    ASSERT_EQ(float_vector_array.get_element_type(), DataType::VECTOR_FLOAT);
     ASSERT_EQ(float_vector_array.byte_size(), N * dim * sizeof(float));
 
     for (int i = 0; i < N; i++) {
@@ -64,7 +64,7 @@ TEST(VectorArray, TestConstructVectorArray) {
                     float_vector_array.length(),
                     float_vector_array.dim(),
                     float_vector_array.byte_size(),
-                    float_vector_array.element_type());
+                    float_vector_array.get_element_type());
 
     ASSERT_EQ(float_vector_array_tmp, float_vector_array);
 }

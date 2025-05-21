@@ -79,6 +79,25 @@ class ArrayVector : public milvus::VectorTrait {
         }
     }
 
+    explicit ArrayVector(const ArrayVector& other)
+        : size_(other.size_),
+          length_(other.length_),
+          dim_(other.dim_),
+          element_type_(other.element_type_) {
+        data_ = new char[size_];
+        std::copy(other.data_, other.data_ + other.size_, data_);
+    }
+
+    ArrayVector(ArrayVector&& other) noexcept
+        : size_(other.size_),
+          length_(other.length_),
+          dim_(other.dim_),
+          element_type_(other.element_type_),
+          data_(other.data_) {
+        // avoid double free
+        other.data_ = nullptr;
+    }
+
     ArrayVector&
     operator=(const ArrayVector& other) {
         delete[] data_;
@@ -88,6 +107,22 @@ class ArrayVector : public milvus::VectorTrait {
         element_type_ = other.element_type_;
         data_ = new char[size_];
         std::copy(other.data_, other.data_ + size_, data_);
+        return *this;
+    }
+
+    ArrayVector&
+    operator=(ArrayVector&& other) noexcept {
+        if (this != &other) {
+            delete[] data_;
+
+            data_ = other.data_;
+            size_ = other.size_;
+            length_ = other.length_;
+            dim_ = other.dim_;
+            element_type_ = other.element_type_;
+
+            other.data_ = nullptr;
+        }
         return *this;
     }
 
@@ -121,8 +156,8 @@ class ArrayVector : public milvus::VectorTrait {
         }
     }
 
-    template <typename T>
-    T*
+    template <typename VectorElement>
+    VectorElement*
     get_data(const int index) const {
         AssertInfo(index >= 0 && index < length_,
                    "index out of range, index={}, length={}",
@@ -130,9 +165,8 @@ class ArrayVector : public milvus::VectorTrait {
                    length_);
         switch (element_type_) {
             case DataType::VECTOR_FLOAT: {
-                const float* base =
-                    reinterpret_cast<const float*>(data_) + index * dim_;
-                return const_cast<T*>(base);
+                return static_cast<VectorElement*>(
+                    reinterpret_cast<float*>(data_) + index * dim_);
             }
             default: {
                 PanicInfo(NotImplemented, "Unsupported vector type");
@@ -174,7 +208,7 @@ class ArrayVector : public milvus::VectorTrait {
     }
 
     DataType
-    element_type() const {
+    get_element_type() const {
         return element_type_;
     }
 
@@ -190,4 +224,70 @@ class ArrayVector : public milvus::VectorTrait {
     int size_ = 0;
     DataType element_type_ = DataType::NONE;
 };
+
+class ArrayVectorView {
+ public:
+    ArrayVectorView() = default;
+
+    ArrayVectorView(const ArrayVectorView& other)
+        : data_(other.data_),
+          length_(other.length_),
+          size_(other.size_),
+          element_type_(other.element_type_),
+          dim_(other.dim_) {
+    }
+
+    ArrayVectorView(
+        char* data, int64_t dim, int len, size_t size, DataType element_type)
+        : data_(data),
+          dim_(dim),
+          length_(len),
+          size_(size),
+          element_type_(element_type) {
+    }
+
+    template <typename VectorElement>
+    VectorElement*
+    get_data(const int index) const {
+        AssertInfo(index >= 0 && index < length_,
+                   "index out of range, index={}, length={}",
+                   index,
+                   length_);
+        switch (element_type_) {
+            case DataType::VECTOR_FLOAT: {
+                return static_cast<VectorElement*>(
+                    reinterpret_cast<float*>(data_) + index * dim_);
+            }
+            default: {
+                PanicInfo(NotImplemented, "Unsupported vector type");
+            }
+        }
+    }
+
+    VectorArray
+    output_data() const {
+        VectorArray vector_array;
+        vector_array.set_dim(dim_);
+        switch (element_type_) {
+            case DataType::VECTOR_FLOAT: {
+                auto data = reinterpret_cast<const float*>(data_);
+                vector_array.mutable_float_vector()->mutable_data()->Add(
+                    data, data + length_ * dim_);
+                break;
+            }
+            default: {
+                PanicInfo(NotImplemented, "Unsupported vector type");
+            }
+        }
+        return vector_array;
+    }
+
+ private:
+    char* data_{nullptr};
+    int64_t dim_ = 0;
+    int length_ = 0;
+    int size_ = 0;
+    DataType element_type_ = DataType::NONE;
+};
+
 }  // namespace milvus

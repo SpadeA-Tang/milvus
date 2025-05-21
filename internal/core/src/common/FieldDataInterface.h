@@ -36,6 +36,7 @@
 #include "common/Array.h"
 #include "knowhere/dataset.h"
 #include "common/ArrayVector.h"
+#include "common/TypeTraits.h"
 
 namespace milvus {
 

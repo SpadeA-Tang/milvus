@@ -92,7 +92,8 @@ class FieldData<ArrayVector> : public FieldDataArrayVectorImpl {
 
     int64_t
     get_dim() const override {
-        return element_dim_;
+        PanicInfo(NotImplemented,
+                  "FieldDataArrayVectorImpl::get_dim is not implemented");
     }
 
  private:

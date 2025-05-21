@@ -408,7 +408,18 @@ ChunkedSegmentSealedImpl::LoadFieldData(FieldId field_id, FieldDataInfo& data) {
                     break;
                 }
                 case milvus::DataType::VECTOR_ARRAY: {
-                    PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+                    auto var_column =
+                        std::make_shared<ChunkedArrayColumn>(field_meta);
+                    std::shared_ptr<milvus::ArrowDataWrapper> r;
+                    while (data.arrow_reader_channel->pop(r)) {
+                        arrow::ArrayVector array_vec =
+                            read_single_column_batches(r->reader);
+                        auto chunk = create_chunk(
+                            field_meta, field_meta.get_dim(), array_vec);
+                        var_column->AddChunk(chunk);
+                    }
+                    column = std::move(var_column);
+                    break;
                 }
                 default: {
                     PanicInfo(DataTypeInvalid,
