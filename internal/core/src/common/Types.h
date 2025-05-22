@@ -174,6 +174,7 @@ GetArrowDataType(DataType data_type, int dim = 1) {
             return arrow::utf8();
         case DataType::ARRAY:
         case DataType::JSON:
+        case DataType::VECTOR_ARRAY:
             return arrow::binary();
         case DataType::VECTOR_FLOAT:
             return arrow::fixed_size_binary(dim * 4);
@@ -247,6 +248,8 @@ GetDataTypeName(DataType data_type) {
             return "vector_sparse_float";
         case DataType::VECTOR_INT8:
             return "vector_int8";
+        case DataType::VECTOR_ARRAY:
+            return "vector_array";
         default:
             PanicInfo(DataTypeInvalid, "Unsupported DataType({})", data_type);
     }

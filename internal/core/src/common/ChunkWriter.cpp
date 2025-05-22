@@ -559,7 +559,9 @@ create_chunk(const FieldMeta& field_meta,
             break;
         }
         case milvus::DataType::VECTOR_ARRAY: {
-            PanicInfo(Unsupported, "VECTOR_ARRAY");
+            w = std::make_shared<ArrayVectorChunkWriter>(
+                dim, field_meta.get_element_type(), file, file_offset);
+            break;
         }
         default:
             PanicInfo(Unsupported, "Unsupported data type");

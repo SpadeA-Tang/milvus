@@ -43,7 +43,6 @@
 #include "google/protobuf/message_lite.h"
 #include "index/VectorMemIndex.h"
 #include "mmap/ChunkedColumn.h"
-#include "mmap/Utils.h"
 #include "mmap/Types.h"
 #include "log/Log.h"
 #include "pb/schema.pb.h"

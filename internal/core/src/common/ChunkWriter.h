@@ -221,17 +221,18 @@ class ArrayChunkWriter : public ChunkWriterBase {
 
 class ArrayVectorChunkWriter : public ChunkWriterBase {
  public:
-    ArrayVectorChunkWriter(int64_t dim,
-                           const milvus::DataType element_type)
+    ArrayVectorChunkWriter(int64_t dim, const milvus::DataType element_type)
         : ChunkWriterBase(false), element_type_(element_type), dim_(dim) {
     }
 
-    ArrayVectorChunkWriter(const milvus::DataType element_type,
+    ArrayVectorChunkWriter(int64_t dim,
+                           const milvus::DataType element_type,
                            File& file,
                            size_t offset)
-        : ChunkWriterBase(file, offset, false), element_type_(element_type) {
+        : ChunkWriterBase(file, offset, false),
+          element_type_(element_type),
+          dim_(dim) {
     }
-
 
     void
     write(const arrow::ArrayVector& array_vec) override;

@@ -36,7 +36,6 @@
 #include "common/Span.h"
 #include "fmt/format.h"
 #include "log/Log.h"
-#include "mmap/Utils.h"
 #include "common/FieldData.h"
 #include "common/FieldDataInterface.h"
 #include "knowhere/dataset.h"

@@ -26,6 +26,7 @@
 #include "common/FieldMeta.h"
 #include "common/Types.h"
 #include "log/Log.h"
+#include "segcore/Utils.h"
 
 namespace milvus::storage {
 std::shared_ptr<ColumnBase>
