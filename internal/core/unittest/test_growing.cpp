@@ -272,6 +272,30 @@ TEST_P(GrowingTest, FillData) {
             array_float_vector_result->vectors().array_vector().data_size(),
             num_inserted);
 
+        if (i == 0) {
+            // Verify vector array data
+            auto verify_float_vectors = [](auto arr1, auto arr2) {
+                static constexpr float EPSILON = 1e-6;
+                EXPECT_EQ(arr1.size(), arr2.size());
+                for (int64_t i = 0; i < arr1.size(); ++i) {
+                    EXPECT_NEAR(arr1[i], arr2[i], EPSILON);
+                }
+            };
+
+            auto array_vec_values =
+                dataset.get_col<VectorArray>(array_float_vector);
+            for (int64_t i = 0; i < per_batch; ++i) {
+                auto arrow_array = array_float_vector_result->vectors()
+                                       .array_vector()
+                                       .data()[i]
+                                       .float_vector()
+                                       .data();
+                auto expected_array =
+                    array_vec_values[ids_ds->GetIds()[i]].float_vector().data();
+                verify_float_vectors(arrow_array, expected_array);
+            }
+        }
+
         // EXPECT_EQ(bool_result->valid_data_size(), 0);
         // EXPECT_EQ(int8_result->valid_data_size(), 0);
         // EXPECT_EQ(int16_result->valid_data_size(), 0);

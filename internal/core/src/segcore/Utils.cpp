@@ -215,7 +215,21 @@ GetRawDataSizeOfDataArray(const DataArray* data,
                 break;
             }
             case DataType::VECTOR_ARRAY: {
-                PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+                auto& obj = data->vectors().array_vector().data();
+                switch (field_meta.get_element_type()) {
+                    case DataType::VECTOR_FLOAT: {
+                        for (auto& e : obj) {
+                            result += e.float_vector().ByteSizeLong();
+                        }
+                        break;
+                    }
+                    default: {
+                        PanicInfo(NotImplemented,
+                                  fmt::format("not implemented vector type {}",
+                                              field_meta.get_element_type()));
+                    }
+                }
+                break;
             }
             default: {
                 PanicInfo(

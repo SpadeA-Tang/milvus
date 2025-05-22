@@ -2424,7 +2424,7 @@ TEST(Sealed, QueryAllFields) {
     //     segment->bulk_subscript(bfloat16_vec, ids_ds->GetIds(), dataset_size);
     // auto int8_vec_result =
     //     segment->bulk_subscript(int8_vec, ids_ds->GetIds(), dataset_size);
-    auto array_vec_result =
+    auto array_float_vector_result =
         segment->bulk_subscript(array_vec, ids_ds->GetIds(), dataset_size);
 
     // EXPECT_EQ(bool_result->scalars().bool_data().data_size(), dataset_size);
@@ -2457,10 +2457,10 @@ TEST(Sealed, QueryAllFields) {
     //           dataset_size);
     // EXPECT_EQ(float_array_result->scalars().array_data().data_size(),
     //           dataset_size);
-    EXPECT_EQ(array_vec_result->vectors().array_vector().data_size(),
+    EXPECT_EQ(array_float_vector_result->vectors().array_vector().data_size(),
               dataset_size);
 
-    auto verify_floats = [](auto arr1, auto arr2) {
+    auto verify_float_vectors = [](auto arr1, auto arr2) {
         static constexpr float EPSILON = 1e-6;
         EXPECT_EQ(arr1.size(), arr2.size());
         for (int64_t i = 0; i < arr1.size(); ++i) {
@@ -2469,14 +2469,14 @@ TEST(Sealed, QueryAllFields) {
     };
 
     for (int64_t i = 0; i < dataset_size; ++i) {
-        auto arrow_array = array_vec_result->vectors()
+        auto arrow_array = array_float_vector_result->vectors()
                                .array_vector()
                                .data()[i]
                                .float_vector()
                                .data();
         auto expected_array =
             array_vec_values[ids_ds->GetIds()[i]].float_vector().data();
-        verify_floats(arrow_array, expected_array);
+        verify_float_vectors(arrow_array, expected_array);
     }
 
     // EXPECT_EQ(bool_result->valid_data_size(), 0);
@@ -2494,7 +2494,7 @@ TEST(Sealed, QueryAllFields) {
     // EXPECT_EQ(string_array_result->valid_data_size(), 0);
     // EXPECT_EQ(double_array_result->valid_data_size(), 0);
     // EXPECT_EQ(float_array_result->valid_data_size(), 0);
-    EXPECT_EQ(array_vec_result->valid_data_size(), 0);
+    EXPECT_EQ(array_float_vector_result->valid_data_size(), 0);
 }
 
 TEST(Sealed, QueryAllNullableFields) {

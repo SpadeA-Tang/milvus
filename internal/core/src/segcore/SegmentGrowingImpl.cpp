@@ -718,7 +718,11 @@ SegmentGrowingImpl::bulk_subscript(FieldId field_id,
                 count,
                 result->mutable_vectors()->mutable_int8_vector()->data());
         } else if (field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
-            PanicInfo(DataTypeInvalid, "VECTOR_ARRAY is not implemented");
+            bulk_subscript_array_vector_impl(
+                *vec_ptr,
+                seg_offsets,
+                count,
+                result->mutable_vectors()->mutable_array_vector()->mutable_data());
         } else {
             PanicInfo(DataTypeInvalid, "logical error");
         }
@@ -983,6 +987,24 @@ SegmentGrowingImpl::bulk_subscript_array_impl(
         auto offset = seg_offsets[i];
         if (offset != INVALID_SEG_OFFSET) {
             dst->at(i) = vec[offset].output_data();
+        }
+    }
+}
+
+template <typename T>
+void
+SegmentGrowingImpl::bulk_subscript_array_vector_impl(
+    const VectorBase& vec_raw,
+    const int64_t* seg_offsets,
+    int64_t count,
+    google::protobuf::RepeatedPtrField<T>* dst) const {
+    auto vec_ptr = dynamic_cast<const ConcurrentVector<ArrayVector>*>(&vec_raw);
+    AssertInfo(vec_ptr, "Pointer of vec_raw is nullptr");
+    auto& vec = *vec_ptr;
+    for (int64_t i = 0; i < count; ++i) {
+        auto offset = seg_offsets[i];
+        if (offset != INVALID_SEG_OFFSET) {
+            dst->at(i) = vec[i].output_data();
         }
     }
 }

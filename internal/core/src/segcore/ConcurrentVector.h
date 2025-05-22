@@ -542,15 +542,15 @@ class ConcurrentVector<Array> : public ConcurrentVectorImpl<Array, true> {
 
 template <>
 class ConcurrentVector<ArrayVector>
-    : public ConcurrentVectorImpl<ArrayVector, false> {
+    : public ConcurrentVectorImpl<ArrayVector, true> {
  public:
     explicit ConcurrentVector(
-        int64_t dim,
+        int64_t dim /* not use it*/,
         int64_t size_per_chunk,
         storage::MmapChunkDescriptorPtr mmap_descriptor = nullptr,
         ThreadSafeValidDataPtr valid_data_ptr = nullptr)
-        : ConcurrentVectorImpl<ArrayVector, false>::ConcurrentVectorImpl(
-              dim, size_per_chunk, std::move(mmap_descriptor), valid_data_ptr) {
+        : ConcurrentVectorImpl<ArrayVector, true>::ConcurrentVectorImpl(
+              1, size_per_chunk, std::move(mmap_descriptor), valid_data_ptr) {
     }
 };
 
