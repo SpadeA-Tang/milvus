@@ -12,8 +12,72 @@
 #include <gtest/gtest.h>
 #include <random>
 #include <vector>
+#include <string>
 
 #include "common/ArrayVector.h"
+#include "pb/schema.pb.h"
+#include "common/Schema.h"
+
+using namespace milvus;
+
+TEST(VectorArray, TestSchema) {
+    namespace pb = milvus::proto;
+    pb::schema::CollectionSchema proto;
+    proto.set_name("col");
+    proto.set_description("asdfhsalkgfhsadg");
+    auto dim = 16;
+    bool bool_default_value = true;
+    int32_t int_default_value = 20;
+    int64_t long_default_value = 20;
+    float float_default_value = 20;
+    double double_default_value = 20;
+    std::string varchar_dafualt_vlaue = "20";
+
+    {
+        auto field = proto.add_fields();
+        field->set_name("key");
+        field->set_nullable(false);
+        field->set_fieldid(100);
+        field->set_is_primary_key(true);
+        field->set_description("asdgfsagf");
+        field->set_data_type(pb::schema::DataType::Int64);
+    }
+
+    {
+        auto struct_field = proto.add_struct_fields();
+        struct_field->set_name("struct");
+        struct_field->set_fieldid(101);
+
+        auto field = struct_field->add_fields();
+        field->set_name("struct_key");
+        field->set_nullable(false);
+        field->set_fieldid(102);
+        field->set_data_type(pb::schema::DataType::Array);
+        field->set_element_type(pb::schema::DataType::Int64);
+
+        auto field2 = struct_field->add_fields();
+        field2->set_name("struct_float_vec");
+        field2->set_fieldid(103);
+        field2->set_data_type(pb::schema::DataType::ArrayOfVector);
+        field2->set_element_type(pb::schema::DataType::FloatVector);
+        auto param = field2->add_type_params();
+        param->set_key("dim");
+        param->set_value("16");
+        auto iparam = field2->add_index_params();
+        iparam->set_key("metric_type");
+        iparam->set_value("L2");
+    }
+
+    auto schema = Schema::ParseFrom(proto);
+    auto field = schema->operator[](FieldId(102));
+    ASSERT_EQ(field.get_data_type(), DataType::ARRAY);
+    ASSERT_EQ(field.get_element_type(), DataType::INT64);
+    
+    auto field2 = schema->operator[](FieldId(103));
+    ASSERT_EQ(field2.get_data_type(), DataType::VECTOR_ARRAY);
+    ASSERT_EQ(field2.get_element_type(), DataType::VECTOR_FLOAT);
+    ASSERT_EQ(field2.get_dim(), 16);
+}
 
 std::vector<float>
 generate_float_vector(int64_t seed, int64_t N, int64_t dim) {

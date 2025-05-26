@@ -1307,6 +1307,18 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 					dstInt8Vector := dstVector.Data.(*schemapb.VectorField_Int8Vector)
 					dstInt8Vector.Int8Vector = append(dstInt8Vector.Int8Vector, srcVector.Int8Vector...)
 				}
+			case *schemapb.VectorField_ArrayVector:
+				if dstVector.GetArrayVector() == nil {
+					dstVector.Data = &schemapb.VectorField_ArrayVector{
+						ArrayVector: &schemapb.ArrayVector{
+							Dim:         srcVector.ArrayVector.Dim,
+							ElementType: srcVector.ArrayVector.ElementType,
+							Data:        srcVector.ArrayVector.Data,
+						},
+					}
+				} else {
+					dstVector.GetArrayVector().Data = append(dstVector.GetArrayVector().Data, srcVector.ArrayVector.Data...)
+				}
 			default:
 				log.Error("Not supported data type", zap.String("data type", srcFieldData.Type.String()))
 				return errors.New("unsupported data type: " + srcFieldData.Type.String())
