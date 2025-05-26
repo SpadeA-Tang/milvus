@@ -263,10 +263,9 @@ func (writer *IndexFileBinlogWriter) NextIndexFileEventWriter() (*indexFileEvent
 }
 
 // NewInsertBinlogWriter creates InsertBinlogWriter to write binlog file.
-func NewInsertBinlogWriter(dataType schemapb.DataType, elementDataType schemapb.DataType, collectionID, partitionID, segmentID, FieldID int64, nullable bool) *InsertBinlogWriter {
+func NewInsertBinlogWriter(dataType schemapb.DataType, collectionID, partitionID, segmentID, FieldID int64, nullable bool) *InsertBinlogWriter {
 	descriptorEvent := newDescriptorEvent()
 	descriptorEvent.PayloadDataType = dataType
-	descriptorEvent.ElementDataType = elementDataType
 	descriptorEvent.CollectionID = collectionID
 	descriptorEvent.PartitionID = partitionID
 	descriptorEvent.SegmentID = segmentID
@@ -292,7 +291,6 @@ func NewDeleteBinlogWriter(dataType schemapb.DataType, collectionID, partitionID
 	descriptorEvent := newDescriptorEvent()
 	descriptorEvent.PayloadDataType = dataType
 	// todo(SpadeA): could be other type?
-	descriptorEvent.ElementDataType = schemapb.DataType_None
 	descriptorEvent.CollectionID = collectionID
 	descriptorEvent.PartitionID = partitionID
 	descriptorEvent.SegmentID = segmentID
@@ -313,8 +311,6 @@ func NewDDLBinlogWriter(dataType schemapb.DataType, collectionID int64) *DDLBinl
 	descriptorEvent := newDescriptorEvent()
 	descriptorEvent.PayloadDataType = dataType
 	descriptorEvent.CollectionID = collectionID
-	// todo(SpadeA): could be other type?
-	descriptorEvent.ElementDataType = schemapb.DataType_None
 	w := &DDLBinlogWriter{
 		baseBinlogWriter: baseBinlogWriter{
 			descriptorEvent: *descriptorEvent,

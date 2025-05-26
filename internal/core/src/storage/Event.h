@@ -51,7 +51,6 @@ struct DescriptorEventDataFixPart {
     Timestamp start_timestamp;
     Timestamp end_timestamp;
     milvus::proto::schema::DataType data_type;
-    milvus::proto::schema::DataType element_data_type;
 
     DescriptorEventDataFixPart() = default;
     explicit DescriptorEventDataFixPart(BinlogReaderPtr reader);

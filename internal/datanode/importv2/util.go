@@ -133,7 +133,6 @@ func CheckRowsEqual(schema *schemapb.CollectionSchema, data *storage.InsertData)
 	if len(data.Data) == 0 {
 		return nil
 	}
-	// todo(SpadeA): consider struct fields
 	idToField := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
@@ -269,10 +268,15 @@ func RunBm25Function(task *ImportTask, data *storage.InsertData) error {
 }
 
 func GetInsertDataRowCount(data *storage.InsertData, schema *schemapb.CollectionSchema) int {
-	// todo(SpadeA): consider struct fields
 	fields := lo.KeyBy(schema.GetFields(), func(field *schemapb.FieldSchema) int64 {
 		return field.GetFieldID()
 	})
+	for _, structField := range schema.GetStructFields() {
+		for _, subField := range structField.GetFields() {
+			fields[subField.GetFieldID()] = subField
+		}
+	}
+
 	for fieldID, fd := range data.Data {
 		if fields[fieldID].GetIsDynamic() {
 			continue

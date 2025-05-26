@@ -180,6 +180,10 @@ func (s *schemaInfo) GetLoadFieldIDs(loadFields []string, skipDynamicField bool)
 	fields := make([]*schemapb.FieldSchema, 0, len(loadFields))
 	// todo(SpadeA): check struct field
 	for _, name := range loadFields {
+		if s.schemaHelper.IsStructField(name) {
+			panic("not implemented")
+		}
+
 		fieldSchema, err := s.schemaHelper.GetFieldFromName(name)
 		if err != nil {
 			return nil, err

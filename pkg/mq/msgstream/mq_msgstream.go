@@ -360,7 +360,6 @@ func (ms *mqMsgStream) Produce(ctx context.Context, msgPack *MsgPack) error {
 				msg := &common.ProducerMessage{Payload: m, Properties: GetPorperties(v.Msgs[i])}
 				InjectCtx(spanCtx, msg.Properties)
 
-				log.Info("debug=== send upper msg", zap.Any("msgId", v.Msgs[i].ID()))
 				if _, err := producer.Send(spanCtx, msg); err != nil {
 					sp.RecordError(err)
 					return err

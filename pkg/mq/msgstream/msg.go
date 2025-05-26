@@ -240,17 +240,7 @@ func (it *InsertMsg) CheckAligned() error {
 	if it.IsColumnBased() {
 		for _, field := range it.FieldsData {
 			if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
-				for _, structField := range structField.ArrayStruct.GetFields() {
-					fieldNumRows, err := funcutil.GetNumRowOfFieldData(structField)
-					if err != nil {
-						return err
-					}
-					if fieldNumRows != rowNums {
-						return numRowsOfFieldDataMismatch(field.FieldName, fieldNumRows, rowNums)
-					}
-				}
-
-				continue
+				panic(fmt.Sprintf("Struct field data has not been flattened: %v", structField))
 			}
 
 			fieldNumRows, err := funcutil.GetNumRowOfFieldData(field)

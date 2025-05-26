@@ -100,7 +100,6 @@ func GetAuthorization(c *gin.Context) string {
 
 // find the primary field of collection
 func getPrimaryField(schema *schemapb.CollectionSchema) (*schemapb.FieldSchema, bool) {
-	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey {
 			return field, true
@@ -294,12 +293,16 @@ func checkAndSetData(body []byte, collSchema *schemapb.CollectionSchema) (error,
 	}
 
 	fieldNames := make([]string, 0, len(collSchema.Fields))
-	// todo(SpadeA): consider struct fields
 	for _, field := range collSchema.Fields {
 		if field.IsDynamic {
 			continue
 		}
 		fieldNames = append(fieldNames, field.Name)
+	}
+	for _, structField := range collSchema.StructFields {
+		for _, subField := range structField.Fields {
+			fieldNames = append(fieldNames, subField.Name)
+		}
 	}
 
 	for _, data := range dataResultArray {
@@ -748,7 +751,10 @@ func anyToColumns(rows []map[string]interface{}, validDataMap map[string][]bool,
 	nameDims := make(map[string]int64)
 	fieldData := make(map[string]*schemapb.FieldData)
 
-	// todo(SpadeA): consider struct fields
+	if len(sch.StructFields) > 0 {
+		panic("not implemented")
+	}
+
 	for _, field := range sch.Fields {
 		if (field.IsPrimaryKey && field.AutoID && inInsert) || field.IsDynamic {
 			continue

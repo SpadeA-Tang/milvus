@@ -470,6 +470,8 @@ func (it *upsertTask) insertExecute(ctx context.Context, msgPack *msgstream.MsgP
 		zap.Duration("get cache duration", getCacheDur),
 		zap.Duration("get msgStream duration", getMsgStreamDur))
 
+	FlattenStructFieldData(it.upsertMsg.InsertMsg)
+
 	// assign segmentID for insert data and repack data by segmentID
 	var insertMsgPack *msgstream.MsgPack
 	if it.partitionKeys == nil {

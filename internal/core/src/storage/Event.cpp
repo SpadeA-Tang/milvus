@@ -118,8 +118,6 @@ DescriptorEventDataFixPart::DescriptorEventDataFixPart(BinlogReaderPtr reader) {
     assert(ast.ok());
     ast = reader->Read(sizeof(data_type), &data_type);
     assert(ast.ok());
-    ast = reader->Read(sizeof(element_data_type), &element_data_type);
-    assert(ast.ok());
 }
 
 std::vector<uint8_t>
@@ -127,7 +125,7 @@ DescriptorEventDataFixPart::Serialize() {
     auto fix_part_size = sizeof(collection_id) + sizeof(partition_id) +
                          sizeof(segment_id) + sizeof(field_id) +
                          sizeof(start_timestamp) + sizeof(end_timestamp) +
-                         sizeof(data_type) + sizeof(element_data_type);
+                         sizeof(data_type);
     std::vector<uint8_t> res(fix_part_size);
     int offset = 0;
     memcpy(res.data() + offset, &collection_id, sizeof(collection_id));
@@ -143,8 +141,6 @@ DescriptorEventDataFixPart::Serialize() {
     memcpy(res.data() + offset, &end_timestamp, sizeof(end_timestamp));
     offset += sizeof(end_timestamp);
     memcpy(res.data() + offset, &data_type, sizeof(data_type));
-    offset += sizeof(element_data_type);
-    memcpy(res.data() + offset, &element_data_type, sizeof(element_data_type));
 
     return res;
 }

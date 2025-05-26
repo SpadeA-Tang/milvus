@@ -85,7 +85,7 @@ func (reader *EventReader) Close() {
 	}
 }
 
-func newEventReader(datatype schemapb.DataType, elementDataType schemapb.DataType, buffer *bytes.Buffer, nullable bool) (*EventReader, error) {
+func newEventReader(datatype schemapb.DataType, buffer *bytes.Buffer, nullable bool) (*EventReader, error) {
 	reader := &EventReader{
 		eventHeader: eventHeader{
 			baseEventHeader{},
@@ -103,7 +103,7 @@ func newEventReader(datatype schemapb.DataType, elementDataType schemapb.DataTyp
 
 	next := int(reader.EventLength - reader.eventHeader.GetMemoryUsageInBytes() - reader.GetEventDataFixPartSize())
 	payloadBuffer := buffer.Next(next)
-	payloadReader, err := NewPayloadReader(datatype, elementDataType, payloadBuffer, nullable)
+	payloadReader, err := NewPayloadReader(datatype, payloadBuffer, nullable)
 	if err != nil {
 		return nil, err
 	}

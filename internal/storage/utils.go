@@ -521,11 +521,8 @@ func RowBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemap
 func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemapb.CollectionSchema) (idata *InsertData, err error) {
 	srcFields := make(map[FieldID]*schemapb.FieldData)
 	for _, field := range msg.FieldsData {
-		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
-			for _, subField := range structField.ArrayStruct.Fields {
-				srcFields[subField.FieldId] = subField
-			}
-			continue
+		if _, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			panic("struct is not flattened")
 		}
 		srcFields[field.FieldId] = field
 	}
@@ -733,9 +730,9 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 		return fieldData, nil
 	}
 
-	for _, field := range collSchema.Fields {
+	handleFieldData := func(field *schemapb.FieldSchema) (FieldData, error) {
 		if IsBM25FunctionOutputField(field, collSchema) {
-			continue
+			return nil, nil
 		}
 
 		fieldData, err := getFieldData(field)
@@ -746,31 +743,28 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 		if length == 0 {
 			length = fieldData.RowNum()
 		}
+
 		if fieldData.RowNum() != length {
 			return nil, merr.WrapErrServiceInternal("row num not match", fmt.Sprintf("field %s row num not match %d, other column %d", field.GetName(), fieldData.RowNum(), length))
 		}
 
+		return fieldData, nil
+	}
+
+	for _, field := range collSchema.Fields {
+		fieldData, err := handleFieldData(field)
+		if err != nil {
+			return nil, err
+		}
 		idata.Data[field.FieldID] = fieldData
 	}
 
 	for _, structField := range collSchema.GetStructFields() {
 		for _, field := range structField.GetFields() {
-			if IsBM25FunctionOutputField(field, collSchema) {
-				continue
-			}
-
-			fieldData, err := getFieldData(field)
+			fieldData, err := handleFieldData(field)
 			if err != nil {
 				return nil, err
 			}
-
-			if length == 0 {
-				length = fieldData.RowNum()
-			}
-			if fieldData.RowNum() != length {
-				return nil, merr.WrapErrServiceInternal("row num not match", fmt.Sprintf("field %s row num not match %d, other column %d", field.GetName(), fieldData.RowNum(), length))
-			}
-
 			idata.Data[field.FieldID] = fieldData
 		}
 	}
@@ -781,8 +775,6 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 	return idata, nil
 }
 
-// FieldData in StructField will be flattened to separated FieldData in InsertData.
-// FieldData {Field: StructField { FieldData1, FieldData2 }} -> InsertData {FieldData1, FieldData2}
 func InsertMsgToInsertData(msg *msgstream.InsertMsg, schema *schemapb.CollectionSchema) (idata *InsertData, err error) {
 	if msg.IsRowBased() {
 		return RowBasedInsertMsgToInsertData(msg, schema, true)

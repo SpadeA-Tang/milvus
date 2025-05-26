@@ -246,7 +246,7 @@ func (insertCodec *InsertCodec) Serialize(partitionID UniqueID, segmentID Unique
 
 	serializeField := func(field *schemapb.FieldSchema) error {
 		// encode fields
-		writer = NewInsertBinlogWriter(field.DataType, field.ElementType, insertCodec.Schema.ID, partitionID, segmentID, field.FieldID, field.GetNullable())
+		writer = NewInsertBinlogWriter(field.DataType, insertCodec.Schema.ID, partitionID, segmentID, field.FieldID, field.GetNullable())
 
 		// get payload writing configs, including nullable and fallback encoding method
 		opts := []PayloadWriterOptions{WithNullable(field.GetNullable()), WithWriterProps(getFieldWriterProps(field))}

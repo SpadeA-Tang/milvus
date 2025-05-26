@@ -2416,3 +2416,19 @@ func IsBM25FunctionOutputField(field *schemapb.FieldSchema, collSchema *schemapb
 	}
 	return false
 }
+
+// FlattenStructFieldData flattens the struct field data in the insert message so that
+// data node and query node have not to handle the struct field data.
+func FlattenStructFieldData(insertMsg *msgstream.InsertMsg) {
+	flattenedFields := make([]*schemapb.FieldData, 0, len(insertMsg.GetFieldsData()))
+	for _, field := range insertMsg.GetFieldsData() {
+		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			for _, subField := range structField.ArrayStruct.Fields {
+				flattenedFields = append(flattenedFields, subField)
+			}
+		} else {
+			flattenedFields = append(flattenedFields, field)
+		}
+	}
+	insertMsg.FieldsData = flattenedFields
+}

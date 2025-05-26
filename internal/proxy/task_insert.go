@@ -316,6 +316,8 @@ func (it *insertTask) Execute(ctx context.Context) error {
 		zap.Duration("get cache duration", getCacheDur),
 		zap.Duration("get msgStream duration", getMsgStreamDur))
 
+	FlattenStructFieldData(it.insertMsg)
+
 	// assign segmentID for insert data and repack data by segmentID
 	var msgPack *msgstream.MsgPack
 	if it.partitionKeys == nil {

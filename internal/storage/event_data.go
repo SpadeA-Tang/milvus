@@ -58,7 +58,6 @@ type DescriptorEventDataFixPart struct {
 	StartTimestamp  typeutil.Timestamp
 	EndTimestamp    typeutil.Timestamp
 	PayloadDataType schemapb.DataType
-	ElementDataType schemapb.DataType
 }
 
 // SetEventTimeStamp set the timestamp value of DescriptorEventDataFixPart.
@@ -382,7 +381,6 @@ func newDescriptorEventData() *descriptorEventData {
 			StartTimestamp:  0,
 			EndTimestamp:    0,
 			PayloadDataType: -1,
-			ElementDataType: -1,
 		},
 		PostHeaderLengths: []uint8{},
 		Extras:            make(map[string]interface{}),

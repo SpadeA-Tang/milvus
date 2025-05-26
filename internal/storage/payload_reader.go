@@ -24,17 +24,15 @@ import (
 
 // PayloadReader reads data from payload
 type PayloadReader struct {
-	reader          *file.Reader
-	colType         schemapb.DataType
-	elementDataType schemapb.DataType
-	numRows         int64
-	nullable        bool
+	reader   *file.Reader
+	colType  schemapb.DataType
+	numRows  int64
+	nullable bool
 }
 
 var _ PayloadReaderInterface = (*PayloadReader)(nil)
 
-func NewPayloadReader(colType schemapb.DataType, elementDataType schemapb.DataType,
-	buf []byte, nullable bool) (*PayloadReader, error) {
+func NewPayloadReader(colType schemapb.DataType, buf []byte, nullable bool) (*PayloadReader, error) {
 	if len(buf) == 0 {
 		return nil, errors.New("create Payload reader failed, buffer is empty")
 	}
@@ -42,7 +40,7 @@ func NewPayloadReader(colType schemapb.DataType, elementDataType schemapb.DataTy
 	if err != nil {
 		return nil, err
 	}
-	return &PayloadReader{reader: parquetReader, colType: colType, elementDataType: elementDataType, numRows: parquetReader.NumRows(), nullable: nullable}, nil
+	return &PayloadReader{reader: parquetReader, colType: colType, numRows: parquetReader.NumRows(), nullable: nullable}, nil
 }
 
 // GetDataFromPayload returns data,length from payload, returns err if failed

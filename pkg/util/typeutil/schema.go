@@ -294,15 +294,8 @@ func estimateFieldSize(field *schemapb.FieldData, rowOffset int, isStructField b
 func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, error) {
 	res := 0
 	for _, field := range fieldsData {
-		if structField, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
-			for _, subField := range structField.ArrayStruct.Fields {
-				size, err := estimateFieldSize(subField, rowOffset, true)
-				if err != nil {
-					return 0, err
-				}
-				res += size
-			}
-			continue
+		if _, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			panic("struct is not flattened")
 		}
 
 		size, err := estimateFieldSize(field, rowOffset, false)
@@ -451,6 +444,15 @@ func (helper *SchemaHelper) GetFieldFromName(fieldName string) (*schemapb.FieldS
 	} else {
 		return helper.schema.StructFields[offset.Right().structOffset].Fields[offset.Right().fieldOffset], nil
 	}
+}
+
+func (helper *SchemaHelper) IsStructField(fieldName string) bool {
+	for _, field := range helper.schema.StructFields {
+		if field.Name == fieldName {
+			return true
+		}
+	}
+	return false
 }
 
 // GetFieldFromNameDefaultJSON is used to find the schema by field name, if not exist, use json field
@@ -1043,24 +1045,8 @@ func appendFieldData(dst []*schemapb.FieldData, fieldOffset int, dataOffset int6
 // AppendFieldData appends fields data of specified index from src to dst
 func AppendFieldData(dst, src []*schemapb.FieldData, idx int64) (appendSize int64) {
 	for i, fieldData := range src {
-		if structField, ok := fieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
-			if dst[i] == nil {
-				// Initialize the sub fields of struct so that we can append data from src to it
-				subFieldsData := make([]*schemapb.FieldData, len(structField.ArrayStruct.Fields))
-				dst[i] = &schemapb.FieldData{
-					Type:      fieldData.Type,
-					FieldName: fieldData.FieldName,
-					FieldId:   fieldData.FieldId,
-					Field: &schemapb.FieldData_ArrayStruct{
-						ArrayStruct: &schemapb.ArrayStructField{
-							Fields: subFieldsData,
-						},
-					},
-				}
-			}
-			for j, subFieldData := range structField.ArrayStruct.Fields {
-				appendSize += appendFieldData(dst[i].GetArrayStruct().Fields, j, idx, subFieldData)
-			}
+		if _, ok := fieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			panic("struct is not flattened")
 		}
 
 		appendSize += appendFieldData(dst, i, idx, fieldData)
@@ -1132,11 +1118,8 @@ func DeleteFieldData(dst []*schemapb.FieldData) {
 func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error {
 	fieldID2Data := make(map[int64]*schemapb.FieldData)
 	for _, data := range dst {
-		if structField, ok := data.Field.(*schemapb.FieldData_ArrayStruct); ok {
-			for _, subField := range structField.ArrayStruct.Fields {
-				fieldID2Data[subField.FieldId] = subField
-			}
-			continue
+		if _, ok := data.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			panic("struct is not flattened")
 		}
 
 		fieldID2Data[data.FieldId] = data
@@ -1328,13 +1311,8 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 	}
 
 	for _, srcFieldData := range src {
-		if structField, ok := srcFieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
-			for _, subField := range structField.ArrayStruct.Fields {
-				if err := mergeFieldData(subField); err != nil {
-					return err
-				}
-			}
-			continue
+		if _, ok := srcFieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
+			panic("struct is not flattened")
 		}
 
 		if err := mergeFieldData(srcFieldData); err != nil {
