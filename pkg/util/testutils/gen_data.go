@@ -259,9 +259,11 @@ func GenerateArrayOfStructArray(schema *schemapb.StructFieldSchema, numRows int,
 		switch field.GetElementType() {
 		case schemapb.DataType_Int8, schemapb.DataType_Int16, schemapb.DataType_Int32:
 			fieldData := NewArrayFieldData(field.Name, numRows)
+			fieldData.FieldId = field.FieldID
 			ret = append(ret, fieldData)
 		case schemapb.DataType_FloatVector:
 			fieldData := NewArrayVectorFieldData(field.Name, numRows, dim)
+			fieldData.FieldId = field.FieldID
 			ret = append(ret, fieldData)
 		default:
 			panic(fmt.Sprintf("unimplemented data type: %s", field.ElementType))

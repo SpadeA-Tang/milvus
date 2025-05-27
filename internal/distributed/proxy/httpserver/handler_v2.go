@@ -449,7 +449,7 @@ func (h *HandlersV2) getCollectionDetails(ctx context.Context, c *gin.Context, a
 		errMessage += err.Error() + ";"
 	}
 	vectorField := ""
-	// todo(SpadeA): consider struct fields
+	// todo(SpadeA): seems only one vector field is supported, what to change if struct is supported?
 	for _, field := range coll.Schema.Fields {
 		if typeutil.IsVectorType(field.DataType) {
 			vectorField = field.Name

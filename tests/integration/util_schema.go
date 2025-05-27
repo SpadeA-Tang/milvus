@@ -26,21 +26,23 @@ import (
 )
 
 const (
-	BoolField           = "boolField"
-	Int8Field           = "int8Field"
-	Int16Field          = "int16Field"
-	Int32Field          = "int32Field"
-	Int64Field          = "int64Field"
-	FloatField          = "floatField"
-	DoubleField         = "doubleField"
-	VarCharField        = "varCharField"
-	JSONField           = "jsonField"
-	FloatVecField       = "floatVecField"
-	BinVecField         = "binVecField"
-	Float16VecField     = "float16VecField"
-	BFloat16VecField    = "bfloat16VecField"
-	SparseFloatVecField = "sparseFloatVecField"
-	StructField         = "structField"
+	BoolField              = "boolField"
+	Int8Field              = "int8Field"
+	Int16Field             = "int16Field"
+	Int32Field             = "int32Field"
+	Int64Field             = "int64Field"
+	FloatField             = "floatField"
+	DoubleField            = "doubleField"
+	VarCharField           = "varCharField"
+	JSONField              = "jsonField"
+	FloatVecField          = "floatVecField"
+	BinVecField            = "binVecField"
+	Float16VecField        = "float16VecField"
+	BFloat16VecField       = "bfloat16VecField"
+	SparseFloatVecField    = "sparseFloatVecField"
+	StructField            = "structField"
+	StructSubInt32Field    = "structSubInt32Field"
+	StructSubFloatVecField = "structSubFloatVecField"
 )
 
 func ConstructSchema(collection string, dim int, autoID bool, fields ...*schemapb.FieldSchema) *schemapb.CollectionSchema {

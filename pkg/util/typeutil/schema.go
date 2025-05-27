@@ -1432,17 +1432,39 @@ func GetPrimaryFieldData(datas []*schemapb.FieldData, primaryFieldSchema *schema
 }
 
 func GetField(schema *schemapb.CollectionSchema, fieldID int64) *schemapb.FieldSchema {
-	// todo(SpadeA): consider struct fields
-	return lo.FindOrElse(schema.GetFields(), nil, func(field *schemapb.FieldSchema) bool {
+	preficate := func(field *schemapb.FieldSchema) bool {
 		return field.GetFieldID() == fieldID
-	})
+	}
+
+	if field := lo.FindOrElse(schema.GetFields(), nil, preficate); field != nil {
+		return field
+	}
+
+	for _, structField := range schema.GetStructFields() {
+		if field := lo.FindOrElse(structField.Fields, nil, preficate); field != nil {
+			return field
+		}
+	}
+
+	return nil
 }
 
 func GetFieldByName(schema *schemapb.CollectionSchema, fieldName string) *schemapb.FieldSchema {
-	// todo(SpadeA): consider struct fields
-	return lo.FindOrElse(schema.GetFields(), nil, func(field *schemapb.FieldSchema) bool {
+	preficate := func(field *schemapb.FieldSchema) bool {
 		return field.GetName() == fieldName
-	})
+	}
+
+	if field := lo.FindOrElse(schema.GetFields(), nil, preficate); field != nil {
+		return field
+	}
+
+	for _, structField := range schema.GetStructFields() {
+		if field := lo.FindOrElse(structField.Fields, nil, preficate); field != nil {
+			return field
+		}
+	}
+
+	return nil
 }
 
 func IsPrimaryFieldDataExist(datas []*schemapb.FieldData, primaryFieldSchema *schemapb.FieldSchema) bool {

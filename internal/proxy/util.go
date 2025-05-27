@@ -1441,7 +1441,6 @@ func translateOutputFields(outputFields []string, schema *schemaInfo, removePkFi
 	userDynamicFieldsMap := make(map[string]bool)
 	userDynamicFields := make([]string, 0)
 	useAllDyncamicFields := false
-	// todo(SpadeA): consider struct fields
 	for _, field := range schema.Fields {
 		if field.IsPrimaryKey {
 			primaryFieldName = field.Name
@@ -1450,6 +1449,17 @@ func translateOutputFields(outputFields []string, schema *schemaInfo, removePkFi
 			dynamicField = field
 		}
 		allFieldNameMap[field.Name] = field
+	}
+	for _, subStruct := range schema.StructFields {
+		for _, field := range subStruct.Fields {
+			if field.IsDynamic {
+				panic("dynamic field in struct field is not supported now")
+			}
+			if field.IsPrimaryKey {
+				panic("primary key in struct field is not supported")
+			}
+			allFieldNameMap[field.Name] = field
+		}
 	}
 
 	userRequestedPkFieldExplicitly := false

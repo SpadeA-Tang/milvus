@@ -411,7 +411,7 @@ func TestProxy(t *testing.T) {
 	floatVecField := "fVec"
 	binaryVecField := "bVec"
 	dim := 128
-	rowNum := 300
+	rowNum := 3000
 	floatIndexName := "float_index"
 	binaryIndexName := "binary_index"
 	structId := "structI32"
@@ -600,7 +600,7 @@ func TestProxy(t *testing.T) {
 		}
 	}
 
-	constructCreateIndexRequest := func(dataType schemapb.DataType) *milvuspb.CreateIndexRequest {
+	constructCreateIndexRequest := func(dataType schemapb.DataType, fieldName string) *milvuspb.CreateIndexRequest {
 		req := &milvuspb.CreateIndexRequest{
 			Base:           nil,
 			DbName:         dbName,
@@ -609,7 +609,7 @@ func TestProxy(t *testing.T) {
 		switch dataType {
 		case schemapb.DataType_FloatVector:
 			{
-				req.FieldName = floatVecField
+				req.FieldName = fieldName
 				req.IndexName = floatIndexName
 				req.ExtraParams = []*commonpb.KeyValuePair{
 					{
@@ -632,7 +632,7 @@ func TestProxy(t *testing.T) {
 			}
 		case schemapb.DataType_BinaryVector:
 			{
-				req.FieldName = binaryVecField
+				req.FieldName = fieldName
 				req.IndexName = binaryIndexName
 				req.ExtraParams = []*commonpb.KeyValuePair{
 					{
@@ -839,6 +839,10 @@ func TestProxy(t *testing.T) {
 		// TODO(dragondriver): shards num
 		assert.Equal(t, len(schema.Fields), len(resp.Schema.Fields))
 		// TODO(dragondriver): compare fields schema, not sure the order of fields
+		assert.Equal(t, len(schema.StructFields), len(resp.Schema.StructFields))
+		for i, structField := range schema.StructFields {
+			assert.Equal(t, len(structField.Fields), len(resp.Schema.StructFields[i].Fields))
+		}
 
 		// describe other collection -> fail
 		resp, err = proxy.DescribeCollection(ctx, &milvuspb.DescribeCollectionRequest{
@@ -1143,7 +1147,7 @@ func TestProxy(t *testing.T) {
 	wg.Add(1)
 	t.Run("create index for floatVec field", func(t *testing.T) {
 		defer wg.Done()
-		req := constructCreateIndexRequest(schemapb.DataType_FloatVector)
+		req := constructCreateIndexRequest(schemapb.DataType_FloatVector, floatVecField)
 
 		resp, err := proxy.CreateIndex(ctx, req)
 		assert.NoError(t, err)
@@ -1301,7 +1305,7 @@ func TestProxy(t *testing.T) {
 	wg.Add(1)
 	t.Run("create index for binVec field", func(t *testing.T) {
 		defer wg.Done()
-		req := constructCreateIndexRequest(schemapb.DataType_BinaryVector)
+		req := constructCreateIndexRequest(schemapb.DataType_BinaryVector, binaryVecField)
 
 		resp, err := proxy.CreateIndex(ctx, req)
 		assert.NoError(t, err)

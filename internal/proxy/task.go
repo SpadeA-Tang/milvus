@@ -759,12 +759,12 @@ func (t *describeCollectionTask) Execute(ctx context.Context) error {
 	t.result = &milvuspb.DescribeCollectionResponse{
 		Status: merr.Success(),
 		Schema: &schemapb.CollectionSchema{
-			Name:        "",
-			Description: "",
-			AutoID:      false,
-			// todo(SpadeA): consider struct fields
-			Fields:    make([]*schemapb.FieldSchema, 0),
-			Functions: make([]*schemapb.FunctionSchema, 0),
+			Name:         "",
+			Description:  "",
+			AutoID:       false,
+			Fields:       make([]*schemapb.FieldSchema, 0),
+			Functions:    make([]*schemapb.FunctionSchema, 0),
+			StructFields: make([]*schemapb.StructFieldSchema, 0),
 		},
 		CollectionID:         0,
 		VirtualChannelNames:  nil,
@@ -809,30 +809,50 @@ func (t *describeCollectionTask) Execute(ctx context.Context) error {
 	t.result.DbName = result.GetDbName()
 	t.result.NumPartitions = result.NumPartitions
 	t.result.UpdateTimestamp = result.UpdateTimestamp
-	// todo(SpadeA): consider struct fields
+
+	copyFieldSchema := func(field *schemapb.FieldSchema) *schemapb.FieldSchema {
+		return &schemapb.FieldSchema{
+			FieldID:          field.FieldID,
+			Name:             field.Name,
+			IsPrimaryKey:     field.IsPrimaryKey,
+			AutoID:           field.AutoID,
+			Description:      field.Description,
+			DataType:         field.DataType,
+			TypeParams:       field.TypeParams,
+			IndexParams:      field.IndexParams,
+			IsDynamic:        field.IsDynamic,
+			IsPartitionKey:   field.IsPartitionKey,
+			IsClusteringKey:  field.IsClusteringKey,
+			DefaultValue:     field.DefaultValue,
+			ElementType:      field.ElementType,
+			Nullable:         field.Nullable,
+			IsFunctionOutput: field.IsFunctionOutput,
+		}
+	}
+
 	for _, field := range result.Schema.Fields {
 		if field.IsDynamic {
 			continue
 		}
 		if field.FieldID >= common.StartOfUserFieldID {
 			// todo(SpadeA): consider struct fields
-			t.result.Schema.Fields = append(t.result.Schema.Fields, &schemapb.FieldSchema{
-				FieldID:          field.FieldID,
-				Name:             field.Name,
-				IsPrimaryKey:     field.IsPrimaryKey,
-				AutoID:           field.AutoID,
-				Description:      field.Description,
-				DataType:         field.DataType,
-				TypeParams:       field.TypeParams,
-				IndexParams:      field.IndexParams,
-				IsDynamic:        field.IsDynamic,
-				IsPartitionKey:   field.IsPartitionKey,
-				IsClusteringKey:  field.IsClusteringKey,
-				DefaultValue:     field.DefaultValue,
-				ElementType:      field.ElementType,
-				Nullable:         field.Nullable,
-				IsFunctionOutput: field.IsFunctionOutput,
-			})
+			t.result.Schema.Fields = append(t.result.Schema.Fields, copyFieldSchema(field))
+		}
+	}
+
+	for i, structField := range result.Schema.StructFields {
+		t.result.Schema.StructFields = append(t.result.Schema.StructFields, &schemapb.StructFieldSchema{
+			FieldID:            structField.FieldID,
+			Name:               structField.Name,
+			Fields:             make([]*schemapb.FieldSchema, 0, len(structField.Fields)),
+			Functions:          make([]*schemapb.FunctionSchema, 0, len(structField.Functions)),
+			EnableDynamicField: structField.EnableDynamicField,
+		})
+		for _, field := range structField.Fields {
+			t.result.Schema.StructFields[i].Fields = append(t.result.Schema.StructFields[i].Fields, copyFieldSchema(field))
+		}
+		for _, function := range structField.Functions {
+			t.result.Schema.StructFields[i].Functions = append(t.result.Schema.StructFields[i].Functions, proto.Clone(function).(*schemapb.FunctionSchema))
 		}
 	}
 

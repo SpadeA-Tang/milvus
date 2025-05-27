@@ -53,21 +53,11 @@ func NewStructFieldData(schema *schemapb.StructFieldSchema, fieldName string, nu
 	fieldData := &schemapb.FieldData{
 		Type:      schemapb.DataType_Array,
 		FieldName: fieldName,
-		Field: &schemapb.FieldData_Structs{
-			Structs: &schemapb.ArrayStructField{
-				Fields: []*schemapb.FieldData{},
+		Field: &schemapb.FieldData_ArrayStruct{
+			ArrayStruct: &schemapb.ArrayStructField{
+				Fields: testutils.GenerateArrayOfStructArray(schema, numRow, dim),
 			},
 		},
-	}
-	structFields := fieldData.GetStructs()
-	for _, field := range schema.Fields {
-		var fieldData *schemapb.FieldData
-		if field.DataType < 100 {
-			fieldData = testutils.GenerateScalarFieldData(field.DataType, field.Name, numRow)
-		} else {
-			fieldData = testutils.GenerateVectorFieldData(field.DataType, field.Name, numRow, dim)
-		}
-		structFields.Fields = append(structFields.Fields, fieldData)
 	}
 	return fieldData
 }

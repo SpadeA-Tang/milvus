@@ -113,6 +113,8 @@ func (t *SyncTask) Run(ctx context.Context) (err error) {
 		}
 	}()
 
+	log.Info("debug=== task begin", zap.Int64("segmentId", t.segmentID))
+
 	segmentInfo, has := t.metacache.GetSegmentByID(t.segmentID)
 	if !has {
 		if t.pack.isDrop {
@@ -178,7 +180,7 @@ func (t *SyncTask) Run(ctx context.Context) (err error) {
 	}
 
 	t.execTime = t.tr.ElapseSpan()
-	log.Info("task done", zap.Int64("flushedSize", t.flushedSize), zap.Duration("timeTaken", t.execTime))
+	log.Info("task done", zap.Int64("flushedSize", t.flushedSize), zap.Duration("timeTaken", t.execTime), zap.Int64("segmentId", t.segmentID))
 
 	if !t.pack.isFlush {
 		metrics.DataNodeAutoFlushBufferCount.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.SuccessLabel, t.level.String()).Inc()

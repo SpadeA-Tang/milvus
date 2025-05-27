@@ -90,7 +90,6 @@ type queryParams struct {
 func translateToOutputFieldIDs(outputFields []string, schema *schemapb.CollectionSchema) ([]UniqueID, error) {
 	outputFieldIDs := make([]UniqueID, 0, len(outputFields)+1)
 	if len(outputFields) == 0 {
-		// todo(SpadeA): consider struct fields
 		for _, field := range schema.Fields {
 			if field.IsPrimaryKey {
 				outputFieldIDs = append(outputFieldIDs, field.FieldID)
@@ -98,7 +97,6 @@ func translateToOutputFieldIDs(outputFields []string, schema *schemapb.Collectio
 		}
 	} else {
 		var pkFieldID UniqueID
-		// todo(SpadeA): consider struct fields
 		for _, field := range schema.Fields {
 			if field.IsPrimaryKey {
 				pkFieldID = field.FieldID
@@ -106,7 +104,6 @@ func translateToOutputFieldIDs(outputFields []string, schema *schemapb.Collectio
 		}
 		for _, reqField := range outputFields {
 			var fieldFound bool
-			// todo(SpadeA): consider struct fields
 			for _, field := range schema.Fields {
 				if reqField == field.Name {
 					outputFieldIDs = append(outputFieldIDs, field.FieldID)
@@ -114,6 +111,23 @@ func translateToOutputFieldIDs(outputFields []string, schema *schemapb.Collectio
 					break
 				}
 			}
+
+			if !fieldFound {
+				for _, structField := range schema.StructFields {
+					for _, field := range structField.Fields {
+						if reqField == field.Name {
+							outputFieldIDs = append(outputFieldIDs, field.FieldID)
+							fieldFound = true
+							break
+						}
+					}
+
+					if fieldFound {
+						break
+					}
+				}
+			}
+
 			if !fieldFound {
 				return nil, fmt.Errorf("field %s not exist", reqField)
 			}

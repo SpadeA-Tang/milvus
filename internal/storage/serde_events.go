@@ -258,9 +258,13 @@ func newCompositeBinlogRecordReader(schema *schemapb.CollectionSchema, blobsRead
 	}, nil
 }
 
-func ValueDeserializer(r Record, v []*Value, fieldSchema []*schemapb.FieldSchema) error {
+func ValueDeserializer(r Record, v []*Value, schema *schemapb.CollectionSchema) error {
+	allFields := schema.Fields
+	for _, structField := range schema.StructFields {
+		allFields = append(allFields, structField.Fields...)
+	}
 	pkField := func() *schemapb.FieldSchema {
-		for _, field := range fieldSchema {
+		for _, field := range allFields {
 			if field.GetIsPrimaryKey() {
 				return field
 			}
@@ -275,12 +279,12 @@ func ValueDeserializer(r Record, v []*Value, fieldSchema []*schemapb.FieldSchema
 		value := v[i]
 		if value == nil {
 			value = &Value{}
-			value.Value = make(map[FieldID]interface{}, len(fieldSchema))
+			value.Value = make(map[FieldID]interface{}, len(allFields))
 			v[i] = value
 		}
 
 		m := value.Value.(map[FieldID]interface{})
-		for _, f := range fieldSchema {
+		for _, f := range allFields {
 			j := f.FieldID
 			dt := f.DataType
 			if r.Column(j).IsNull(i) {
@@ -326,7 +330,7 @@ func NewBinlogDeserializeReader(schema *schemapb.CollectionSchema, blobsReader C
 
 	// todo(SpadeA): consider struct fields
 	return NewDeserializeReader(reader, func(r Record, v []*Value) error {
-		return ValueDeserializer(r, v, schema.Fields)
+		return ValueDeserializer(r, v, schema)
 	}), nil
 }
 
