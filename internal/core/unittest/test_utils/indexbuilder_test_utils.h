@@ -231,6 +231,18 @@ GenFieldData(int64_t N,
     return milvus::segcore::DataGen(schema, N);
 }
 
+auto
+GenArrayVectorFieldData(
+    int64_t N,
+    const knowhere::MetricType& metric_type,
+    int64_t arr_len,
+    milvus::DataType element_type = milvus::DataType::VECTOR_FLOAT,
+    int64_t dim = DIM) {
+    auto schema = std::make_shared<milvus::Schema>();
+    schema->AddDebugArrayVectorField("fakevec", element_type, dim, metric_type);
+    return milvus::segcore::DataGen(schema, N, 42, 0, 1, arr_len);
+}
+
 using QueryResultPtr = std::unique_ptr<milvus::SearchResult>;
 void
 PrintQueryResult(const QueryResultPtr& result) {

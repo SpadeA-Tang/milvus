@@ -22,6 +22,8 @@ namespace milvus::index {
 
 struct CreateIndexInfo {
     DataType field_type;
+    // only used for array of vector field
+    DataType element_type;
     IndexType index_type;
     MetricType metric_type;
     IndexVersion index_engine_version;

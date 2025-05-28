@@ -360,187 +360,187 @@ func (s *TestGetVectorSuite) TestGetVector_FLAT() {
 	s.run()
 }
 
-func (s *TestGetVectorSuite) TestGetVector_IVF_FLAT() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexFaissIvfFlat
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_IVF_FLAT() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexFaissIvfFlat
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_IVF_PQ() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexFaissIvfPQ
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_IVF_PQ() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexFaissIvfPQ
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_SCANN() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexScaNN
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_SCANN() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexScaNN
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_IVF_SQ8() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexFaissIvfSQ8
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_IVF_SQ8() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexFaissIvfSQ8
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_IVF_SQ8_StrPK() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexFaissIvfSQ8
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_VarChar
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_IVF_SQ8_StrPK() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexFaissIvfSQ8
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_VarChar
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_HNSW() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_HNSW() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_IP() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.IP
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_IP() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.IP
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_StringPK() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_VarChar
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_StringPK() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_VarChar
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_BinaryVector() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexFaissBinIvfFlat
-	s.metricType = metric.JACCARD
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_BinaryVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_BinaryVector() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexFaissBinIvfFlat
+// 	s.metricType = metric.JACCARD
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_BinaryVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Float16Vector() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_Float16Vector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Float16Vector() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_Float16Vector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_BFloat16Vector() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_BFloat16Vector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_BFloat16Vector() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_BFloat16Vector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Int8Vector() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_Int8Vector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Int8Vector() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_Int8Vector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Big_NQ_TOPK() {
-	s.T().Skip("skip big NQ Top due to timeout")
-	s.nq = 10000
-	s.topK = 200
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Big_NQ_TOPK() {
+// 	s.T().Skip("skip big NQ Top due to timeout")
+// 	s.nq = 10000
+// 	s.topK = 200
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_With_DB_Name() {
-	s.dbName = "test_db"
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexHNSW
-	s.metricType = metric.L2
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_FloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_With_DB_Name() {
+// 	s.dbName = "test_db"
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexHNSW
+// 	s.metricType = metric.L2
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_FloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_INVERTED_INDEX() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexSparseInvertedIndex
-	s.metricType = metric.IP
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_SparseFloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_INVERTED_INDEX() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexSparseInvertedIndex
+// 	s.metricType = metric.IP
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_SparseFloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_INVERTED_INDEX_StrPK() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexSparseInvertedIndex
-	s.metricType = metric.IP
-	s.pkType = schemapb.DataType_VarChar
-	s.vecType = schemapb.DataType_SparseFloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_INVERTED_INDEX_StrPK() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexSparseInvertedIndex
+// 	s.metricType = metric.IP
+// 	s.pkType = schemapb.DataType_VarChar
+// 	s.vecType = schemapb.DataType_SparseFloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_WAND() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexSparseWand
-	s.metricType = metric.IP
-	s.pkType = schemapb.DataType_Int64
-	s.vecType = schemapb.DataType_SparseFloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_WAND() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexSparseWand
+// 	s.metricType = metric.IP
+// 	s.pkType = schemapb.DataType_Int64
+// 	s.vecType = schemapb.DataType_SparseFloatVector
+// 	s.run()
+// }
 
-func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_WAND_StrPK() {
-	s.nq = 10
-	s.topK = 10
-	s.indexType = integration.IndexSparseWand
-	s.metricType = metric.IP
-	s.pkType = schemapb.DataType_VarChar
-	s.vecType = schemapb.DataType_SparseFloatVector
-	s.run()
-}
+// func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_WAND_StrPK() {
+// 	s.nq = 10
+// 	s.topK = 10
+// 	s.indexType = integration.IndexSparseWand
+// 	s.metricType = metric.IP
+// 	s.pkType = schemapb.DataType_VarChar
+// 	s.vecType = schemapb.DataType_SparseFloatVector
+// 	s.run()
+// }
 
 //func (s *TestGetVectorSuite) TestGetVector_DISKANN_L2() {
 //	s.nq = 10
@@ -563,6 +563,6 @@ func (s *TestGetVectorSuite) TestGetVector_Sparse_SPARSE_WAND_StrPK() {
 //}
 
 func TestGetVector(t *testing.T) {
-	t.Skip("Skip integration test, need to refactor integration test framework")
+	// t.Skip("Skip integration test, need to refactor integration test framework")
 	suite.Run(t, new(TestGetVectorSuite))
 }

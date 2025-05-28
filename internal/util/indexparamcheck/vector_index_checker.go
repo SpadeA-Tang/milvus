@@ -92,6 +92,11 @@ func (c vecIndexChecker) StaticCheck(dataType schemapb.DataType, params map[stri
 }
 
 func (c vecIndexChecker) CheckTrain(dataType schemapb.DataType, params map[string]string) error {
+	// todo(SpadeA): add check for array of vector
+	if dataType == schemapb.DataType_ArrayOfVector {
+		return nil
+	}
+
 	if err := c.StaticCheck(dataType, params); err != nil {
 		return err
 	}
@@ -106,10 +111,11 @@ func (c vecIndexChecker) CheckTrain(dataType schemapb.DataType, params map[strin
 }
 
 func (c vecIndexChecker) CheckValidDataType(indexType IndexType, field *schemapb.FieldSchema) error {
-	if !typeutil.IsVectorType(field.GetDataType()) {
+	if !typeutil.IsVectorType(field.GetDataType()) && field.GetDataType() != schemapb.DataType_ArrayOfVector {
 		return fmt.Errorf("index %s only supports vector data type", indexType)
 	}
-	if !vecindexmgr.GetVecIndexMgrInstance().IsDataTypeSupport(indexType, field.GetDataType()) {
+	if !vecindexmgr.GetVecIndexMgrInstance().IsDataTypeSupport(indexType, field.GetDataType()) &&
+		!(field.GetDataType() == schemapb.DataType_ArrayOfVector && vecindexmgr.GetVecIndexMgrInstance().IsDataTypeSupport(indexType, field.GetElementType())) {
 		return fmt.Errorf("index %s do not support data type: %s", indexType, schemapb.DataType_name[int32(field.GetDataType())])
 	}
 	return nil

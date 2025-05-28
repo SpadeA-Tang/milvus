@@ -189,12 +189,19 @@ func (s *Server) getSchema(ctx context.Context, collID int64) (*schemapb.Collect
 }
 
 func isJsonField(schema *schemapb.CollectionSchema, fieldID int64) (bool, error) {
-	// todo(SpadeA): will struct field support json field?
 	for _, f := range schema.Fields {
 		if f.FieldID == fieldID {
 			return typeutil.IsJSONType(f.DataType), nil
 		}
 	}
+	for _, structField := range schema.StructFields {
+		for _, f := range structField.Fields {
+			if f.FieldID == fieldID {
+				return typeutil.IsJSONType(f.DataType), nil
+			}
+		}
+	}
+
 	return false, merr.WrapErrFieldNotFound(fieldID)
 }
 
