@@ -45,7 +45,7 @@ func TestConvertArrowSchema(t *testing.T) {
 		{FieldID: 16, Name: "field15", DataType: schemapb.DataType_Int8Vector, TypeParams: []*commonpb.KeyValuePair{{Key: "dim", Value: "128"}}},
 	}
 
-	structFieldSchemas := []*schemapb.StructFieldSchema{
+	StructArrayFieldSchemas := []*schemapb.StructArrayFieldSchema{
 		{FieldID: 17, Name: "struct_field0", Fields: []*schemapb.FieldSchema{
 			{FieldID: 18, Name: "field16", DataType: schemapb.DataType_Array, ElementType: schemapb.DataType_Int64},
 			{FieldID: 19, Name: "field17", DataType: schemapb.DataType_Array, ElementType: schemapb.DataType_Float},
@@ -54,11 +54,11 @@ func TestConvertArrowSchema(t *testing.T) {
 
 	schema := &schemapb.CollectionSchema{
 		Fields:       fieldSchemas,
-		StructFields: structFieldSchemas,
+		StructFields: StructArrayFieldSchemas,
 	}
 	arrowSchema, err := ConvertToArrowSchema(schema)
 	assert.NoError(t, err)
-	assert.Equal(t, len(fieldSchemas)+len(structFieldSchemas[0].Fields), len(arrowSchema.Fields()))
+	assert.Equal(t, len(fieldSchemas)+len(StructArrayFieldSchemas[0].Fields), len(arrowSchema.Fields()))
 }
 
 func TestConvertArrowSchemaWithoutDim(t *testing.T) {

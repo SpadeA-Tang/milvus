@@ -49,12 +49,12 @@ func (s *MiniClusterSuite) WaitForFlush(ctx context.Context, segIDs []int64, flu
 	}
 }
 
-func NewStructFieldData(schema *schemapb.StructFieldSchema, fieldName string, numRow int, dim int) *schemapb.FieldData {
+func NewStructFieldData(schema *schemapb.StructArrayFieldSchema, fieldName string, numRow int, dim int) *schemapb.FieldData {
 	fieldData := &schemapb.FieldData{
 		Type:      schemapb.DataType_Array,
 		FieldName: fieldName,
 		Field: &schemapb.FieldData_ArrayStruct{
-			ArrayStruct: &schemapb.ArrayStructField{
+			ArrayStruct: &schemapb.StructArrayField{
 				Fields: testutils.GenerateArrayOfStructArray(schema, numRow, dim),
 			},
 		},

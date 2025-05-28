@@ -213,7 +213,7 @@ func genTestCollectionMeta() *etcdpb.CollectionMeta {
 					},
 				},
 			},
-			StructFields: []*schemapb.StructFieldSchema{
+			StructFields: []*schemapb.StructArrayFieldSchema{
 				{
 					FieldID: StructField,
 					Name:    "field_struct",

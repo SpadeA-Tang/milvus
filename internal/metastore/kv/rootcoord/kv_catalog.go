@@ -464,7 +464,7 @@ func (kc *Catalog) listStructFieldsAfter210(ctx context.Context, collectionID ty
 	}
 	structFields := make([]*model.StructField, 0, len(values))
 	for _, v := range values {
-		partitionMeta := &schemapb.StructFieldSchema{}
+		partitionMeta := &schemapb.StructArrayFieldSchema{}
 		err := proto.Unmarshal([]byte(v), partitionMeta)
 		if err != nil {
 			return nil, err

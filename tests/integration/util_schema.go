@@ -167,7 +167,7 @@ func ConstructSchemaWithStructField(collection string, dim int, autoID bool, fie
 		IndexParams: nil,
 		AutoID:      false,
 	}
-	structF := &schemapb.StructFieldSchema{
+	structF := &schemapb.StructArrayFieldSchema{
 		FieldID:            106,
 		Name:               structField,
 		EnableDynamicField: false,
@@ -178,7 +178,7 @@ func ConstructSchemaWithStructField(collection string, dim int, autoID bool, fie
 		Name:         collection,
 		AutoID:       autoID,
 		Fields:       []*schemapb.FieldSchema{pk, fVec},
-		StructFields: []*schemapb.StructFieldSchema{structF},
+		StructFields: []*schemapb.StructArrayFieldSchema{structF},
 	}
 }
 

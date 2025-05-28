@@ -90,13 +90,13 @@ func (s *ArrayStructDataNodeSuite) loadCollection(collectionName string) {
 		IndexParams: nil,
 		AutoID:      false,
 	}
-	structF := &schemapb.StructFieldSchema{
+	structF := &schemapb.StructArrayFieldSchema{
 		FieldID:            105,
 		Name:               integration.StructField,
 		EnableDynamicField: false,
 		Fields:             []*schemapb.FieldSchema{sId, sVec},
 	}
-	schema.StructFields = []*schemapb.StructFieldSchema{structF}
+	schema.StructFields = []*schemapb.StructArrayFieldSchema{structF}
 
 	marshaledSchema, err := proto.Marshal(schema)
 	s.NoError(err)

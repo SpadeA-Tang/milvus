@@ -764,7 +764,7 @@ func (t *describeCollectionTask) Execute(ctx context.Context) error {
 			AutoID:       false,
 			Fields:       make([]*schemapb.FieldSchema, 0),
 			Functions:    make([]*schemapb.FunctionSchema, 0),
-			StructFields: make([]*schemapb.StructFieldSchema, 0),
+			StructFields: make([]*schemapb.StructArrayFieldSchema, 0),
 		},
 		CollectionID:         0,
 		VirtualChannelNames:  nil,
@@ -841,7 +841,7 @@ func (t *describeCollectionTask) Execute(ctx context.Context) error {
 	}
 
 	for i, structField := range result.Schema.StructFields {
-		t.result.Schema.StructFields = append(t.result.Schema.StructFields, &schemapb.StructFieldSchema{
+		t.result.Schema.StructFields = append(t.result.Schema.StructFields, &schemapb.StructArrayFieldSchema{
 			FieldID:            structField.FieldID,
 			Name:               structField.Name,
 			Fields:             make([]*schemapb.FieldSchema, 0, len(structField.Fields)),

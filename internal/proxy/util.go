@@ -1019,7 +1019,7 @@ func autoGenDynamicFieldData(data [][]byte) *schemapb.FieldData {
 // fillFieldPropertiesBySchema set fieldID to fieldData according FieldSchemas
 func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb.CollectionSchema) error {
 	fieldName2FieldSchema := make(map[string]*schemapb.FieldSchema)
-	fieldName2StructSchema := make(map[string]*schemapb.StructFieldSchema)
+	fieldName2StructSchema := make(map[string]*schemapb.StructArrayFieldSchema)
 
 	expectColumnNum := 0
 	// todo(SpadeA): consider struct fields
@@ -1055,8 +1055,8 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 				}
 				fd.Scalars.GetArrayData().ElementType = fieldSchema.ElementType
 			}
-		} else if structFieldSchema, ok := fieldName2StructSchema[fieldData.FieldName]; ok {
-			fieldData.FieldId = structFieldSchema.FieldID
+		} else if StructArrayFieldSchema, ok := fieldName2StructSchema[fieldData.FieldName]; ok {
+			fieldData.FieldId = StructArrayFieldSchema.FieldID
 
 			// verify the data type is array and element type is struct
 
@@ -1065,13 +1065,13 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 				return fmt.Errorf("field convert FieldData_ArrayStruct fail in fieldData, fieldName: %s,"+
 					" collectionName:%s", fieldData.FieldName, schema.Name)
 			}
-			if len(fd.ArrayStruct.Fields) != len(structFieldSchema.GetFields()) {
+			if len(fd.ArrayStruct.Fields) != len(StructArrayFieldSchema.GetFields()) {
 				return fmt.Errorf("length of fields of struct field mismatch length of the fields in schema, fieldName: %s,"+
 					" collectionName:%s, fieldData fields length:%d, schema fields length:%d",
-					fieldData.FieldName, schema.Name, len(fd.ArrayStruct.Fields), len(structFieldSchema.GetFields()))
+					fieldData.FieldName, schema.Name, len(fd.ArrayStruct.Fields), len(StructArrayFieldSchema.GetFields()))
 			}
 
-			for _, field := range structFieldSchema.GetFields() {
+			for _, field := range StructArrayFieldSchema.GetFields() {
 				fieldName2FieldSchema[field.Name] = field
 			}
 
@@ -1080,7 +1080,7 @@ func fillFieldPropertiesBySchema(columns []*schemapb.FieldData, schema *schemapb
 					subFieldData.FieldId = fieldSchema.FieldID
 					subFieldData.Type = fieldSchema.DataType
 				} else {
-					return fmt.Errorf("fieldName %s not exist in struct field schema %s", subFieldData.FieldName, structFieldSchema.Name)
+					return fmt.Errorf("fieldName %s not exist in struct field schema %s", subFieldData.FieldName, StructArrayFieldSchema.Name)
 				}
 			}
 

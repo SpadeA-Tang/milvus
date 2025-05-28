@@ -116,7 +116,7 @@ func (s *TestArrayStructSuite) run() {
 		IndexParams: nil,
 	}
 
-	structField := &schemapb.StructFieldSchema{
+	structField := &schemapb.StructArrayFieldSchema{
 		FieldID:            103,
 		Name:               structFieldName,
 		EnableDynamicField: false,
@@ -128,7 +128,7 @@ func (s *TestArrayStructSuite) run() {
 		Description:  "",
 		AutoID:       false,
 		Fields:       []*schemapb.FieldSchema{pk, fVec},
-		StructFields: []*schemapb.StructFieldSchema{structField},
+		StructFields: []*schemapb.StructArrayFieldSchema{structField},
 	}
 	marshaledSchema, err := proto.Marshal(schema)
 	s.Require().NoError(err)

@@ -294,7 +294,7 @@ func estimateFieldSize(field *schemapb.FieldData, rowOffset int, isStructField b
 func EstimateEntitySize(fieldsData []*schemapb.FieldData, rowOffset int) (int, error) {
 	res := 0
 	for _, field := range fieldsData {
-		if _, ok := field.Field.(*schemapb.FieldData_ArrayStruct); ok {
+		if _, ok := field.Field.(*schemapb.FieldData_StructArrays); ok {
 			panic("struct is not flattened")
 		}
 
@@ -1045,7 +1045,7 @@ func appendFieldData(dst []*schemapb.FieldData, fieldOffset int, dataOffset int6
 // AppendFieldData appends fields data of specified index from src to dst
 func AppendFieldData(dst, src []*schemapb.FieldData, idx int64) (appendSize int64) {
 	for i, fieldData := range src {
-		if _, ok := fieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
+		if _, ok := fieldData.Field.(*schemapb.FieldData_StructArrays); ok {
 			panic("struct is not flattened")
 		}
 
@@ -1118,7 +1118,7 @@ func DeleteFieldData(dst []*schemapb.FieldData) {
 func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error {
 	fieldID2Data := make(map[int64]*schemapb.FieldData)
 	for _, data := range dst {
-		if _, ok := data.Field.(*schemapb.FieldData_ArrayStruct); ok {
+		if _, ok := data.Field.(*schemapb.FieldData_StructArrays); ok {
 			panic("struct is not flattened")
 		}
 
@@ -1311,7 +1311,7 @@ func MergeFieldData(dst []*schemapb.FieldData, src []*schemapb.FieldData) error 
 	}
 
 	for _, srcFieldData := range src {
-		if _, ok := srcFieldData.Field.(*schemapb.FieldData_ArrayStruct); ok {
+		if _, ok := srcFieldData.Field.(*schemapb.FieldData_StructArrays); ok {
 			panic("struct is not flattened")
 		}
 

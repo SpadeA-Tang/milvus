@@ -53,7 +53,7 @@ func TestEstimateEntitySizeForStruct(t *testing.T) {
 		IndexParams: nil,
 		AutoID:      false,
 	}
-	schema := &schemapb.StructFieldSchema{
+	schema := &schemapb.StructArrayFieldSchema{
 		FieldID:            105,
 		Name:               "struct",
 		EnableDynamicField: false,

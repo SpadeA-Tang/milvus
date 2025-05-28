@@ -588,7 +588,7 @@ func reconstructStructFieldData(results *milvuspb.QueryResults, schema *schemapb
 			FieldName: structFieldNames[structFieldID],
 			FieldId:   structFieldID,
 			Type:      schemapb.DataType_ArrayOfStruct,
-			Field:     &schemapb.FieldData_ArrayStruct{ArrayStruct: &schemapb.ArrayStructField{Fields: fields}},
+			Field:     &schemapb.FieldData_StructArrays{StructArrays: &schemapb.StructArrayField{Fields: fields}},
 		}
 		fieldsData = append(fieldsData, fieldData)
 		reconstructedOutputFields = append(reconstructedOutputFields, structFieldNames[structFieldID])

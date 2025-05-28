@@ -53,12 +53,12 @@ func CheckStructFieldsEqual(structFieldsA, structFieldsB []*StructField) bool {
 	return true
 }
 
-func MarshalStructFieldModel(structField *StructField) *schemapb.StructFieldSchema {
+func MarshalStructFieldModel(structField *StructField) *schemapb.StructArrayFieldSchema {
 	if structField == nil {
 		return nil
 	}
 
-	return &schemapb.StructFieldSchema{
+	return &schemapb.StructArrayFieldSchema{
 		FieldID:            structField.FieldID,
 		Name:               structField.Name,
 		Fields:             MarshalFieldModels(structField.Fields),
@@ -67,19 +67,19 @@ func MarshalStructFieldModel(structField *StructField) *schemapb.StructFieldSche
 	}
 }
 
-func MarshalStructFieldModels(fieldSchemas []*StructField) []*schemapb.StructFieldSchema {
+func MarshalStructFieldModels(fieldSchemas []*StructField) []*schemapb.StructArrayFieldSchema {
 	if fieldSchemas == nil {
 		return nil
 	}
 
-	structFields := make([]*schemapb.StructFieldSchema, len(fieldSchemas))
+	structFields := make([]*schemapb.StructArrayFieldSchema, len(fieldSchemas))
 	for idx, structField := range fieldSchemas {
 		structFields[idx] = MarshalStructFieldModel(structField)
 	}
 	return structFields
 }
 
-func UnmarshalStructFieldModel(fieldSchema *schemapb.StructFieldSchema) *StructField {
+func UnmarshalStructFieldModel(fieldSchema *schemapb.StructArrayFieldSchema) *StructField {
 	if fieldSchema == nil {
 		return nil
 	}
@@ -93,14 +93,14 @@ func UnmarshalStructFieldModel(fieldSchema *schemapb.StructFieldSchema) *StructF
 	}
 }
 
-func UnmarshalStructFieldModels(fieldSchemas []*schemapb.StructFieldSchema) []*StructField {
+func UnmarshalStructFieldModels(fieldSchemas []*schemapb.StructArrayFieldSchema) []*StructField {
 	if fieldSchemas == nil {
 		return nil
 	}
 
 	structFields := make([]*StructField, len(fieldSchemas))
-	for idx, structFieldSchema := range fieldSchemas {
-		structFields[idx] = UnmarshalStructFieldModel(structFieldSchema)
+	for idx, StructArrayFieldSchema := range fieldSchemas {
+		structFields[idx] = UnmarshalStructFieldModel(StructArrayFieldSchema)
 	}
 	return structFields
 }

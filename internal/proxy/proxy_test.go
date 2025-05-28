@@ -501,7 +501,7 @@ func TestProxy(t *testing.T) {
 			IndexParams: nil,
 			AutoID:      false,
 		}
-		structF := &schemapb.StructFieldSchema{
+		structF := &schemapb.StructArrayFieldSchema{
 			FieldID:            105,
 			Name:               structField,
 			EnableDynamicField: false,
@@ -517,7 +517,7 @@ func TestProxy(t *testing.T) {
 				fVec,
 				bVec,
 			},
-			StructFields: []*schemapb.StructFieldSchema{structF},
+			StructFields: []*schemapb.StructArrayFieldSchema{structF},
 		}
 	}
 	schema := constructCollectionSchema()
