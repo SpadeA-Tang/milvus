@@ -61,18 +61,14 @@ using namespace milvus;
 using namespace milvus::query;
 using namespace milvus::segcore;
 
-class ExprTest
-    : public ::testing::TestWithParam<
-          std::tuple<std::pair<milvus::DataType, knowhere::MetricType>, bool>> {
+class ExprTest : public ::testing::TestWithParam<
+                     std::pair<milvus::DataType, knowhere::MetricType>> {
  public:
     void
     SetUp() override {
         auto param = GetParam();
-        data_type = std::get<0>(param).first;  // Get the DataType from the pair
-        metric_type =
-            std::get<0>(param).second;  // Get the MetricType from the pair
-        GROWING_JSON_KEY_STATS_ENABLED =
-            std::get<1>(param);  // Get the bool parameter
+        data_type = param.first;     // Get the DataType from the pair
+        metric_type = param.second;  // Get the MetricType from the pair
     }
 
     // replace the metric type in the plan string with the proper type
@@ -92,24 +88,9 @@ INSTANTIATE_TEST_SUITE_P(
     ExprTestSuite,
     ExprTest,
     ::testing::Values(
-        std::make_tuple(std::pair(milvus::DataType::VECTOR_FLOAT,
-                                  knowhere::metric::L2),
-                        false),
-        std::make_tuple(std::pair(milvus::DataType::VECTOR_SPARSE_FLOAT,
-                                  knowhere::metric::IP),
-                        false),
-        std::make_tuple(std::pair(milvus::DataType::VECTOR_BINARY,
-                                  knowhere::metric::JACCARD),
-                        false),
-        std::make_tuple(std::pair(milvus::DataType::VECTOR_FLOAT,
-                                  knowhere::metric::L2),
-                        true),
-        std::make_tuple(std::pair(milvus::DataType::VECTOR_SPARSE_FLOAT,
-                                  knowhere::metric::IP),
-                        true),
-        std::make_tuple(std::pair(milvus::DataType::VECTOR_BINARY,
-                                  knowhere::metric::JACCARD),
-                        true)));
+        std::pair(milvus::DataType::VECTOR_FLOAT, knowhere::metric::L2),
+        std::pair(milvus::DataType::VECTOR_SPARSE_FLOAT, knowhere::metric::IP),
+        std::pair(milvus::DataType::VECTOR_BINARY, knowhere::metric::JACCARD)));
 
 TEST_P(ExprTest, Range) {
     SUCCEED();
@@ -823,7 +804,7 @@ TEST_P(ExprTest, TestRangeNullable) {
     }
 }
 
-TEST_P(ExprTest, TestBinaryRangeJSON) {
+TEST(ExprTest, TestBinaryRangeJSON) {
     struct Testcase {
         bool lower_inclusive;
         bool upper_inclusive;
@@ -945,7 +926,7 @@ TEST_P(ExprTest, TestBinaryRangeJSON) {
     }
 }
 
-TEST_P(ExprTest, TestBinaryRangeJSONNullable) {
+TEST(ExprTest, TestBinaryRangeJSONNullable) {
     struct Testcase {
         bool lower_inclusive;
         bool upper_inclusive;
@@ -1074,7 +1055,7 @@ TEST_P(ExprTest, TestBinaryRangeJSONNullable) {
     }
 }
 
-TEST_P(ExprTest, TestExistsJson) {
+TEST(ExprTest, TestExistsJson) {
     struct Testcase {
         std::vector<std::string> nested_path;
     };
@@ -1149,7 +1130,7 @@ TEST_P(ExprTest, TestExistsJson) {
     }
 }
 
-TEST_P(ExprTest, TestExistsJsonNullable) {
+TEST(ExprTest, TestExistsJsonNullable) {
     struct Testcase {
         std::vector<std::string> nested_path;
     };
@@ -1262,7 +1243,7 @@ GetValueFromProto(const milvus::proto::plan::GenericValue& value_proto) {
     }
 };
 
-TEST_P(ExprTest, TestUnaryRangeJson) {
+TEST(ExprTest, TestUnaryRangeJson) {
     struct Testcase {
         int64_t val;
         std::vector<std::string> nested_path;
@@ -1740,7 +1721,7 @@ TEST_P(ExprTest, TestUnaryRangeJson) {
     }
 }
 
-TEST_P(ExprTest, TestUnaryRangeJsonNullable) {
+TEST(ExprTest, TestUnaryRangeJsonNullable) {
     struct Testcase {
         int64_t val;
         std::vector<std::string> nested_path;
@@ -1968,7 +1949,7 @@ TEST_P(ExprTest, TestUnaryRangeJsonNullable) {
     }
 }
 
-TEST_P(ExprTest, TestTermJson) {
+TEST(ExprTest, TestTermJson) {
     struct Testcase {
         std::vector<int64_t> term;
         std::vector<std::string> nested_path;
@@ -2056,7 +2037,7 @@ TEST_P(ExprTest, TestTermJson) {
     }
 }
 
-TEST_P(ExprTest, TestTermJsonNullable) {
+TEST(ExprTest, TestTermJsonNullable) {
     struct Testcase {
         std::vector<int64_t> term;
         std::vector<std::string> nested_path;
@@ -3542,9 +3523,10 @@ TEST_P(ExprTest, test_term_pk_with_sorted) {
     }
 }
 
-TEST_P(ExprTest, TestSealedSegmentGetBatchSize) {
+TEST(ExprTest, TestSealedSegmentGetBatchSize) {
     auto schema = std::make_shared<Schema>();
-    auto vec_fid = schema->AddDebugField("fakevec", data_type, 16, metric_type);
+    auto vec_fid = schema->AddDebugField(
+        "fakevec", DataType::VECTOR_FLOAT, 16, knowhere::metric::L2);
     auto bool_fid = schema->AddDebugField("bool", DataType::BOOL);
     auto bool_1_fid = schema->AddDebugField("bool1", DataType::BOOL);
     auto int8_fid = schema->AddDebugField("int8", DataType::INT8);
@@ -4125,7 +4107,6 @@ TEST_P(ExprTest, TestBinaryArithOpEvalRangeExpr_forbigint_mod) {
         auto start = 1ULL << 54;
         for (int i = 0; i < N; i++) {
             data[i] = R"({"meta":)" + std::to_string(start + i) + "}";
-            std::cout << "data[i]: " << data[i] << std::endl;
             if ((start + i) % 10 == 0) {
                 expect.set(i);
             }
@@ -13870,7 +13851,7 @@ TEST_P(ExprTest, PraseJsonContainsExpr) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsAny) {
+TEST(ExprTest, TestJsonContainsAny) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON);
@@ -14158,7 +14139,7 @@ TEST_P(ExprTest, TestJsonContainsAny) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsAnyNullable) {
+TEST(ExprTest, TestJsonContainsAnyNullable) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON, true);
@@ -14461,7 +14442,7 @@ TEST_P(ExprTest, TestJsonContainsAnyNullable) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsAll) {
+TEST(ExprTest, TestJsonContainsAll) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON);
@@ -14773,7 +14754,7 @@ TEST_P(ExprTest, TestJsonContainsAll) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsAllNullable) {
+TEST(ExprTest, TestJsonContainsAllNullable) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON, true);
@@ -15099,7 +15080,7 @@ TEST_P(ExprTest, TestJsonContainsAllNullable) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsArray) {
+TEST(ExprTest, TestJsonContainsArray) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON);
@@ -15485,7 +15466,7 @@ TEST_P(ExprTest, TestJsonContainsArray) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsArrayNullable) {
+TEST(ExprTest, TestJsonContainsArrayNullable) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON, true);
@@ -15911,7 +15892,7 @@ generatedArrayWithFourDiffType(int64_t int_val,
     return value;
 }
 
-TEST_P(ExprTest, TestJsonContainsDiffTypeArray) {
+TEST(ExprTest, TestJsonContainsDiffTypeArray) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON);
@@ -16040,7 +16021,7 @@ TEST_P(ExprTest, TestJsonContainsDiffTypeArray) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsDiffTypeArrayNullable) {
+TEST(ExprTest, TestJsonContainsDiffTypeArrayNullable) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON, true);
@@ -16177,7 +16158,7 @@ TEST_P(ExprTest, TestJsonContainsDiffTypeArrayNullable) {
     }
 }
 
-TEST_P(ExprTest, TestJsonContainsDiffType) {
+TEST(ExprTest, TestJsonContainsDiffType) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON);
@@ -16310,7 +16291,7 @@ TEST_P(ExprTest, TestJsonContainsDiffType) {
         }
     }
 }
-TEST_P(ExprTest, TestJsonContainsDiffTypeNullable) {
+TEST(ExprTest, TestJsonContainsDiffTypeNullable) {
     auto schema = std::make_shared<Schema>();
     auto i64_fid = schema->AddDebugField("id", DataType::INT64);
     auto json_fid = schema->AddDebugField("json", DataType::JSON, true);
