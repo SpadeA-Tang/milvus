@@ -201,15 +201,17 @@ CheckAndUpdateKnowhereRangeSearchParam(const SearchInfo& search_info,
 
 void inline SetBitset(void* bitset, const uint32_t* doc_id, uintptr_t n) {
     TargetBitmap* bitmap = static_cast<TargetBitmap*>(bitset);
+    const auto bitmap_size = bitmap->size();
 
     for (uintptr_t i = 0; i < n; ++i) {
-        if (doc_id[i] >= bitmap->size()) {
-            LOG_ERROR("debug=== out of range, doc_id[i]: {}, size {}",
-                      doc_id[i],
-                      bitmap->size());
+        const auto id = doc_id[i];
+        if (id >= bitmap_size) {
+            // For sealed segment, this won't happen.
+            // For growing segment, concurrent insert exists, so the doc_id may exceed bitset size.
+            // Ideally, the doc_id is sorted and we can return directly. But I don't want to have this strong guarantee.
+            continue;
         }
-        assert(doc_id[i] < bitmap->size());
-        (*bitmap)[doc_id[i]] = true;
+        (*bitmap)[id] = true;
     }
 }
 
