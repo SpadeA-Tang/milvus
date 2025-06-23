@@ -255,7 +255,7 @@ InvertedIndexTantivy<T>::Load(milvus::tracer::TraceContext ctx,
     disk_file_manager_->CacheIndexToDisk(inverted_index_files);
     path_ = prefix;
     wrapper_ = std::make_shared<TantivyIndexWrapper>(prefix.c_str(),
-                                                     milvus::index::SetBitset);
+                                                     milvus::index::SetBitsetSealed);
 }
 
 template <typename T>
@@ -490,7 +490,7 @@ InvertedIndexTantivy<T>::BuildWithRawDataForUT(size_t n,
                 static_cast<const T*>(values), n);
         }
     }
-    wrapper_->create_reader();
+    wrapper_->create_reader(milvus::index::SetBitsetSealed);
     finish();
     wrapper_->reload();
 }
