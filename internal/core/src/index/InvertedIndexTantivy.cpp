@@ -262,6 +262,7 @@ template <typename T>
 const TargetBitmap
 InvertedIndexTantivy<T>::In(size_t n, const T* values) {
     TargetBitmap bitset(Count());
+    LOG_INFO("debug===, init count {}", Count());
     for (size_t i = 0; i < n; ++i) {
         wrapper_->term_query(values[i], &bitset);
     }
@@ -301,6 +302,7 @@ const TargetBitmap
 InvertedIndexTantivy<T>::InApplyFilter(
     size_t n, const T* values, const std::function<bool(size_t)>& filter) {
     TargetBitmap bitset(Count());
+    LOG_INFO("debug===, init count {}", Count());
     for (size_t i = 0; i < n; ++i) {
         wrapper_->term_query(values[i], &bitset);
         // todo(SpadeA): could push-down the filter to tantivy query
@@ -313,6 +315,7 @@ template <typename T>
 void
 InvertedIndexTantivy<T>::InApplyCallback(
     size_t n, const T* values, const std::function<void(size_t)>& callback) {
+    LOG_INFO("debug===, init count {}", Count());
     for (size_t i = 0; i < n; ++i) {
         TargetBitmap bitset(Count());
         wrapper_->term_query(values[i], &bitset);
@@ -326,6 +329,7 @@ const TargetBitmap
 InvertedIndexTantivy<T>::NotIn(size_t n, const T* values) {
     int64_t count = Count();
     TargetBitmap bitset(count);
+    LOG_INFO("debug===, init count {}", Count());
     for (size_t i = 0; i < n; ++i) {
         wrapper_->term_query(values[i], &bitset);
     }
@@ -345,6 +349,7 @@ template <typename T>
 const TargetBitmap
 InvertedIndexTantivy<T>::Range(T value, OpType op) {
     TargetBitmap bitset(Count());
+    LOG_INFO("debug===, init count {}", Count());
 
     switch (op) {
         case OpType::LessThan: {
@@ -374,6 +379,7 @@ InvertedIndexTantivy<T>::Range(T lower_bound_value,
                                T upper_bound_value,
                                bool ub_inclusive) {
     TargetBitmap bitset(Count());
+    LOG_INFO("debug===, init count {}", Count());
     wrapper_->range_query(lower_bound_value,
                           upper_bound_value,
                           lb_inclusive,
@@ -387,6 +393,7 @@ const TargetBitmap
 InvertedIndexTantivy<T>::PrefixMatch(const std::string_view prefix) {
     TargetBitmap bitset(Count());
     std::string s(prefix);
+    LOG_INFO("debug===, init count {}", Count());
     wrapper_->prefix_query(s, &bitset);
     return bitset;
 }
@@ -412,6 +419,7 @@ template <typename T>
 const TargetBitmap
 InvertedIndexTantivy<T>::RegexQuery(const std::string& regex_pattern) {
     TargetBitmap bitset(Count());
+    LOG_INFO("debug===, init count {}", Count());
     wrapper_->regex_query(regex_pattern, &bitset);
     return bitset;
 }

@@ -287,6 +287,7 @@ TextMatchIndex::MatchQuery(const std::string& query) {
     }
 
     TargetBitmap bitset{static_cast<size_t>(Count())};
+    LOG_INFO("debug===, text match init count {}", Count());
     // The count opeartion of tantivy may be get older cnt if the index is committed with new tantivy segment.
     // So we cannot use the count operation to get the total count for bitmap.
     // Just use the maximum offset of hits to get the total count for bitmap here.
