@@ -203,6 +203,11 @@ void inline SetBitset(void* bitset, const uint32_t* doc_id, uintptr_t n) {
     TargetBitmap* bitmap = static_cast<TargetBitmap*>(bitset);
 
     for (uintptr_t i = 0; i < n; ++i) {
+        if (doc_id[i] >= bitmap->size()) {
+            LOG_ERROR("debug=== out of range, doc_id[i]: {}, size {}",
+                      doc_id[i],
+                      bitmap->size());
+        }
         assert(doc_id[i] < bitmap->size());
         (*bitmap)[doc_id[i]] = true;
     }
