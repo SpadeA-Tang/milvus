@@ -37,7 +37,10 @@ namespace milvus::index {
 template <typename T>
 ScalarIndexSort<T>::ScalarIndexSort(
     const storage::FileManagerContext& file_manager_context)
-    : ScalarIndex<T>(ASCENDING_SORT), is_built_(false), data_() {
+    : ScalarIndex<T>(ASCENDING_SORT),
+      is_built_(false),
+      data_(),
+      field_data_meta_(file_manager_context.fieldDataMeta) {
     if (file_manager_context.Valid()) {
         file_manager_ =
             std::make_shared<storage::MemFileManagerImpl>(file_manager_context);
@@ -119,8 +122,22 @@ ScalarIndexSort<T>::BuildWithFieldData(
     std::sort(data_.begin(), data_.end());
     idx_to_offsets_.resize(total_num_rows_);
     for (size_t i = 0; i < length; ++i) {
+        if (data_[i].idx_ >= length - 1000) {
+            LOG_INFO(
+                "debug=== BuildWithFieldData, data_[i].idx_={}, i={}, "
+                "length={}",
+                data_[i].idx_,
+                i,
+                length);
+        }
         idx_to_offsets_[data_[i].idx_] = i;
     }
+    LOG_INFO(
+        "debug=== BuildWithFieldData done, total_num_rows_={}, length={}, "
+        "segment_id={}",
+        total_num_rows_,
+        length,
+        field_data_meta_.segment_id);
     is_built_ = true;
 }
 
