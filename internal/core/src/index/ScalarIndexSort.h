@@ -132,6 +132,7 @@ class ScalarIndexSort : public ScalarIndex<T> {
     size_t total_num_rows_{0};
     // generate valid_bitset_ to speed up NotIn and IsNull and IsNotNull operate
     TargetBitmap valid_bitset_;
+    storage::FieldDataMeta field_data_meta_;
 };
 
 template <typename T>

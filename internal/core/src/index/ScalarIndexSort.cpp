@@ -37,7 +37,10 @@ namespace milvus::index {
 template <typename T>
 ScalarIndexSort<T>::ScalarIndexSort(
     const storage::FileManagerContext& file_manager_context)
-    : ScalarIndex<T>(ASCENDING_SORT), is_built_(false), data_() {
+    : ScalarIndex<T>(ASCENDING_SORT),
+      is_built_(false),
+      data_(),
+      field_data_meta_(file_manager_context.fieldDataMeta) {
     if (file_manager_context.Valid()) {
         file_manager_ =
             std::make_shared<storage::MemFileManagerImpl>(file_manager_context);
@@ -117,10 +120,32 @@ ScalarIndexSort<T>::BuildWithFieldData(
     for (size_t i = 0; i < length; ++i) {
         // TODO: there is an existing bug here, data_[i].idx_ is out of range, should be fixed
         if (data_[i].idx_ < 0 || data_[i].idx_ >= total_num_rows_) {
+            LOG_INFO(
+                "debug=== 2.6 unvalid idx, data_[i].idx_={}, i={}, "
+                "total_num_rows_={}",
+                data_[i].idx_,
+                i,
+                total_num_rows_);
             continue;
         }
+
+        if (data_[i].idx_ >= length - 1000) {
+            LOG_INFO(
+                "debug=== 2.6 BuildWithFieldData, data_[i].idx_={}, i={}, "
+                "length={}",
+                data_[i].idx_,
+                i,
+                length);
+        }
+
         idx_to_offsets_[data_[i].idx_] = i;
     }
+    LOG_INFO(
+        "debug=== 2.6 BuildWithFieldData done, total_num_rows_={}, length={}, "
+        "segment_id={}",
+        total_num_rows_,
+        length,
+        field_data_meta_.segment_id);
     is_built_ = true;
 }
 
@@ -184,6 +209,14 @@ ScalarIndexSort<T>::LoadWithoutAssemble(const BinarySet& index_binary,
     valid_bitset_ = TargetBitmap(total_num_rows_, false);
     memcpy(data_.data(), index_data->data.get(), (size_t)index_data->size);
     for (size_t i = 0; i < data_.size(); ++i) {
+        if (data_[i].idx_ < 0 || data_[i].idx_ >= total_num_rows_) {
+            LOG_INFO(
+                "debug=== 2.6 LoadWithoutAssemble, data_[i].idx_={}, i={}, "
+                "total_num_rows_={}",
+                data_[i].idx_,
+                i,
+                total_num_rows_);
+        }
         idx_to_offsets_[data_[i].idx_] = i;
         valid_bitset_.set(data_[i].idx_);
     }
