@@ -40,7 +40,8 @@ ScalarIndexSort<T>::ScalarIndexSort(
     : ScalarIndex<T>(ASCENDING_SORT),
       is_built_(false),
       data_(),
-      field_data_meta_(file_manager_context.fieldDataMeta) {
+      field_data_meta_(file_manager_context.fieldDataMeta),
+      index_meta_(file_manager_context.indexMeta) {
     if (file_manager_context.Valid()) {
         file_manager_ =
             std::make_shared<storage::MemFileManagerImpl>(file_manager_context);
@@ -205,6 +206,16 @@ ScalarIndexSort<T>::LoadWithoutAssemble(const BinarySet& index_binary,
         total_num_rows_ = index_size;
     }
 
+    LOG_INFO(
+        "debug=== 2.6 LoadWithoutAssemble, index_size={}, total_num_rows_={}, "
+        "segment_id={}, build_id={}, index_version={}, field_id={}",
+        index_size,
+        total_num_rows_,
+        field_data_meta_.segment_id,
+        index_meta_.build_id,
+        index_meta_.index_version,
+        field_data_meta_.field_id);
+
     idx_to_offsets_.resize(total_num_rows_);
     valid_bitset_ = TargetBitmap(total_num_rows_, false);
     memcpy(data_.data(), index_data->data.get(), (size_t)index_data->size);
@@ -212,10 +223,11 @@ ScalarIndexSort<T>::LoadWithoutAssemble(const BinarySet& index_binary,
         if (data_[i].idx_ < 0 || data_[i].idx_ >= total_num_rows_) {
             LOG_INFO(
                 "debug=== 2.6 LoadWithoutAssemble, data_[i].idx_={}, i={}, "
-                "total_num_rows_={}",
+                "total_num_rows_={}, data_size={}",
                 data_[i].idx_,
                 i,
-                total_num_rows_);
+                total_num_rows_,
+                data_.size());
         }
         idx_to_offsets_[data_[i].idx_] = i;
         valid_bitset_.set(data_[i].idx_);
@@ -239,6 +251,11 @@ ScalarIndexSort<T>::Load(milvus::tracer::TraceContext ctx,
         GetValueFromConfig<std::vector<std::string>>(config, "index_files");
     AssertInfo(index_files.has_value(),
                "index file paths is empty when load disk ann index");
+
+    for (const auto& file : index_files.value()) {
+        LOG_INFO("debug=== 2.6 index file: {}", file);
+    }
+
     auto index_datas = file_manager_->LoadIndexToMemory(
         index_files.value(), config[milvus::LOAD_PRIORITY]);
     BinarySet binary_set;
