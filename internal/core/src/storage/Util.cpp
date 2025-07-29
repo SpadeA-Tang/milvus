@@ -695,6 +695,14 @@ PutIndexData(ChunkManager* remote_chunk_manager,
                slice_names.size());
 
     for (int64_t i = 0; i < data_slices.size(); ++i) {
+        LOG_INFO(
+            "debug=== PutIndexData, slice_names[i]={}, segment_id={}, "
+            "field_id={}, build_id={}, index_version={}",
+            slice_names[i],
+            index_meta.segment_id,
+            index_meta.field_id,
+            index_meta.build_id,
+            index_meta.index_version);
         futures.push_back(pool.Submit(EncodeAndUploadIndexSlice,
                                       remote_chunk_manager,
                                       const_cast<uint8_t*>(data_slices[i]),

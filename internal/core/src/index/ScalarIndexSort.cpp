@@ -40,7 +40,8 @@ ScalarIndexSort<T>::ScalarIndexSort(
     : ScalarIndex<T>(ASCENDING_SORT),
       is_built_(false),
       data_(),
-      field_data_meta_(file_manager_context.fieldDataMeta) {
+      field_data_meta_(file_manager_context.fieldDataMeta),
+      index_meta_(file_manager_context.indexMeta) {
     if (file_manager_context.Valid()) {
         file_manager_ =
             std::make_shared<storage::MemFileManagerImpl>(file_manager_context);
@@ -134,10 +135,12 @@ ScalarIndexSort<T>::BuildWithFieldData(
     }
     LOG_INFO(
         "debug=== BuildWithFieldData done, total_num_rows_={}, length={}, "
-        "segment_id={}",
+        "segment_id={}, build_id={}, index_version={}",
         total_num_rows_,
         length,
-        field_data_meta_.segment_id);
+        field_data_meta_.segment_id,
+        index_meta_.build_id,
+        index_meta_.index_version);
     is_built_ = true;
 }
 
