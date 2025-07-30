@@ -160,6 +160,16 @@ ScalarIndexSort<T>::Serialize(const Config& config) {
     std::shared_ptr<uint8_t[]> index_num_rows(new uint8_t[sizeof(size_t)]);
     memcpy(index_num_rows.get(), &total_num_rows_, sizeof(size_t));
 
+    // Log the values being serialized
+    LOG_INFO(
+        "debug=== ScalarIndexSort::Serialize - index_length value: {}, index_num_rows value: {}, "
+        "segment_id={}, build_id={}, index_version={}",
+        index_size,
+        total_num_rows_,
+        field_data_meta_.segment_id,
+        index_meta_.build_id,
+        index_meta_.index_version);
+
     BinarySet res_set;
     res_set.Append("index_data", index_data, index_data_size);
     res_set.Append("index_length", index_length, sizeof(size_t));

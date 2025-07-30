@@ -695,14 +695,29 @@ PutIndexData(ChunkManager* remote_chunk_manager,
                slice_names.size());
 
     for (int64_t i = 0; i < data_slices.size(); ++i) {
+        // Generate hex dump of first 64 bytes (matching GetObjectData format)
+        std::string hex_dump;
+        int64_t hex_bytes = std::min(slice_sizes[i], static_cast<int64_t>(64));
+        for (int64_t j = 0; j < hex_bytes; ++j) {
+            if (j % 16 == 0 && j > 0)
+                hex_dump += "\n";
+            char hex_byte[4];
+            snprintf(hex_byte, sizeof(hex_byte), "%02x ", data_slices[i][j]);
+            hex_dump += hex_byte;
+        }
+
         LOG_INFO(
             "debug=== PutIndexData, slice_names[i]={}, segment_id={}, "
-            "field_id={}, build_id={}, index_version={}",
+            "field_id={}, build_id={}, index_version={}, size={}, hex content "
+            "(first {} bytes):\n{}",
             slice_names[i],
             index_meta.segment_id,
             index_meta.field_id,
             index_meta.build_id,
-            index_meta.index_version);
+            index_meta.index_version,
+            slice_sizes[i],
+            hex_bytes,
+            hex_dump);
         futures.push_back(pool.Submit(EncodeAndUploadIndexSlice,
                                       remote_chunk_manager,
                                       const_cast<uint8_t*>(data_slices[i]),

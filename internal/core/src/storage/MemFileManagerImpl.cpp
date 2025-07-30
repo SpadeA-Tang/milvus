@@ -72,6 +72,19 @@ MemFileManagerImpl::AddBinarySet(const BinarySet& binary_set,
         slice_names.emplace_back(prefix + "/" + iter.first);
         batch_size += iter.second->size;
         added_total_mem_size_ += iter.second->size;
+        
+        // Log specific files for debugging
+        if (iter.first == "index_length" || iter.first == "index_num_rows") {
+            size_t value = 0;
+            if (iter.second->size == sizeof(size_t)) {
+                memcpy(&value, iter.second->data.get(), sizeof(size_t));
+                LOG_INFO(
+                    "debug=== MemFileManagerImpl::AddBinarySet - Uploading file: {}, value: {}, size: {} bytes",
+                    iter.first,
+                    value,
+                    iter.second->size);
+            }
+        }
     }
 
     if (data_slices.size() > 0) {
