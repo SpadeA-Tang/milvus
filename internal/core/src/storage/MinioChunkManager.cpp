@@ -677,7 +677,16 @@ MinioChunkManager::GetObjectBuffer(const std::string& bucket_name,
                      object_name);
     }
     monitor::internal_storage_op_count_get_suc.Increment();
-    return size;
+
+    auto content_length =
+        static_cast<uint64_t>(outcome.GetResult().GetContentLength());
+    if (content_length != size) {
+        LOG_INFO("debug=== 2.6 GetObjectBuffer, content_length={}, size={}",
+                 content_length,
+                 size);
+    }
+
+    return content_length;
 }
 
 std::vector<std::string>

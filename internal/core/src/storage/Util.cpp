@@ -735,7 +735,29 @@ GetObjectData(ChunkManager* remote_chunk_manager,
         // TODO remove this Size() cost
         auto fileSize = chunk_manager->Size(file);
         auto buf = std::shared_ptr<uint8_t[]>(new uint8_t[fileSize]);
-        chunk_manager->Read(file, buf.get(), fileSize);
+        auto content_size = chunk_manager->Read(file, buf.get(), fileSize);
+
+        // 输出文件的hex内容（前64字节或全部内容）
+        size_t hex_limit = std::min(fileSize, (uint64_t)640);
+        std::string hex_output;
+        for (size_t i = 0; i < hex_limit; i++) {
+            if (i % 16 == 0 && i > 0)
+                hex_output += "\n";
+            char hex_byte[4];
+            snprintf(hex_byte, sizeof(hex_byte), "%02x ", buf[i]);
+            hex_output += hex_byte;
+        }
+        LOG_INFO(
+            "debug=== 2.6 GetObjectData, file: {}, content_size={}, "
+            "fileSize={}, "
+            "hex content (first {} "
+            "bytes):\n{}",
+            file,
+            content_size,
+            fileSize,
+            hex_limit,
+            hex_output);
+
         auto res = DeserializeFileData(buf, fileSize, is_field_data);
         return res;
     };
@@ -766,6 +788,29 @@ PutIndexData(ChunkManager* remote_chunk_manager,
                slice_names.size());
 
     for (int64_t i = 0; i < data_slices.size(); ++i) {
+        // Generate hex dump of first 64 bytes (matching GetObjectData format)
+        std::string hex_dump;
+        int64_t hex_bytes = std::min(slice_sizes[i], static_cast<int64_t>(640));
+        for (int64_t j = 0; j < hex_bytes; ++j) {
+            if (j % 16 == 0 && j > 0)
+                hex_dump += "\n";
+            char hex_byte[4];
+            snprintf(hex_byte, sizeof(hex_byte), "%02x ", data_slices[i][j]);
+            hex_dump += hex_byte;
+        }
+
+        LOG_INFO(
+            "debug=== 2.6 PutIndexData, slice_names[i]={}, segment_id={}, "
+            "field_id={}, build_id={}, index_version={}, size={}, hex content "
+            "(first {} bytes):\n{}",
+            slice_names[i],
+            index_meta.segment_id,
+            index_meta.field_id,
+            index_meta.build_id,
+            index_meta.index_version,
+            slice_sizes[i],
+            hex_bytes,
+            hex_dump);
         futures.push_back(pool.Submit(EncodeAndUploadIndexSlice,
                                       remote_chunk_manager,
                                       const_cast<uint8_t*>(data_slices[i]),

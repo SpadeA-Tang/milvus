@@ -14,6 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <iostream>
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -199,11 +200,34 @@ ScalarIndexSort<T>::LoadWithoutAssemble(const BinarySet& index_binary,
     data_.resize(index_size);
     auto index_num_rows = index_binary.GetByName("index_num_rows");
     if (index_num_rows) {
+        // Debug: 输出 index_num_rows 的详细信息
+        LOG_INFO(
+            "debug=== 2.6 LoadWithoutAssemble index_num_rows size: {} bytes",
+            index_num_rows->size);
+
+        // 输出hex内容
+        std::string hex_output;
+        for (size_t i = 0; i < index_num_rows->size && i < 64; i++) {
+            if (i % 16 == 0 && i > 0)
+                hex_output += "\n";
+            char hex_byte[4];
+            snprintf(hex_byte,
+                     sizeof(hex_byte),
+                     "%02x ",
+                     static_cast<uint8_t*>(index_num_rows->data.get())[i]);
+            hex_output += hex_byte;
+        }
+        LOG_INFO("debug=== 2.6 LoadWithoutAssemble index_num_rows hex:\n{}",
+                 hex_output);
+
         memcpy(&total_num_rows_,
                index_num_rows->data.get(),
                (size_t)index_num_rows->size);
     } else {
         total_num_rows_ = index_size;
+        LOG_INFO(
+            "debug=== 2.6 LoadWithoutAssemble index_num_rows not found, using "
+            "index_size");
     }
 
     LOG_INFO(
