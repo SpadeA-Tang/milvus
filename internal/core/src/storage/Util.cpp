@@ -697,7 +697,7 @@ PutIndexData(ChunkManager* remote_chunk_manager,
     for (int64_t i = 0; i < data_slices.size(); ++i) {
         // Generate hex dump of first 64 bytes (matching GetObjectData format)
         std::string hex_dump;
-        int64_t hex_bytes = std::min(slice_sizes[i], static_cast<int64_t>(64));
+        int64_t hex_bytes = std::min(slice_sizes[i], static_cast<int64_t>(640));
         for (int64_t j = 0; j < hex_bytes; ++j) {
             if (j % 16 == 0 && j > 0)
                 hex_dump += "\n";
