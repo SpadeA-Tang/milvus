@@ -208,8 +208,6 @@ ScalarIndexSort<T>::LoadWithoutAssemble(const BinarySet& index_binary,
         // 输出hex内容
         std::string hex_output;
         for (size_t i = 0; i < index_num_rows->size && i < 64; i++) {
-            if (i % 16 == 0 && i > 0)
-                hex_output += "\n";
             char hex_byte[4];
             snprintf(hex_byte,
                      sizeof(hex_byte),
@@ -217,7 +215,7 @@ ScalarIndexSort<T>::LoadWithoutAssemble(const BinarySet& index_binary,
                      static_cast<uint8_t*>(index_num_rows->data.get())[i]);
             hex_output += hex_byte;
         }
-        LOG_INFO("debug=== 2.6 LoadWithoutAssemble index_num_rows hex:\n{}",
+        LOG_INFO("debug=== 2.6 LoadWithoutAssemble index_num_rows hex:{}",
                  hex_output);
 
         memcpy(&total_num_rows_,
