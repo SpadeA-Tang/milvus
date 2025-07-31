@@ -699,8 +699,6 @@ PutIndexData(ChunkManager* remote_chunk_manager,
         std::string hex_dump;
         int64_t hex_bytes = std::min(slice_sizes[i], static_cast<int64_t>(640));
         for (int64_t j = 0; j < hex_bytes; ++j) {
-            if (j % 16 == 0 && j > 0)
-                hex_dump += "\n";
             char hex_byte[4];
             snprintf(hex_byte, sizeof(hex_byte), "%02x ", data_slices[i][j]);
             hex_dump += hex_byte;
@@ -709,7 +707,7 @@ PutIndexData(ChunkManager* remote_chunk_manager,
         LOG_INFO(
             "debug=== PutIndexData, slice_names[i]={}, segment_id={}, "
             "field_id={}, build_id={}, index_version={}, size={}, hex content "
-            "(first {} bytes):\n{}",
+            "(first {} bytes):{}",
             slice_names[i],
             index_meta.segment_id,
             index_meta.field_id,
