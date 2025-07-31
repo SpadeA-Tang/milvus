@@ -123,7 +123,7 @@ ScalarIndexSort<T>::BuildWithFieldData(
     std::sort(data_.begin(), data_.end());
     idx_to_offsets_.resize(total_num_rows_);
     for (size_t i = 0; i < length; ++i) {
-        if (data_[i].idx_ >= length - 1000) {
+        if (data_[i].idx_ >= length - 10) {
             LOG_INFO(
                 "debug=== BuildWithFieldData, data_[i].idx_={}, i={}, "
                 "length={}",
@@ -162,7 +162,8 @@ ScalarIndexSort<T>::Serialize(const Config& config) {
 
     // Log the values being serialized
     LOG_INFO(
-        "debug=== ScalarIndexSort::Serialize - index_length value: {}, index_num_rows value: {}, "
+        "debug=== ScalarIndexSort::Serialize - index_length value: {}, "
+        "index_num_rows value: {}, "
         "segment_id={}, build_id={}, index_version={}",
         index_size,
         total_num_rows_,
