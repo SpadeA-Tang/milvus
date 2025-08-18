@@ -1175,7 +1175,7 @@ func Test_checkEmbeddingListIndex(t *testing.T) {
 					},
 					{
 						Key:   common.MetricTypeKey,
-						Value: metric.MAX_SIM,
+						Value: metric.MaxSim,
 					},
 				},
 				IndexName: "",
@@ -1237,7 +1237,7 @@ func Test_checkEmbeddingListIndex(t *testing.T) {
 					},
 					{
 						Key:   common.MetricTypeKey,
-						Value: metric.MAX_SIM,
+						Value: metric.MaxSim,
 					},
 				},
 				IndexName: "",

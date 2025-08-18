@@ -2997,6 +2997,16 @@ func (node *Proxy) Search(ctx context.Context, request *milvuspb.SearchRequest) 
 		Status: merr.Success(),
 	}
 
+	placeholderGroup := &commonpb.PlaceholderGroup{}
+	err = proto.Unmarshal(request.PlaceholderGroup, placeholderGroup)
+	if err != nil {
+		log.Error("Failed to unmarshal placeholder group", zap.Error(err))
+	}
+	log.Info("debug=== Search for placeholder group")
+	for _, placeholder := range placeholderGroup.GetPlaceholders() {
+		log.Info("debug=== placeholder value type", zap.Any("value", placeholder.Type))
+	}
+
 	optimizedSearch := true
 	resultSizeInsufficient := false
 	isTopkReduce := false

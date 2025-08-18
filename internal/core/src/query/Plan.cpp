@@ -102,6 +102,14 @@ ParsePlaceholderGroup(const Plan* plan,
                 for (auto& line : info.values()) {
                     target.insert(target.end(), line.begin(), line.end());
 
+                    if (line.size() % (dim * elem_size) != 0) {
+                        LOG_INFO(
+                            "debug=== line.size() % (dim * elem_size) == 0, "
+                            "line.size() = {}, dim = {}, elem_size = {}",
+                            line.size(),
+                            dim,
+                            elem_size);
+                    }
                     Assert(line.size() % (dim * elem_size) == 0);
                     offset += line.size() / (dim * elem_size);
                     lims.push_back(offset);

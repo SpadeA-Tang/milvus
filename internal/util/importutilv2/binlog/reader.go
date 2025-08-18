@@ -210,6 +210,7 @@ func (r *reader) Read() (*storage.InsertData, error) {
 		}
 		// convert record to fieldData
 		for _, field := range r.schema.Fields {
+			panic("not implemented")
 			fieldData := insertData.Data[field.GetFieldID()]
 			if fieldData == nil {
 				fieldData, err = storage.NewFieldData(field.GetDataType(), field, 1024)

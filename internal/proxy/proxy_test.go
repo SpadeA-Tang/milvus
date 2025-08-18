@@ -525,7 +525,7 @@ func constructTestCreateIndexRequest(dbName, collectionName string, dataType sch
 				},
 				{
 					Key:   common.MetricTypeKey,
-					Value: metric.MAX_SIM,
+					Value: metric.MaxSim,
 				},
 				{
 					Key:   common.IndexTypeKey,
@@ -689,7 +689,7 @@ func constructTestEmbeddingListSearchRequest(dbName, collectionName, structFVec,
 		panic(err)
 	}
 	searchParams := []*commonpb.KeyValuePair{
-		{Key: MetricTypeKey, Value: metric.MAX_SIM},
+		{Key: MetricTypeKey, Value: metric.MaxSim},
 		{Key: ParamsKey, Value: string(b)},
 		{Key: AnnsFieldKey, Value: structFVec},
 		{Key: TopKKey, Value: strconv.Itoa(topk)},
@@ -934,11 +934,12 @@ func TestProxy(t *testing.T) {
 	streaming.SetWALForTest(wal)
 	defer streaming.RecoverWALForTest()
 
-	// params.Save(params.EtcdCfg.RequestTimeout.Key, "300000")
-	// params.Save(params.CommonCfg.SessionTTL.Key, "300")
-	// params.Save(params.CommonCfg.SessionRetryTimes.Key, "500")
-	// params.Save(params.CommonCfg.GracefulStopTimeout.Key, "3600")
+	params.Save(params.EtcdCfg.RequestTimeout.Key, "300000")
+	params.Save(params.CommonCfg.SessionTTL.Key, "300")
+	params.Save(params.CommonCfg.SessionRetryTimes.Key, "500")
+	params.Save(params.CommonCfg.GracefulStopTimeout.Key, "3600")
 
+	params.Save(params.CommonCfg.EnableStorageV2.Key, "true")
 	params.RootCoordGrpcServerCfg.IP = "localhost"
 	params.QueryCoordGrpcServerCfg.IP = "localhost"
 	params.DataCoordGrpcServerCfg.IP = "localhost"

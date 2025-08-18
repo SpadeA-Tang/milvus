@@ -83,6 +83,8 @@ SearchOnSealedIndex(const Schema& schema,
                                                        search_result,
                                                        bitset,
                                                        *vec_index)) {
+        LOG_INFO("debug=== search on sealed vector iterator");
+
         vec_index->Query(dataset, search_info, bitset, search_result);
         float* distances = search_result.distances_.data();
         auto total_num = num_queries * topK;
@@ -177,6 +179,8 @@ SearchOnSealedColumn(const Schema& schema,
                                                            data_type);
             final_qr.merge(sub_qr);
         } else {
+            LOG_INFO("debug=== search on sealed brute force");
+
             auto sub_qr = BruteForceSearch(query_dataset,
                                            raw_dataset,
                                            search_info,
