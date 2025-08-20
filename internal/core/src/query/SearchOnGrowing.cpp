@@ -207,8 +207,6 @@ SearchOnGrowing(const segcore::SegmentGrowingImpl& segment,
                                                       offsets.data()};
             }
 
-            LOG_INFO("debug=== search on growing brute force");
-
             if (data_type == DataType::VECTOR_ARRAY) {
                 AssertInfo(
                     query_lims != nullptr,

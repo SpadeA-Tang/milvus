@@ -31,6 +31,7 @@
 #include "common/BitsetView.h"
 #include "common/QueryResult.h"
 #include "common/QueryInfo.h"
+#include "folly/SharedMutex.h"
 #include "mmap/ChunkedColumnInterface.h"
 #include "index/Index.h"
 #include "index/JsonFlatIndex.h"
@@ -395,6 +396,10 @@ class SegmentInternalInterface : public SegmentInterface {
                          const std::string& nested_path) const override;
 
  public:
+    // `query_lims` is not null only for vector array (embedding list) search
+    // where it denotes the number of vectors in each embedding list. The length
+    // of `query_lims` is the number of queries in the search plus one (the first
+    // element in query_lims is 0).
     virtual void
     vector_search(SearchInfo& search_info,
                   const void* query_data,
@@ -443,7 +448,14 @@ class SegmentInternalInterface : public SegmentInterface {
     virtual int64_t
     get_active_count(Timestamp ts) const = 0;
 
-    virtual std::pair<std::unique_ptr<IdArray>, std::vector<SegOffset>>
+    /**
+     * search offset by possible pk values and mvcc timestamp
+     *
+     * @param id_array possible pk values
+     * @param timestamp mvcc timestamp 
+     * @return all the hit entries in vector of offsets
+     */
+    virtual std::vector<SegOffset>
     search_ids(const IdArray& id_array, Timestamp timestamp) const = 0;
 
     /**
@@ -588,8 +600,8 @@ class SegmentInternalInterface : public SegmentInterface {
  protected:
     // mutex protecting rw options on schema_
     std::shared_mutex sch_mutex_;
-
-    mutable std::shared_mutex mutex_;
+    
+    mutable folly::SharedMutex mutex_;
     // fieldID -> std::pair<num_rows, avg_size>
     std::unordered_map<FieldId, std::pair<int64_t, int64_t>>
         variable_fields_avg_size_;  // bytes;

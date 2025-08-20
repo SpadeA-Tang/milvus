@@ -1,6 +1,7 @@
 package message
 
 import (
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ func (m *messageImpl) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 		enc.AddInt64("broadcastID", int64(broadcast.BroadcastID))
 	}
 	enc.AddInt("size", len(m.payload))
-	marshalSpecializedHeader(m.MessageType(), m.properties[messageHeader], enc)
+	marshalSpecializedHeader(m.MessageType(), m.Version(), m.properties[messageHeader], enc)
 	return nil
 }
 
@@ -47,7 +48,7 @@ func (m *immutableMessageImpl) MarshalLogObject(enc zapcore.ObjectEncoder) error
 		enc.AddInt64("broadcastID", int64(broadcast.BroadcastID))
 	}
 	enc.AddInt("size", len(m.payload))
-	marshalSpecializedHeader(m.MessageType(), m.properties[messageHeader], enc)
+	marshalSpecializedHeader(m.MessageType(), m.Version(), m.properties[messageHeader], enc)
 	return nil
 }
 
@@ -67,10 +68,14 @@ func (m *immutableTxnMessageImpl) MarshalLogObject(enc zapcore.ObjectEncoder) er
 }
 
 // marshalSpecializedHeader marshals the specialized header of the message.
-func marshalSpecializedHeader(t MessageType, h string, enc zapcore.ObjectEncoder) {
-	typ := messageTypeToCustomHeaderMap[t]
+func marshalSpecializedHeader(t MessageType, v Version, h string, enc zapcore.ObjectEncoder) {
+	typ, ok := GetSerializeType(NewMessageTypeWithVersion(t, v))
+	if !ok {
+		enc.AddString("headerDecodeError", fmt.Sprintf("message type %s version %d not found", t, v))
+		return
+	}
 	// must be a proto type.
-	header := reflect.New(typ.Elem()).Interface().(proto.Message)
+	header := reflect.New(typ.HeaderType.Elem()).Interface().(proto.Message)
 	if err := DecodeProto(h, header); err != nil {
 		enc.AddString("headerDecodeError", err.Error())
 		return
@@ -102,6 +107,7 @@ func marshalSpecializedHeader(t MessageType, h string, enc zapcore.ObjectEncoder
 	case *CreateSegmentMessageHeader:
 		enc.AddInt64("collectionID", header.GetCollectionId())
 		enc.AddInt64("segmentID", header.GetSegmentId())
+		enc.AddInt64("lv", int64(header.GetLevel()))
 	case *FlushMessageHeader:
 		enc.AddInt64("collectionID", header.GetCollectionId())
 		enc.AddInt64("segmentID", header.GetSegmentId())

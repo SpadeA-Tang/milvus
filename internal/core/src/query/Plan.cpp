@@ -82,7 +82,11 @@ ParsePlaceholderGroup(const Plan* plan,
                 }
                 target.reserve(line_size * element.num_of_queries_);
                 for (auto& line : info.values()) {
-                    Assert(line_size == line.size());
+                    AssertInfo(line_size == line.size(),
+                               "vector dimension mismatch, expected vector "
+                               "size(byte) {}, actual {}.",
+                               line_size,
+                               line.size());
                     target.insert(target.end(), line.begin(), line.end());
                 }
             } else {
@@ -101,16 +105,14 @@ ParsePlaceholderGroup(const Plan* plan,
                     field_meta.get_element_type());
                 for (auto& line : info.values()) {
                     target.insert(target.end(), line.begin(), line.end());
+                    AssertInfo(
+                        line.size() % (dim * elem_size) == 0,
+                        "line.size() % (dim * elem_size) == 0 assert failed, "
+                        "line.size() = {}, dim = {}, elem_size = {}",
+                        line.size(),
+                        dim,
+                        elem_size);
 
-                    if (line.size() % (dim * elem_size) != 0) {
-                        LOG_INFO(
-                            "debug=== line.size() % (dim * elem_size) == 0, "
-                            "line.size() = {}, dim = {}, elem_size = {}",
-                            line.size(),
-                            dim,
-                            elem_size);
-                    }
-                    Assert(line.size() % (dim * elem_size) == 0);
                     offset += line.size() / (dim * elem_size);
                     lims.push_back(offset);
                 }

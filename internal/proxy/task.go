@@ -589,7 +589,6 @@ type dropCollectionTask struct {
 	mixCoord types.MixCoordClient
 	result   *commonpb.Status
 	chMgr    channelsMgr
-	chTicker channelsTimeTicker
 }
 
 func (t *dropCollectionTask) TraceCtx() context.Context {
@@ -1011,6 +1010,7 @@ func (t *showCollectionsTask) Execute(ctx context.Context) error {
 			CreatedUtcTimestamps:  make([]uint64, 0, len(resp.CollectionIDs)),
 			InMemoryPercentages:   make([]int64, 0, len(resp.CollectionIDs)),
 			QueryServiceAvailable: make([]bool, 0, len(resp.CollectionIDs)),
+			ShardsNum:             make([]int32, 0, len(resp.CollectionIDs)),
 		}
 
 		for offset, id := range resp.CollectionIDs {
@@ -1033,6 +1033,7 @@ func (t *showCollectionsTask) Execute(ctx context.Context) error {
 			t.result.CreatedUtcTimestamps = append(t.result.CreatedUtcTimestamps, collectionInfo.createdUtcTimestamp)
 			t.result.InMemoryPercentages = append(t.result.InMemoryPercentages, resp.InMemoryPercentages[offset])
 			t.result.QueryServiceAvailable = append(t.result.QueryServiceAvailable, resp.QueryServiceAvailable[offset])
+			t.result.ShardsNum = append(t.result.ShardsNum, collectionInfo.shardsNum)
 		}
 	} else {
 		t.result = respFromRootCoord
@@ -1049,10 +1050,9 @@ type alterCollectionTask struct {
 	baseTask
 	Condition
 	*milvuspb.AlterCollectionRequest
-	ctx                context.Context
-	mixCoord           types.MixCoordClient
-	result             *commonpb.Status
-	replicateMsgStream msgstream.MsgStream
+	ctx      context.Context
+	mixCoord types.MixCoordClient
+	result   *commonpb.Status
 }
 
 func (t *alterCollectionTask) TraceCtx() context.Context {
@@ -1268,7 +1268,6 @@ func (t *alterCollectionTask) Execute(ctx context.Context) error {
 	if err = merr.CheckRPCCall(t.result, err); err != nil {
 		return err
 	}
-	SendReplicateMessagePack(ctx, t.replicateMsgStream, t.AlterCollectionRequest)
 	return nil
 }
 
@@ -1280,10 +1279,9 @@ type alterCollectionFieldTask struct {
 	baseTask
 	Condition
 	*milvuspb.AlterCollectionFieldRequest
-	ctx                context.Context
-	mixCoord           types.MixCoordClient
-	result             *commonpb.Status
-	replicateMsgStream msgstream.MsgStream
+	ctx      context.Context
+	mixCoord types.MixCoordClient
+	result   *commonpb.Status
 }
 
 func (t *alterCollectionFieldTask) TraceCtx() context.Context {
@@ -1497,7 +1495,6 @@ func (t *alterCollectionFieldTask) Execute(ctx context.Context) error {
 	if err = merr.CheckRPCCall(t.result, err); err != nil {
 		return err
 	}
-	SendReplicateMessagePack(ctx, t.replicateMsgStream, t.AlterCollectionFieldRequest)
 	return nil
 }
 
@@ -1940,8 +1937,7 @@ type loadCollectionTask struct {
 	mixCoord types.MixCoordClient
 	result   *commonpb.Status
 
-	collectionID       UniqueID
-	replicateMsgStream msgstream.MsgStream
+	collectionID UniqueID
 }
 
 func (t *loadCollectionTask) TraceCtx() context.Context {
@@ -2053,15 +2049,14 @@ func (t *loadCollectionTask) Execute(ctx context.Context) (err error) {
 
 	loadFieldsSet := typeutil.NewSet(loadFields...)
 	unindexedVecFields := make([]string, 0)
-	for _, field := range collSchema.GetFields() {
+	allFields := typeutil.GetAllFieldSchemas(collSchema.CollectionSchema)
+	for _, field := range allFields {
 		if typeutil.IsVectorType(field.GetDataType()) && loadFieldsSet.Contain(field.GetFieldID()) {
 			if _, ok := fieldIndexIDs[field.GetFieldID()]; !ok {
 				unindexedVecFields = append(unindexedVecFields, field.GetName())
 			}
 		}
 	}
-
-	// todo(SpadeA): check vector field in StructArrayField when index is implemented
 
 	if len(unindexedVecFields) != 0 {
 		errMsg := fmt.Sprintf("there is no vector index on field: %v, please create index firstly", unindexedVecFields)
@@ -2090,7 +2085,6 @@ func (t *loadCollectionTask) Execute(ctx context.Context) (err error) {
 	if err = merr.CheckRPCCall(t.result, err); err != nil {
 		return fmt.Errorf("call query coordinator LoadCollection: %s", err)
 	}
-	SendReplicateMessagePack(ctx, t.replicateMsgStream, t.LoadCollectionRequest)
 	return nil
 }
 
@@ -2113,8 +2107,7 @@ type releaseCollectionTask struct {
 	mixCoord types.MixCoordClient
 	result   *commonpb.Status
 
-	collectionID       UniqueID
-	replicateMsgStream msgstream.MsgStream
+	collectionID UniqueID
 }
 
 func (t *releaseCollectionTask) TraceCtx() context.Context {
@@ -2188,7 +2181,6 @@ func (t *releaseCollectionTask) Execute(ctx context.Context) (err error) {
 		return err
 	}
 
-	SendReplicateMessagePack(ctx, t.replicateMsgStream, t.ReleaseCollectionRequest)
 	return nil
 }
 
@@ -2204,8 +2196,7 @@ type loadPartitionsTask struct {
 	mixCoord types.MixCoordClient
 	result   *commonpb.Status
 
-	collectionID       UniqueID
-	replicateMsgStream msgstream.MsgStream
+	collectionID UniqueID
 }
 
 func (t *loadPartitionsTask) TraceCtx() context.Context {
@@ -2315,15 +2306,14 @@ func (t *loadPartitionsTask) Execute(ctx context.Context) error {
 
 	loadFieldsSet := typeutil.NewSet(loadFields...)
 	unindexedVecFields := make([]string, 0)
-	for _, field := range collSchema.GetFields() {
+	allFields := typeutil.GetAllFieldSchemas(collSchema.CollectionSchema)
+	for _, field := range allFields {
 		if typeutil.IsVectorType(field.GetDataType()) && loadFieldsSet.Contain(field.GetFieldID()) {
 			if _, ok := fieldIndexIDs[field.GetFieldID()]; !ok {
 				unindexedVecFields = append(unindexedVecFields, field.GetName())
 			}
 		}
 	}
-
-	// todo(SpadeA): check vector field in StructArrayField when index is implemented
 
 	if len(unindexedVecFields) != 0 {
 		errMsg := fmt.Sprintf("there is no vector index on field: %v, please create index firstly", unindexedVecFields)
@@ -2364,7 +2354,6 @@ func (t *loadPartitionsTask) Execute(ctx context.Context) error {
 	if err = merr.CheckRPCCall(t.result, err); err != nil {
 		return err
 	}
-	SendReplicateMessagePack(ctx, t.replicateMsgStream, t.LoadPartitionsRequest)
 
 	return nil
 }
@@ -2381,8 +2370,7 @@ type releasePartitionsTask struct {
 	mixCoord types.MixCoordClient
 	result   *commonpb.Status
 
-	collectionID       UniqueID
-	replicateMsgStream msgstream.MsgStream
+	collectionID UniqueID
 }
 
 func (t *releasePartitionsTask) TraceCtx() context.Context {
@@ -2471,7 +2459,6 @@ func (t *releasePartitionsTask) Execute(ctx context.Context) (err error) {
 	if err = merr.CheckRPCCall(t.result, err); err != nil {
 		return err
 	}
-	SendReplicateMessagePack(ctx, t.replicateMsgStream, t.ReleasePartitionsRequest)
 	return nil
 }
 

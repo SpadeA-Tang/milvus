@@ -1123,7 +1123,7 @@ SegmentGrowingImpl::bulk_subscript(SystemFieldType system_type,
     }
 }
 
-std::pair<std::unique_ptr<IdArray>, std::vector<SegOffset>>
+std::vector<SegOffset>
 SegmentGrowingImpl::search_ids(const IdArray& id_array,
                                Timestamp timestamp) const {
     auto field_id = schema_->get_primary_field_id().value_or(FieldId(-1));
@@ -1134,32 +1134,15 @@ SegmentGrowingImpl::search_ids(const IdArray& id_array,
     std::vector<PkType> pks(ids_size);
     ParsePksFromIDs(pks, data_type, id_array);
 
-    auto res_id_arr = std::make_unique<IdArray>();
     std::vector<SegOffset> res_offsets;
     res_offsets.reserve(pks.size());
     for (auto& pk : pks) {
         auto segOffsets = insert_record_.search_pk(pk, timestamp);
         for (auto offset : segOffsets) {
-            switch (data_type) {
-                case DataType::INT64: {
-                    res_id_arr->mutable_int_id()->add_data(
-                        std::get<int64_t>(pk));
-                    break;
-                }
-                case DataType::VARCHAR: {
-                    res_id_arr->mutable_str_id()->add_data(
-                        std::get<std::string>(std::move(pk)));
-                    break;
-                }
-                default: {
-                    ThrowInfo(DataTypeInvalid,
-                              fmt::format("unsupported type {}", data_type));
-                }
-            }
             res_offsets.push_back(offset);
         }
     }
-    return {std::move(res_id_arr), std::move(res_offsets)};
+    return std::move(res_offsets);
 }
 
 std::string
@@ -1201,7 +1184,7 @@ SegmentGrowingImpl::mask_with_timestamps(BitsetTypeView& bitset_chunk,
 
 void
 SegmentGrowingImpl::CreateTextIndex(FieldId field_id) {
-    std::unique_lock lock(mutex_);
+    folly::SharedMutex::WriteHolder lck(&mutex_);
     const auto& field_meta = schema_->operator[](field_id);
     AssertInfo(IsStringDataType(field_meta.get_data_type()),
                "cannot create text index on non-string type");
@@ -1235,7 +1218,7 @@ SegmentGrowingImpl::AddTexts(milvus::FieldId field_id,
                              const bool* texts_valid_data,
                              size_t n,
                              int64_t offset_begin) {
-    std::unique_lock lock(mutex_);
+    folly::SharedMutex::WriteHolder lck(&mutex_);
     auto iter = text_indexes_.find(field_id);
     if (iter == text_indexes_.end()) {
         throw SegcoreError(
@@ -1251,7 +1234,7 @@ SegmentGrowingImpl::AddJSONDatas(FieldId field_id,
                                  const bool* jsondatas_valid_data,
                                  size_t n,
                                  int64_t offset_begin) {
-    std::unique_lock lock(mutex_);
+    folly::SharedMutex::WriteHolder lck(&mutex_);
     auto iter = json_indexes_.find(field_id);
     AssertInfo(iter != json_indexes_.end(), "json index not found");
     iter->second->AddJSONDatas(
@@ -1269,7 +1252,7 @@ SegmentGrowingImpl::CreateJSONIndexes() {
 
 void
 SegmentGrowingImpl::CreateJSONIndex(FieldId field_id) {
-    std::unique_lock lock(mutex_);
+    folly::SharedMutex::WriteHolder lck(&mutex_);
     const auto& field_meta = schema_->operator[](field_id);
     AssertInfo(IsJsonDataType(field_meta.get_data_type()),
                "cannot create json index on non-json type");

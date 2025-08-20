@@ -275,7 +275,7 @@ class ChunkedColumnBase : public ChunkedColumnInterface {
             "VectorArrayViews only supported for ChunkedVectorArrayColumn");
     }
 
-    virtual PinWrapper<std::vector<size_t>>
+    virtual PinWrapper<const size_t*>
     VectorArrayLims(int64_t chunk_id) const override {
         ThrowInfo(
             ErrorCode::Unsupported,
@@ -634,12 +634,12 @@ class ChunkedVectorArrayColumn : public ChunkedColumnBase {
             ca, static_cast<VectorArrayChunk*>(chunk)->Views(offset_len));
     }
 
-    PinWrapper<std::vector<size_t>>
+    PinWrapper<const size_t*>
     VectorArrayLims(int64_t chunk_id) const override {
         auto ca =
             SemiInlineGet(slot_->PinCells({static_cast<cid_t>(chunk_id)}));
         auto chunk = ca->get_cell_of(chunk_id);
-        return PinWrapper<std::vector<size_t>>(
+        return PinWrapper<const size_t*>(
             ca, static_cast<VectorArrayChunk*>(chunk)->Lims());
     }
 };

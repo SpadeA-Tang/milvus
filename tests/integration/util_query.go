@@ -318,7 +318,6 @@ func constructPlaceholderGroup(nq, dim int, vectorType schemapb.DataType, isEmbe
 		} else {
 			placeholderType = commonpb.PlaceholderType_EmbListFloatVector
 		}
-
 		for i := 0; i < nq; i++ {
 			vecCount := dim
 			if isEmbeddingList {

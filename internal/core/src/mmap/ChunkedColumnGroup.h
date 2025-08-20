@@ -322,7 +322,7 @@ class ProxyChunkColumn : public ChunkedColumnInterface {
             static_cast<VectorArrayChunk*>(chunk.get())->Views(offset_len));
     }
 
-    PinWrapper<std::vector<size_t>>
+    PinWrapper<const size_t*>
     VectorArrayLims(int64_t chunk_id) const override {
         if (!IsChunkedVectorArrayColumnDataType(data_type_)) {
             ThrowInfo(ErrorCode::Unsupported,
@@ -331,7 +331,7 @@ class ProxyChunkColumn : public ChunkedColumnInterface {
         }
         auto chunk_wrapper = group_->GetGroupChunk(chunk_id);
         auto chunk = chunk_wrapper.get()->GetChunk(field_id_);
-        return PinWrapper<std::vector<size_t>>(
+        return PinWrapper<const size_t*>(
             chunk_wrapper, static_cast<VectorArrayChunk*>(chunk.get())->Lims());
     }
 
