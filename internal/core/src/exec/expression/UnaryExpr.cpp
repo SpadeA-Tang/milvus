@@ -1811,8 +1811,7 @@ PhyUnaryRangeFilterExpr::ExecTextMatch() {
 
 bool
 PhyUnaryRangeFilterExpr::CanUseNgramIndex() const {
-    return true;
-    // return pinned_ngram_index_.get() != nullptr && !has_offset_input_;
+    return pinned_ngram_index_.get() != nullptr && !has_offset_input_;
 }
 
 std::optional<VectorPtr>

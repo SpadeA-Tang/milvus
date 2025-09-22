@@ -1306,6 +1306,7 @@ TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgramWithSyncpoint) {
                                               // This callback should not be triggered as Equal should not be executed by ngram index.
                                               EXPECT_TRUE(false);
                                           });
+    SyncPoint::GetInstance()->EnableProcessing();
 
     // Test: JSON Equal operation
     {
@@ -1326,5 +1327,7 @@ TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgramWithSyncpoint) {
         EXPECT_EQ(result.count(), 1);
         EXPECT_TRUE(result[0]);
     }
+
+    SyncPoint::GetInstance()->DisableProcessing();
 }
-#endif // MILVUS_FAILPOINT
+#endif  // MILVUS_FAILPOINT
