@@ -23,6 +23,7 @@
 #include "segcore/load_index_c.h"
 #include "test_utils/cachinglayer_test_utils.h"
 #include "expr/ITypeExpr.h"
+#include "syncpoint/sync_point.h"
 
 using namespace milvus;
 using namespace milvus::query;
@@ -1222,3 +1223,108 @@ TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgram) {
         }
     }
 }
+
+#ifdef MILVUS_FAILPOINT
+TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgramWithSyncpoint) {
+    std::vector<std::string> json_raw_data = {R"({"name": "apple"})",
+                                              R"({"name": "banana"})",
+                                              R"({"name": "cherry"})",
+                                              R"({"name": "date"})",
+                                              R"({"name": "elderberry"})",
+                                              R"({"name": "fig"})",
+                                              R"({"name": "grape"})",
+                                              R"({"name": "honeydew"})",
+                                              R"({"name": "kiwi"})",
+                                              R"({"name": "lemon"})"};
+
+    auto json_path = "/name";
+    auto schema = std::make_shared<Schema>();
+    auto json_fid = schema->AddDebugField("json", DataType::JSON);
+
+    auto file_manager_ctx = storage::FileManagerContext();
+    file_manager_ctx.fieldDataMeta.field_schema.set_data_type(
+        milvus::proto::schema::JSON);
+    file_manager_ctx.fieldDataMeta.field_schema.set_fieldid(json_fid.get());
+    file_manager_ctx.fieldDataMeta.field_id = json_fid.get();
+
+    index::CreateIndexInfo create_index_info{
+        .index_type = index::INVERTED_INDEX_TYPE,
+        .json_cast_type = JsonCastType::FromString("VARCHAR"),
+        .json_path = json_path,
+        .ngram_params = std::optional<index::NgramParams>{index::NgramParams{
+            .loading_index = false,
+            .min_gram = 2,
+            .max_gram = 4,
+        }},
+    };
+    auto inv_index = index::IndexFactory::GetInstance().CreateJsonIndex(
+        create_index_info, file_manager_ctx);
+
+    auto ngram_index = std::unique_ptr<index::NgramInvertedIndex>(
+        static_cast<index::NgramInvertedIndex*>(inv_index.release()));
+
+    std::vector<milvus::Json> jsons;
+    for (auto& json : json_raw_data) {
+        jsons.push_back(milvus::Json(simdjson::padded_string(json)));
+    }
+
+    auto json_field =
+        std::make_shared<FieldData<milvus::Json>>(DataType::JSON, false);
+    json_field->add_json_data(jsons);
+    ngram_index->BuildWithFieldData({json_field});
+    ngram_index->finish();
+    ngram_index->create_reader(milvus::index::SetBitsetSealed);
+
+    auto segment = segcore::CreateSealedSegment(schema);
+    segcore::LoadIndexInfo load_index_info;
+    load_index_info.field_id = json_fid.get();
+    load_index_info.field_type = DataType::JSON;
+    load_index_info.cache_index =
+        CreateTestCacheIndex("", std::move(ngram_index));
+
+    std::map<std::string, std::string> index_params{
+        {milvus::index::INDEX_TYPE, milvus::index::NGRAM_INDEX_TYPE},
+        {milvus::index::MIN_GRAM, "2"},
+        {milvus::index::MAX_GRAM, "4"},
+        {milvus::LOAD_PRIORITY, "HIGH"},
+        {JSON_PATH, json_path},
+        {JSON_CAST_TYPE, "VARCHAR"}};
+    load_index_info.index_params = index_params;
+
+    segment->LoadIndex(load_index_info);
+
+    auto cm = milvus::storage::RemoteChunkManagerSingleton::GetInstance()
+                  .GetRemoteChunkManager();
+    auto load_info = PrepareSingleFieldInsertBinlog(
+        0, 0, 0, json_fid.get(), {json_field}, cm);
+    segment->LoadFieldData(load_info);
+
+    size_t nb = json_raw_data.size();
+
+    SyncPoint::GetInstance()->SetCallBack("NgramInvertedIndex::ExecuteQuery",
+                                          [this](void*) {
+                                              // This callback should not be triggered as Equal should not be executed by ngram index.
+                                              EXPECT_TRUE(false);
+                                          });
+
+    // Test: JSON Equal operation
+    {
+        proto::plan::GenericValue value;
+        value.set_string_val("apple");
+        auto expr = std::make_shared<milvus::expr::UnaryRangeFilterExpr>(
+            milvus::expr::ColumnInfo(json_fid, DataType::JSON, {"name"}, true),
+            proto::plan::OpType::Equal,
+            value,
+            std::vector<proto::plan::GenericValue>{});
+
+        auto plan =
+            std::make_shared<plan::FilterBitsNode>(DEFAULT_PLANNODE_ID, expr);
+        auto result = milvus::query::ExecuteQueryExpr(
+            plan, segment.get(), nb, MAX_TIMESTAMP);
+
+        // Only first record should match (exact match for "apple")
+        EXPECT_EQ(result.count(), 1);
+        EXPECT_TRUE(result[0]);
+    }
+}
+#endif // MILVUS_FAILPOINT

@@ -12,6 +12,7 @@
 #include "index/NgramInvertedIndex.h"
 #include "exec/expression/Expr.h"
 #include "index/JsonIndexBuilder.h"
+#include "syncpoint/sync_point.h"
 
 namespace milvus::index {
 
@@ -181,6 +182,8 @@ NgramInvertedIndex::ExecuteQuery(const std::string& literal,
     if (literal.length() < min_gram_) {
         return std::nullopt;
     }
+
+    TEST_SYNC_POINT_CALLBACK("NgramInvertedIndex::ExecuteQuery", nullptr);
 
     switch (op_type) {
         case proto::plan::OpType::Match:

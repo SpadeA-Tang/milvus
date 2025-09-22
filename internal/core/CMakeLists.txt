@@ -33,8 +33,15 @@ if ( USE_DYNAMIC_SIMD )
     add_definitions(-DUSE_DYNAMIC_SIMD)
 endif()
 
-if (USE_OPENDAL) 
+if (USE_OPENDAL)
     add_definitions(-DUSE_OPENDAL)
+endif()
+
+# Option to enable failpoint for testing
+option(MILVUS_FAILPOINT "Enable failpoint for testing" OFF)
+if (MILVUS_FAILPOINT)
+    add_definitions(-DMILVUS_FAILPOINT)
+    message(STATUS "Failpoint support enabled")
 endif()
 
 project(core)

@@ -51,9 +51,17 @@ add_subdirectory( exec )
 add_subdirectory( bitset )
 add_subdirectory( futures )
 
+# Add syncpoint for testing
+if(MILVUS_FAILPOINT)
+    add_library(milvus_syncpoint OBJECT
+        syncpoint/sync_point.cc
+        syncpoint/sync_point_impl.cc
+    )
+endif()
+
 milvus_add_pkg_config("milvus_core")
 
-add_library(milvus_core SHARED
+set(MILVUS_CORE_OBJECTS
     $<TARGET_OBJECTS:milvus_pb>
     $<TARGET_OBJECTS:milvus_config>
     $<TARGET_OBJECTS:milvus_common>
@@ -68,6 +76,13 @@ add_library(milvus_core SHARED
     $<TARGET_OBJECTS:milvus_bitset>
     $<TARGET_OBJECTS:milvus_futures>
 )
+
+# Add syncpoint object files if available
+if(MILVUS_FAILPOINT)
+    list(APPEND MILVUS_CORE_OBJECTS $<TARGET_OBJECTS:milvus_syncpoint>)
+endif()
+
+add_library(milvus_core SHARED ${MILVUS_CORE_OBJECTS})
 
 set(LINK_TARGETS 
     boost_bitset_ext
