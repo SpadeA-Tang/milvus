@@ -37,11 +37,11 @@ if (USE_OPENDAL)
     add_definitions(-DUSE_OPENDAL)
 endif()
 
-# Option to enable failpoint for testing
-option(MILVUS_FAILPOINT "Enable failpoint for testing" OFF)
-if (MILVUS_FAILPOINT)
-    add_definitions(-DMILVUS_FAILPOINT)
-    message(STATUS "Failpoint support enabled")
+# Option to enable syncpoint for testing
+option(ENABLE_SYNCPOINT "Enable syncpoint for testing" OFF)
+if (ENABLE_SYNCPOINT)
+    add_definitions(-DENABLE_SYNCPOINT)
+    message(STATUS "Syncpoint support enabled")
 endif()
 
 project(core)

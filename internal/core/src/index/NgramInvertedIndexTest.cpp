@@ -1224,7 +1224,7 @@ TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgram) {
     }
 }
 
-#ifdef MILVUS_FAILPOINT
+#ifdef ENABLE_SYNCPOINT
 TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgramWithSyncpoint) {
     std::vector<std::string> json_raw_data = {R"({"name": "apple"})",
                                               R"({"name": "banana"})",
@@ -1330,4 +1330,4 @@ TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgramWithSyncpoint) {
 
     SyncPoint::GetInstance()->DisableProcessing();
 }
-#endif  // MILVUS_FAILPOINT
+#endif  // ENABLE_SYNCPOINT

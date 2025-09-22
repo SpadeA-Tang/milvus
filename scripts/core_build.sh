@@ -104,9 +104,9 @@ TANTIVY_FEATURES=""
 INDEX_ENGINE="KNOWHERE"
 ENABLE_AZURE_FS="ON"
 : "${ENABLE_GCP_NATIVE:="OFF"}"
-MILVUS_FAILPOINT="OFF"
+ENABLE_SYNCPOINT="OFF"
 
-while getopts "p:t:s:n:a:y:x:o:f:F:ulcgbZh" arg; do
+while getopts "p:t:s:n:a:y:x:o:f:S:ulcgbZh" arg; do
   case $arg in
   p)
     INSTALL_PREFIX=$OPTARG
@@ -155,8 +155,8 @@ while getopts "p:t:s:n:a:y:x:o:f:F:ulcgbZh" arg; do
   f)
     TANTIVY_FEATURES=$OPTARG
     ;;
-  F)
-    MILVUS_FAILPOINT=$OPTARG
+  S)
+    ENABLE_SYNCPOINT=$OPTARG
     ;;
   h) # help
     echo "
@@ -176,11 +176,11 @@ parameter:
 -Z: build milvus without azure-sdk-for-cpp, so cannot use azure blob
 -o: build milvus with opendal(default: false)
 -f: build milvus with tantivy features(default: '')
--F: enable failpoint for testing(default: OFF)
+-S: enable syncpoint for testing(default: OFF)
 -h: help
 
 usage:
-./core_build.sh -p \${INSTALL_PREFIX} -t \${BUILD_TYPE} -s \${CUDA_ARCH} -f \${TANTIVY_FEATURES} [-u] [-l] [-r] [-c] [-z] [-g] [-m] [-e] [-h] [-b] [-o] [-F]
+./core_build.sh -p \${INSTALL_PREFIX} -t \${BUILD_TYPE} -s \${CUDA_ARCH} -f \${TANTIVY_FEATURES} [-u] [-l] [-r] [-c] [-z] [-g] [-m] [-e] [-h] [-b] [-o] [-S]
                 "
     exit 0
     ;;
@@ -238,7 +238,7 @@ ${CMAKE_EXTRA_ARGS} \
 -DTANTIVY_FEATURES_LIST=${TANTIVY_FEATURES} \
 -DENABLE_GCP_NATIVE=${ENABLE_GCP_NATIVE} \
 -DENABLE_AZURE_FS=${ENABLE_AZURE_FS} \
--DMILVUS_FAILPOINT=${MILVUS_FAILPOINT} "
+-DENABLE_SYNCPOINT=${ENABLE_SYNCPOINT} "
 # Azure build variables removed as we now use Arrow with Azure support directly
 CMAKE_CMD=${CMAKE_CMD}"${CPP_SRC_DIR}"
 
