@@ -71,11 +71,12 @@ ParsePlaceholderGroup(const Plan* plan,
         auto field_id = plan->tag2field_.at(element.tag_);
         auto& field_meta = plan->schema_->operator[](field_id);
         AssertInfo(check_data_type(field_meta, info.type()),
-                   "vector type must be the same, field {} - type {}, search "
-                   "info type {}",
+                   "Type mismatch in Vector Array, field name {}, data type "
+                   "{}, element type {}, placeholder type {}",
                    field_meta.get_name().get(),
                    field_meta.get_data_type(),
-                   static_cast<DataType>(info.type()));
+                   field_meta.get_element_type(),
+                   int(info.type()));
         element.num_of_queries_ = info.values_size();
         AssertInfo(element.num_of_queries_ > 0, "must have queries");
         if (info.type() ==

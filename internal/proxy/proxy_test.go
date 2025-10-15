@@ -91,7 +91,8 @@ const (
 
 	// Collection configuration
 	shardsNum = common.DefaultShardsNum
-	dim       = 128
+	dim       = 16
+	dim2      = 32
 	rowNum    = 100
 	nlist     = 10
 	nq        = 10
@@ -103,15 +104,17 @@ const (
 	floatVecField  = "fVec"
 	binaryVecField = "bVec"
 	structField    = "structField"
+	structField2   = "structField2"
 	subFieldI32    = "structI32"
 	subFieldFVec   = "structFVec"
 )
 
 const (
 	// Index names
-	testFloatIndexName      = "float_index"
-	testBinaryIndexName     = "binary_index"
-	testStructFVecIndexName = "structFVecIndex"
+	testFloatIndexName       = "float_index"
+	testBinaryIndexName      = "binary_index"
+	testStructFVecIndexName  = "structFVecIndex"
+	testStructFVecIndexName2 = "structFVecIndex2"
 )
 
 var Registry *prometheus.Registry
@@ -5054,6 +5057,465 @@ func TestUnhealthProxy_GetIndexStatistics(t *testing.T) {
 		})
 		assert.NoError(t, err)
 		assert.Equal(t, commonpb.ErrorCode_NotReadyServe, resp.GetStatus().GetErrorCode())
+	})
+}
+
+func constructTestCollectionSchema2(collectionName, int64Field,
+	structField string, dim int, structField2 string, dim2 int) *schemapb.CollectionSchema {
+	pk := &schemapb.FieldSchema{
+		FieldID:      100,
+		Name:         int64Field,
+		IsPrimaryKey: true,
+		Description:  "",
+		DataType:     schemapb.DataType_Int64,
+		TypeParams:   nil,
+		IndexParams:  nil,
+		AutoID:       true,
+	}
+	// struct schema fields
+	sId := &schemapb.FieldSchema{
+		FieldID:      104,
+		Name:         subFieldI32,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_Array,
+		ElementType:  schemapb.DataType_Int32,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.MaxCapacityKey,
+				Value: "100",
+			},
+		},
+		IndexParams: nil,
+		AutoID:      false,
+	}
+	sFVec := &schemapb.FieldSchema{
+		FieldID:      105,
+		Name:         subFieldFVec,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_ArrayOfVector,
+		ElementType:  schemapb.DataType_FloatVector,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.DimKey,
+				Value: strconv.Itoa(dim),
+			},
+			{
+				Key:   common.MaxCapacityKey,
+				Value: "100",
+			},
+		},
+		IndexParams: nil,
+		AutoID:      false,
+	}
+	structF := &schemapb.StructArrayFieldSchema{
+		FieldID: 103,
+		Name:    structField,
+		Fields:  []*schemapb.FieldSchema{sId, sFVec},
+	}
+
+	sId2 := &schemapb.FieldSchema{
+		FieldID:      107,
+		Name:         subFieldI32,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_Array,
+		ElementType:  schemapb.DataType_Int32,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.MaxCapacityKey,
+				Value: "100",
+			},
+		},
+		IndexParams: nil,
+		AutoID:      false,
+	}
+	sFVec2 := &schemapb.FieldSchema{
+		FieldID:      108,
+		Name:         subFieldFVec,
+		IsPrimaryKey: false,
+		Description:  "",
+		DataType:     schemapb.DataType_ArrayOfVector,
+		ElementType:  schemapb.DataType_FloatVector,
+		TypeParams: []*commonpb.KeyValuePair{
+			{
+				Key:   common.DimKey,
+				Value: strconv.Itoa(dim2),
+			},
+			{
+				Key:   common.MaxCapacityKey,
+				Value: "100",
+			},
+		},
+		IndexParams: nil,
+		AutoID:      false,
+	}
+	structF2 := &schemapb.StructArrayFieldSchema{
+		FieldID: 106,
+		Name:    structField2,
+		Fields:  []*schemapb.FieldSchema{sId2, sFVec2},
+	}
+
+	return &schemapb.CollectionSchema{
+		Name:        collectionName,
+		Description: "",
+		AutoID:      false,
+		Fields: []*schemapb.FieldSchema{
+			pk,
+		},
+		StructArrayFields: []*schemapb.StructArrayFieldSchema{structF, structF2},
+	}
+}
+
+func constructInsertRequest2(dbName, collectionName, structField, structField2 string,
+	schema *schemapb.CollectionSchema, rowNum, dim int, dim2 int) *milvuspb.InsertRequest {
+	structColumn := newStructArrayFieldData(schema.StructArrayFields[0], structField, rowNum, dim)
+	structColumn2 := newStructArrayFieldData(schema.StructArrayFields[1], structField2, rowNum, dim2)
+	hashKeys := testutils.GenerateHashKeys(rowNum)
+	return &milvuspb.InsertRequest{
+		Base:           nil,
+		DbName:         dbName,
+		CollectionName: collectionName,
+		PartitionName:  "",
+		FieldsData:     []*schemapb.FieldData{structColumn, structColumn2},
+		HashKeys:       hashKeys,
+		NumRows:        uint32(rowNum),
+	}
+}
+
+func constructIndexRequestArrayOfVector(dbName, collectionName string, indexName string, fieldName string, dim, nlist int) *milvuspb.CreateIndexRequest {
+	req := &milvuspb.CreateIndexRequest{
+		Base:           nil,
+		DbName:         dbName,
+		CollectionName: collectionName,
+	}
+
+	req.FieldName = fieldName
+	req.IndexName = indexName
+	req.ExtraParams = []*commonpb.KeyValuePair{
+		{
+			Key:   common.DimKey,
+			Value: strconv.Itoa(dim),
+		},
+		{
+			Key:   common.MetricTypeKey,
+			Value: metric.MaxSim,
+		},
+		{
+			Key:   common.IndexTypeKey,
+			Value: "HNSW",
+		},
+		{
+			Key:   "nlist",
+			Value: strconv.Itoa(nlist),
+		},
+	}
+
+	return req
+}
+
+func TestProxyStructArray(t *testing.T) {
+	var err error
+	var wg sync.WaitGroup
+	paramtable.Init()
+	params := paramtable.Get()
+	testutil.ResetEnvironment()
+	paramtable.SetLocalComponentEnabled(typeutil.StreamingNodeRole)
+	streamingutil.SetStreamingServiceEnabled()
+	defer streamingutil.UnsetStreamingServiceEnabled()
+
+	// params.Save(params.EtcdCfg.RequestTimeout.Key, "300000")
+	// params.Save(params.CommonCfg.SessionTTL.Key, "300")
+	// params.Save(params.CommonCfg.SessionRetryTimes.Key, "500")
+	// params.Save(params.CommonCfg.GracefulStopTimeout.Key, "3600")
+
+	params.Save(params.EtcdCfg.RequestTimeout.Key, "300000")
+	params.Save(params.CommonCfg.SessionTTL.Key, "300")
+	params.Save(params.CommonCfg.SessionRetryTimes.Key, "500")
+	params.Save(params.CommonCfg.GracefulStopTimeout.Key, "3600")
+
+	params.Save(params.CommonCfg.EnableStorageV2.Key, "true")
+	params.RootCoordGrpcServerCfg.IP = "localhost"
+	params.QueryCoordGrpcServerCfg.IP = "localhost"
+	params.DataCoordGrpcServerCfg.IP = "localhost"
+	params.ProxyGrpcServerCfg.IP = "localhost"
+	params.QueryNodeGrpcServerCfg.IP = "localhost"
+	params.DataNodeGrpcServerCfg.IP = "localhost"
+	params.StreamingNodeGrpcServerCfg.IP = "localhost"
+	params.Save(params.MQCfg.Type.Key, "pulsar")
+	params.CommonCfg.EnableStorageV2.SwapTempValue("false")
+	defer params.CommonCfg.EnableStorageV2.SwapTempValue("")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = GetContext(ctx, "root:123456")
+	localMsg := true
+	factory := dependency.NewDefaultFactory(false)
+	alias := "TestProxy"
+
+	log.Info("Initialize parameter table of Proxy")
+
+	mix := runMixCoord(ctx, localMsg)
+	log.Info("running MixCoord ...")
+
+	dn := runDataNode(ctx, localMsg, alias)
+	log.Info("running DataNode ...")
+
+	sn := runStreamingNode(ctx, localMsg, alias)
+	log.Info("running StreamingNode ...")
+
+	qn := runQueryNode(ctx, localMsg, alias)
+	log.Info("running QueryNode ...")
+
+	time.Sleep(10 * time.Millisecond)
+
+	streaming.Init()
+
+	proxy, err := NewProxy(ctx, factory)
+	assert.NoError(t, err)
+	assert.NotNil(t, proxy)
+
+	etcdcli, err := etcd.GetEtcdClient(
+		Params.EtcdCfg.UseEmbedEtcd.GetAsBool(),
+		Params.EtcdCfg.EtcdUseSSL.GetAsBool(),
+		Params.EtcdCfg.Endpoints.GetAsStrings(),
+		Params.EtcdCfg.EtcdTLSCert.GetValue(),
+		Params.EtcdCfg.EtcdTLSKey.GetValue(),
+		Params.EtcdCfg.EtcdTLSCACert.GetValue(),
+		Params.EtcdCfg.EtcdTLSMinVersion.GetValue())
+	if err != nil {
+		panic(err)
+	}
+	defer etcdcli.Close()
+	assert.NoError(t, err)
+
+	testServer := newProxyTestServer(proxy)
+	wg.Add(1)
+
+	bt := paramtable.NewBaseTable(paramtable.SkipRemote(true))
+	base := &paramtable.ComponentParam{}
+	base.Init(bt)
+	var p paramtable.GrpcServerConfig
+	p.Init(typeutil.ProxyRole, bt)
+	testServer.Proxy.SetAddress(p.GetAddress())
+	assert.Equal(t, p.GetAddress(), testServer.Proxy.GetAddress())
+
+	go testServer.startGrpc(ctx, &wg, &p)
+	assert.NoError(t, testServer.waitForGrpcReady())
+
+	rootCoordClient, err := mixc.NewClient(ctx)
+	assert.NoError(t, err)
+	err = componentutil.WaitForComponentHealthy(ctx, rootCoordClient, typeutil.MixCoordRole, attempts, sleepDuration)
+	assert.NoError(t, err)
+	proxy.SetMixCoordClient(rootCoordClient)
+	log.Info("Proxy set mix coordinator client")
+
+	proxy.SetQueryNodeCreator(defaultQueryNodeClientCreator)
+	log.Info("Proxy set query coordinator client")
+
+	proxy.UpdateStateCode(commonpb.StateCode_Initializing)
+	err = proxy.Init()
+	assert.NoError(t, err)
+
+	err = proxy.Start()
+	assert.NoError(t, err)
+	assert.Equal(t, commonpb.StateCode_Healthy, proxy.GetStateCode())
+
+	// register proxy
+	err = proxy.Register()
+	assert.NoError(t, err)
+	log.Info("Register proxy done")
+	defer func() {
+		a := []any{mix, qn, dn, sn, proxy}
+		fmt.Println(len(a))
+		// HINT: the order of stopping service refers to the `roles.go` file
+		log.Info("start to stop the services")
+		{
+			err := sn.Stop()
+			assert.NoError(t, err)
+			log.Info("stop StreamingNode")
+		}
+
+		{
+			err := mix.Stop()
+			assert.NoError(t, err)
+			log.Info("stop MixCoord")
+		}
+
+		{
+			err := dn.Stop()
+			assert.NoError(t, err)
+			log.Info("stop DataNode")
+		}
+
+		{
+			err := proxy.Stop()
+			assert.NoError(t, err)
+			log.Info("stop Proxy")
+		}
+		cancel()
+	}()
+
+	dbName := GetCurDBNameFromContextOrDefault(ctx)
+	collectionName := prefix + funcutil.GenRandomStr()
+
+	// an int64 field (pk) & a float vector field
+	schema := constructTestCollectionSchema2(collectionName, int64Field, structField, dim, structField2, dim2)
+	createCollectionReq := constructTestCreateCollectionRequest(dbName, collectionName, schema, shardsNum)
+
+	wg.Add(1)
+	t.Run("create collection", func(t *testing.T) {
+		defer wg.Done()
+		req := createCollectionReq
+		resp, err := proxy.CreateCollection(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	})
+
+	fmt.Println("create collection done")
+
+	var insertedIDs []int64
+	wg.Add(1)
+	t.Run("insert", func(t *testing.T) {
+		defer wg.Done()
+		req := constructInsertRequest2(dbName, collectionName, structField, structField2, schema, rowNum, dim, dim2)
+
+		resp, err := proxy.Insert(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode(), "resp: %+v", resp.GetStatus().GetReason())
+		assert.Equal(t, rowNum, len(resp.SuccIndex))
+		assert.Equal(t, 0, len(resp.ErrIndex))
+		assert.Equal(t, int64(rowNum), resp.InsertCnt)
+
+		switch field := resp.GetIDs().GetIdField().(type) {
+		case *schemapb.IDs_IntId:
+			insertedIDs = field.IntId.GetData()
+		default:
+			t.Fatalf("Unexpected ID type")
+		}
+	})
+	fmt.Println("insert done")
+	fmt.Println(insertedIDs)
+
+	var segmentIDs []int64
+	flushed := true
+	wg.Add(1)
+	t.Run("flush", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.Flush(ctx, &milvuspb.FlushRequest{
+			Base:            nil,
+			DbName:          dbName,
+			CollectionNames: []string{collectionName},
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+		segmentIDs = resp.CollSegIDs[collectionName].Data
+		// TODO: Here's a Bug, because a growing segment may cannot be seen right away by mixcoord,
+		// it can only be seen by streamingnode right away, so we need to check the flush state at streamingnode but not here.
+		// use timetick for GetFlushState in-future but not segment list.
+		time.Sleep(5 * time.Second)
+		log.Info("flush collection", zap.Int64s("segments to be flushed", segmentIDs))
+
+		// waiting for flush operation to be done
+		counter := 0
+		for !checkFlushState(ctx, proxy, segmentIDs) {
+			if counter > 100 {
+				flushed = false
+				break
+			}
+			// avoid too frequent rpc call
+			time.Sleep(100 * time.Millisecond)
+			counter++
+		}
+	})
+	if !flushed {
+		log.Warn("flush operation was not sure to be done")
+	}
+
+	fieldName := ConcatStructFieldName(structField, subFieldFVec)
+	wg.Add(1)
+	t.Run("create index for embedding list field", func(t *testing.T) {
+		defer wg.Done()
+		req := constructIndexRequestArrayOfVector(dbName, collectionName, testStructFVecIndexName, fieldName, dim, nlist)
+
+		resp, err := proxy.CreateIndex(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	})
+
+	fieldName2 := ConcatStructFieldName(structField2, subFieldFVec)
+	wg.Add(1)
+	t.Run("create index2 for embedding list field", func(t *testing.T) {
+		defer wg.Done()
+		req := constructIndexRequestArrayOfVector(dbName, collectionName, testStructFVecIndexName2, fieldName2, dim2, nlist)
+
+		resp, err := proxy.CreateIndex(ctx, req)
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+	})
+
+	testServer.gracefulStop()
+	wg.Wait()
+	log.Info("case done")
+
+	wg.Add(1)
+	t.Run("get index build progress for embedding list field", func(t *testing.T) {
+		defer wg.Done()
+		resp, err := proxy.GetIndexBuildProgress(ctx, &milvuspb.GetIndexBuildProgressRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			FieldName:      fieldName,
+			IndexName:      testStructFVecIndexName,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+
+		resp, err = proxy.GetIndexBuildProgress(ctx, &milvuspb.GetIndexBuildProgressRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+			FieldName:      fieldName2,
+			IndexName:      testStructFVecIndexName2,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.GetStatus().GetErrorCode())
+	})
+
+	loaded := true
+	wg.Add(1)
+	t.Run("load collection", func(t *testing.T) {
+		defer wg.Done()
+		{
+			stateResp, err := proxy.GetLoadState(ctx, &milvuspb.GetLoadStateRequest{
+				DbName:         dbName,
+				CollectionName: collectionName,
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, commonpb.ErrorCode_Success, stateResp.GetStatus().GetErrorCode())
+			assert.Equal(t, commonpb.LoadState_LoadStateNotLoad, stateResp.State)
+		}
+
+		resp, err := proxy.LoadCollection(ctx, &milvuspb.LoadCollectionRequest{
+			Base:           nil,
+			DbName:         dbName,
+			CollectionName: collectionName,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, commonpb.ErrorCode_Success, resp.ErrorCode)
+
+		// waiting for collection to be loaded
+		counter := 0
+		for !checkCollectionLoaded(ctx, proxy, dbName, collectionName) {
+			if counter > 100 {
+				loaded = false
+				break
+			}
+			// avoid too frequent rpc call
+			time.Sleep(100 * time.Millisecond)
+			counter++
+		}
+		assert.True(t, loaded)
 	})
 }
 
