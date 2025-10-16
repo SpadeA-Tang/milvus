@@ -21,5 +21,11 @@ import "strings"
 // PositivelyRelated return if metricType are "ip" or "IP"
 func PositivelyRelated(metricType string) bool {
 	mUpper := strings.ToUpper(metricType)
-	return mUpper == strings.ToUpper(IP) || mUpper == strings.ToUpper(COSINE) || mUpper == strings.ToUpper(BM25) || mUpper == strings.ToUpper(MHJACCARD)
+	return mUpper == strings.ToUpper(IP) ||
+		mUpper == strings.ToUpper(COSINE) ||
+		mUpper == strings.ToUpper(BM25) ||
+		mUpper == strings.ToUpper(MHJACCARD) ||
+		mUpper == strings.ToUpper(MaxSim) ||
+		mUpper == strings.ToUpper(MaxSimCosine) ||
+		mUpper == strings.ToUpper(MaxSimIP)
 }
