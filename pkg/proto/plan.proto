@@ -98,6 +98,7 @@ message ColumnInfo {
   schema.DataType element_type = 7;
   bool is_clustering_key = 8;
   bool nullable = 9;
+  bool is_element_access = 10; // True when accessing array element (e.g., e[intField] in MATCH_ALL)
 }
 
 message ColumnExpr {
@@ -262,6 +263,12 @@ message TimestamptzArithCompareExpr {
   GenericValue compare_value = 5;
 }
 
+message MatchAllExpr {
+  ColumnInfo column_info = 1; // The struct array field (e.g., structA)
+  string alias = 2;            // The alias name (e.g., e)
+  Expr predicate = 3;          // The condition expression (e.g., e[intField] == 1 && e[strField] == "aaa")
+}
+
 message Expr {
   oneof expr {
     TermExpr term_expr = 1;
@@ -282,6 +289,7 @@ message Expr {
     RandomSampleExpr random_sample_expr = 16;
     GISFunctionFilterExpr gisfunction_filter_expr = 17;
     TimestamptzArithCompareExpr timestamptz_arith_compare_expr = 18;
+    MatchAllExpr match_all_expr = 19;
   };
   bool is_template = 20;
 }

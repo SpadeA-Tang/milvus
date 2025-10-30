@@ -18,6 +18,7 @@ expr:
 	| TEXTMATCH'('Identifier',' StringLiteral')'                                 # TextMatch
 	| PHRASEMATCH'('Identifier',' StringLiteral (',' expr)? ')'       			 # PhraseMatch
 	| RANDOMSAMPLE'(' expr ')'						     						 # RandomSample
+	| MATCH_ALL'(' Identifier ',' Identifier ',' expr ')'                        # MatchAll
 	| expr POW expr											                     # Power
 	| op = (ADD | SUB | BNOT | NOT) expr					                     # Unary
 //	| '(' typeName ')' expr									                     # Cast
@@ -74,6 +75,7 @@ EXISTS: 'exists' | 'EXISTS';
 TEXTMATCH: 'text_match'|'TEXT_MATCH';
 PHRASEMATCH: 'phrase_match'|'PHRASE_MATCH';
 RANDOMSAMPLE: 'random_sample' | 'RANDOM_SAMPLE';
+MATCH_ALL: 'match_all' | 'MATCH_ALL';
 INTERVAL: 'interval' | 'INTERVAL';
 ISO: 'iso' | 'ISO';
 

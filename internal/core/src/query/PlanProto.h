@@ -107,6 +107,9 @@ class ProtoParser {
         const proto::plan::TimestamptzArithCompareExpr& expr_pb);
 
     expr::TypedExprPtr
+    ParseMatchAllExprs(const proto::plan::MatchAllExpr& expr_pb);
+
+    expr::TypedExprPtr
     ParseValueExprs(const proto::plan::ValueExpr& expr_pb);
 
     void

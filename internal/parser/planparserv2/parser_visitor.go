@@ -19,14 +19,25 @@ type ParserVisitorArgs struct {
 	TimezonePreference []string
 }
 
+// aliasInfo stores information about an alias used in MATCH_ALL expressions
+type aliasInfo struct {
+	fieldName string // The actual field name the alias refers to
+	isElement bool   // True if alias represents array element (e.g., in MATCH_ALL)
+}
+
 type ParserVisitor struct {
 	parser.BasePlanVisitor
-	schema *typeutil.SchemaHelper
-	args   *ParserVisitorArgs
+	schema   *typeutil.SchemaHelper
+	args     *ParserVisitorArgs
+	aliasMap map[string]*aliasInfo // Maps alias names to field info for MATCH_ALL
 }
 
 func NewParserVisitor(schema *typeutil.SchemaHelper, args *ParserVisitorArgs) *ParserVisitor {
-	return &ParserVisitor{schema: schema, args: args}
+	return &ParserVisitor{
+		schema:   schema,
+		args:     args,
+		aliasMap: make(map[string]*aliasInfo),
+	}
 }
 
 // VisitParens unpack the parentheses.
@@ -36,6 +47,12 @@ func (v *ParserVisitor) VisitParens(ctx *parser.ParensContext) interface{} {
 
 func (v *ParserVisitor) translateIdentifier(identifier string) (*ExprWithType, error) {
 	identifier = decodeUnicode(identifier)
+
+	// Check if identifier is an alias (for MATCH_ALL expressions)
+	if aliasInfo, ok := v.aliasMap[identifier]; ok {
+		identifier = aliasInfo.fieldName
+	}
+
 	field, err := v.schema.GetFieldFromNameDefaultJSON(identifier)
 	if err != nil {
 		return nil, err
@@ -162,7 +179,7 @@ func (v *ParserVisitor) VisitString(ctx *parser.StringContext) interface{} {
 }
 
 func checkDirectComparisonBinaryField(columnInfo *planpb.ColumnInfo) error {
-	if typeutil.IsArrayType(columnInfo.GetDataType()) && len(columnInfo.GetNestedPath()) == 0 {
+	if typeutil.IsArrayType(columnInfo.GetDataType()) && len(columnInfo.GetNestedPath()) == 0 && !columnInfo.GetIsElementAccess() {
 		return errors.New("can not comparisons array fields directly")
 	}
 	return nil
@@ -646,7 +663,10 @@ func (v *ParserVisitor) VisitTerm(ctx *parser.TermContext) interface{} {
 	}
 
 	dataType := columnInfo.GetDataType()
-	if typeutil.IsArrayType(dataType) && len(columnInfo.GetNestedPath()) != 0 {
+	// Use element type for IN operation in two cases:
+	// 1. Array with nested path (e.g., arr[0] IN [1, 2, 3])
+	// 2. Array with element access flag (e.g., e[intField] IN [1, 2] in MATCH_ALL)
+	if typeutil.IsArrayType(dataType) && (len(columnInfo.GetNestedPath()) != 0 || columnInfo.GetIsElementAccess()) {
 		dataType = columnInfo.GetElementType()
 	}
 
@@ -1177,8 +1197,15 @@ func (v *ParserVisitor) getColumnInfoFromStructIdentifier(identifier string) (*p
 		return nil, fmt.Errorf("structIdentifier parse error: invalid struct identifier: %s", identifier)
 	}
 
-	baseName := parts[0]  // "struct_array"
+	baseName := parts[0]  // "struct_array" or alias like "e"
 	remaining := parts[1] // "sub_str][n]" or "sub_str]"
+
+	// Check if baseName is an alias (for MATCH_ALL expressions)
+	var isElementAlias bool
+	if aliasInfo, ok := v.aliasMap[baseName]; ok {
+		baseName = aliasInfo.fieldName
+		isElementAlias = aliasInfo.isElement
+	}
 
 	// Extract first bare identifier from brackets
 	bracketParts := strings.SplitN(remaining, "]", 2)
@@ -1224,10 +1251,11 @@ func (v *ParserVisitor) getColumnInfoFromStructIdentifier(identifier string) (*p
 	}
 
 	return &planpb.ColumnInfo{
-		FieldId:     field.FieldID,
-		DataType:    field.DataType,
-		NestedPath:  nestedPath,
-		ElementType: field.GetElementType(),
+		FieldId:         field.FieldID,
+		DataType:        field.DataType, // Keep the actual schema type (Array<T>)
+		NestedPath:      nestedPath,
+		ElementType:     field.GetElementType(),
+		IsElementAccess: isElementAlias,
 	}, nil
 }
 
@@ -1314,10 +1342,11 @@ func (v *ParserVisitor) VisitStructIdentifier(ctx *parser.StructIdentifierContex
 			Expr: &planpb.Expr_ColumnExpr{
 				ColumnExpr: &planpb.ColumnExpr{
 					Info: &planpb.ColumnInfo{
-						FieldId:     field.GetFieldId(),
-						DataType:    field.GetDataType(),
-						NestedPath:  field.GetNestedPath(),
-						ElementType: field.GetElementType(),
+						FieldId:         field.GetFieldId(),
+						DataType:        field.GetDataType(),
+						NestedPath:      field.GetNestedPath(),
+						ElementType:     field.GetElementType(),
+						IsElementAccess: field.GetIsElementAccess(),
 					},
 				},
 			},
@@ -1361,6 +1390,58 @@ func (v *ParserVisitor) VisitExists(ctx *parser.ExistsContext) interface{} {
 			},
 		},
 		dataType: schemapb.DataType_Bool,
+	}
+}
+
+// VisitMatchAll handles MATCH_ALL expressions
+// Syntax: MATCH_ALL(structA, e, e[intField] == 1 && e[strField] == "aaa")
+// where:
+//   - structA is the struct field name
+//   - e is an alias for referencing struct sub-fields in the predicate
+//   - the third parameter is a predicate expression using the alias (e[field] maps to structA[field])
+func (v *ParserVisitor) VisitMatchAll(ctx *parser.MatchAllContext) interface{} {
+	structFieldName := ctx.Identifier(0).GetText()
+
+	aliasName := ctx.Identifier(1).GetText()
+
+	oldAlias, hasOldAlias := v.aliasMap[aliasName]
+	v.aliasMap[aliasName] = &aliasInfo{
+		fieldName: structFieldName,
+		isElement: true, // This is an element alias - e represents a single element
+	}
+
+	// Ensure we restore the alias map state when done
+	defer func() {
+		if hasOldAlias {
+			v.aliasMap[aliasName] = oldAlias
+		} else {
+			delete(v.aliasMap, aliasName)
+		}
+	}()
+
+	predicate := ctx.Expr().Accept(v)
+	if err := getError(predicate); err != nil {
+		return err
+	}
+
+	predicateExpr := getExpr(predicate)
+	if predicateExpr == nil {
+		return fmt.Errorf("invalid predicate expression in MATCH_ALL")
+	}
+
+	expr := &planpb.Expr{
+		Expr: &planpb.Expr_MatchAllExpr{
+			MatchAllExpr: &planpb.MatchAllExpr{
+				ColumnInfo: &planpb.ColumnInfo{},
+				Alias:      aliasName,
+				Predicate:  predicateExpr.expr,
+			},
+		},
+	}
+
+	return &ExprWithType{
+		expr:     expr,
+		dataType: schemapb.DataType_Bool, // MATCH_ALL returns a boolean
 	}
 }
 

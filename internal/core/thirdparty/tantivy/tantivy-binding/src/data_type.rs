@@ -1,6 +1,6 @@
 #[allow(dead_code)]
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TantivyDataType {
     Text,
     Keyword,

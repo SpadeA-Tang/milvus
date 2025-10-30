@@ -109,6 +109,7 @@ func TestExpr_StructArray(t *testing.T) {
 	assert.NoError(t, err)
 
 	exprStrs := []string{
+		`match_all(struct_array, e, e[sub_str] == "aaa" && e[sub_int] > 100)`,
 		// Access struct sub-field (entire array)
 		`array_contains(struct_array[sub_str], "test")`,
 		`array_length(struct_array[sub_str]) > 0`,

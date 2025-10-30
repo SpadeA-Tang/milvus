@@ -159,6 +159,10 @@ func (v *BasePlanVisitor) VisitArray(ctx *ArrayContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 
+func (v *BasePlanVisitor) VisitMatchAll(ctx *MatchAllContext) interface{} {
+	return v.VisitChildren(ctx)
+}
+
 func (v *BasePlanVisitor) VisitJSONContainsAny(ctx *JSONContainsAnyContext) interface{} {
 	return v.VisitChildren(ctx)
 }

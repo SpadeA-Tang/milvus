@@ -596,6 +596,28 @@ ProtoParser::ParseGISFunctionFilterExprs(
 }
 
 expr::TypedExprPtr
+ProtoParser::ParseMatchAllExprs(const proto::plan::MatchAllExpr& expr_pb) {
+    auto& columnInfo = expr_pb.column_info();
+    auto field_id = FieldId(columnInfo.field_id());
+    auto data_type = schema->operator[](field_id).get_data_type();
+
+    // Validate: field must be STRUCT or ARRAY<STRUCT>
+    bool valid =
+        (data_type == DataType::STRUCT) ||
+        (IsArrayType(data_type) &&
+         static_cast<DataType>(columnInfo.element_type()) == DataType::STRUCT);
+
+    AssertInfo(valid,
+               "MATCH_ALL requires struct or struct array field, got: {}",
+               datatype_name(data_type));
+
+    auto predicate_expr = this->ParseExprs(expr_pb.predicate());
+
+    return std::make_shared<expr::MatchAllExpr>(
+        columnInfo, expr_pb.alias(), predicate_expr);
+}
+
+expr::TypedExprPtr
 ProtoParser::CreateAlwaysTrueExprs() {
     return std::make_shared<expr::AlwaysTrueExpr>();
 }
@@ -672,6 +694,10 @@ ProtoParser::ParseExprs(const proto::plan::Expr& expr_pb,
         case ppe::kTimestamptzArithCompareExpr: {
             result = ParseTimestamptzArithCompareExprs(
                 expr_pb.timestamptz_arith_compare_expr());
+            break;
+        }
+        case ppe::kMatchAllExpr: {
+            result = ParseMatchAllExprs(expr_pb.match_all_expr());
             break;
         }
         default: {

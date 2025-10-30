@@ -818,7 +818,7 @@ class GISFunctionFilterExpr : public ITypeFilterExpr {
         : column_(cloumn),
           op_(op),
           geometry_wkt_(geometry_wkt),
-          distance_(distance){};
+          distance_(distance) {};
     std::string
     ToString() const override {
         if (op_ == proto::plan::GISFunctionFilterExpr_GISOp_DWithin) {
@@ -879,6 +879,52 @@ class JsonContainsExpr : public ITypeFilterExpr {
     bool same_type_;
     const std::vector<proto::plan::GenericValue> vals_;
 };
+
+class MatchAllExpr : public ITypeFilterExpr {
+ public:
+    MatchAllExpr(const proto::plan::ColumnInfo& column_info,
+                 const std::string& alias,
+                 const TypedExprPtr& predicate_expr)
+        : column_info_(column_info),
+          alias_(alias),
+          predicate_expr_(predicate_expr) {
+        // Add predicate to inputs_ so it gets recursively compiled
+        inputs_.push_back(predicate_expr);
+    }
+
+    DataType
+    type() const override {
+        return DataType::BOOL;
+    }
+
+    std::string
+    ToString() const override {
+        return fmt::format("MatchAllExpr(alias={}, field_id={})",
+                           alias_,
+                           column_info_.field_id());
+    }
+
+    const proto::plan::ColumnInfo&
+    get_column_info() const {
+        return column_info_;
+    }
+
+    const std::string&
+    get_alias() const {
+        return alias_;
+    }
+
+    const TypedExprPtr&
+    get_predicate() const {
+        return predicate_expr_;
+    }
+
+ private:
+    proto::plan::ColumnInfo column_info_;
+    std::string alias_;
+    TypedExprPtr predicate_expr_;
+};
+
 }  // namespace expr
 }  // namespace milvus
 

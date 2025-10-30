@@ -30,6 +30,7 @@
 #include "exec/expression/GISFunctionFilterExpr.h"
 #include "exec/expression/JsonContainsExpr.h"
 #include "exec/expression/LogicalBinaryExpr.h"
+#include "exec/expression/MatchAllExpr.h"
 #include "exec/expression/LogicalUnaryExpr.h"
 #include "exec/expression/NullExpr.h"
 #include "exec/expression/TermExpr.h"
@@ -342,6 +343,17 @@ CompileExpression(const expr::TypedExprPtr& expr,
             compiled_inputs,
             casted_expr,
             "PhyGISFunctionFilterExpr",
+            op_ctx,
+            context->get_segment(),
+            context->get_active_count(),
+            context->query_config()->get_expr_batch_size(),
+            context->get_consistency_level());
+    } else if (auto casted_expr = std::dynamic_pointer_cast<
+                   const milvus::expr::MatchAllExpr>(expr)) {
+        result = std::make_shared<PhyMatchAllFilterExpr>(
+            compiled_inputs,
+            casted_expr,
+            "PhyMatchAllFilterExpr",
             op_ctx,
             context->get_segment(),
             context->get_active_count(),
