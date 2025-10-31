@@ -235,6 +235,11 @@ class PhyCompareFilterExpr : public Expr {
         return std::nullopt;
     }
 
+    std::shared_ptr<const milvus::expr::CompareExpr>
+    GetLogicalExpr() const {
+        return expr_;
+    }
+
  private:
     int64_t
     GetCurrentRows() {

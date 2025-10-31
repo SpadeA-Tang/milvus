@@ -104,6 +104,11 @@ class PhyLogicalBinaryExpr : public Expr {
         return std::nullopt;
     }
 
+    std::shared_ptr<const milvus::expr::LogicalBinaryExpr>
+    GetLogicalExpr() const {
+        return expr_;
+    }
+
  private:
     std::shared_ptr<const milvus::expr::LogicalBinaryExpr> expr_;
 };

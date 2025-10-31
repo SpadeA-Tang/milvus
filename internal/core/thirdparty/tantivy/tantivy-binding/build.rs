@@ -10,6 +10,26 @@ fn main() {
         .unwrap()
         .write_to_file(output_file);
 
+    // Compile tantivy_query.proto for Tantivy nested query support
+    let tantivy_proto_path = PathBuf::from(&crate_dir)
+        .join("proto/tantivy_query.proto");
+    if tantivy_proto_path.exists() {
+        let proto_dir = tantivy_proto_path.parent().unwrap();
+        let output_dir = PathBuf::from(&crate_dir).join("src/proto");
+
+        if !output_dir.exists() {
+            std::fs::create_dir_all(&output_dir).unwrap();
+        }
+
+        prost_build::Config::new()
+            .protoc_arg("--experimental_allow_proto3_optional")
+            .out_dir(&output_dir)
+            .compile_protos(&[&tantivy_proto_path], &[proto_dir])
+            .expect("Failed to compile tantivy_query.proto");
+
+        println!("cargo:rerun-if-changed={}", tantivy_proto_path.display());
+    }
+
     // If TOKENIZER_PROTO is set, generate the grpc_tokenizer protocol.
     let tokenizer_proto_path = env::var("TOKENIZER_PROTO").unwrap_or_default();
     if !tokenizer_proto_path.is_empty() {

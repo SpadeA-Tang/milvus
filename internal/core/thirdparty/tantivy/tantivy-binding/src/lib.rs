@@ -15,6 +15,7 @@ mod index_ngram_writer_c;
 mod index_reader;
 mod index_reader_c;
 mod index_reader_nested;
+mod index_reader_nested_c;
 mod index_reader_text;
 mod index_reader_text_c;
 mod index_writer;

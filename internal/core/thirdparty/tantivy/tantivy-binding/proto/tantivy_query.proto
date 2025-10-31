@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package milvus.proto.plan;
+
+// Tantivy nested query messages
+// These are standalone and don't depend on other proto files
+
+message TantivyQueryExpr {
+  oneof expr {
+    TantivyFieldCondition condition = 1;
+    TantivyLogicalExpr logical = 2;
+  }
+}
+
+message TantivyFieldCondition {
+  string field_name = 1;
+  oneof condition_type {
+    int64 term_i64 = 2;
+    double term_f64 = 3;
+    bool term_bool = 4;
+    string term_keyword = 5;
+    TantivyRangeI64 range_i64 = 6;
+    TantivyRangeF64 range_f64 = 7;
+    TantivyRangeKeyword range_keyword = 8;
+  }
+}
+
+message TantivyLogicalExpr {
+  enum Op {
+    AND = 0;
+    OR = 1;
+  }
+  Op op = 1;
+  repeated TantivyQueryExpr children = 2;
+}
+
+message TantivyRangeI64 {
+  optional int64 lower = 1;
+  optional int64 upper = 2;
+  bool lower_inclusive = 3;
+  bool upper_inclusive = 4;
+}
+
+message TantivyRangeF64 {
+  optional double lower = 1;
+  optional double upper = 2;
+  bool lower_inclusive = 3;
+  bool upper_inclusive = 4;
+}
+
+message TantivyRangeKeyword {
+  optional string lower = 1;
+  optional string upper = 2;
+  bool lower_inclusive = 3;
+  bool upper_inclusive = 4;
+}

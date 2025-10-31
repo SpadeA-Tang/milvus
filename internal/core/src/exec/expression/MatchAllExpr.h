@@ -70,6 +70,11 @@ class PhyMatchAllFilterExpr : public SegmentExpr {
     }
 
  private:
+    int64_t
+    GetCurrentRows() const {
+        return current_data_global_pos_;
+    }
+
     std::shared_ptr<const milvus::expr::MatchAllExpr> expr_;
     // Predicate expression for evaluation
     std::shared_ptr<Expr> predicate_expr_;

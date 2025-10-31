@@ -1,6 +1,6 @@
 use crate::error::Result;
 use std::collections::HashSet;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::ffi::{c_char, c_void};
 use std::ops::Bound;
 use tantivy::{directory::MmapDirectory, Index};
@@ -35,6 +35,23 @@ pub fn free_binding<T>(ptr: *mut c_void) {
     let real = ptr as *mut T;
     unsafe {
         drop(Box::from_raw(real));
+    }
+}
+
+/// Create a C-compatible error message string
+pub fn create_error(msg: &str) -> *mut c_char {
+    match CString::new(msg) {
+        Ok(c_string) => c_string.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Free a C-compatible error message string
+pub fn free_error(error_msg: *mut c_char) {
+    if !error_msg.is_null() {
+        unsafe {
+            let _ = CString::from_raw(error_msg);
+        }
     }
 }
 

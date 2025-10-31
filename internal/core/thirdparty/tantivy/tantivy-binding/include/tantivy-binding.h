@@ -293,6 +293,34 @@ RustResult tantivy_ngram_match_query(void *ptr,
                                      uintptr_t max_gram,
                                      void *bitset);
 
+/// Search nested documents using a protobuf-encoded query
+///
+/// # Arguments
+/// * `reader_ptr` - Pointer to IndexReaderNestedWrapper
+/// * `query_proto_data` - Pointer to protobuf bytes
+/// * `query_proto_len` - Length of protobuf bytes
+/// * `result_row_ids` - Output pointer to receive array of matching parent row IDs
+/// * `result_count` - Output pointer to receive count of matching row IDs
+///
+/// # Returns
+/// * Error message string if failed, NULL if succeeded
+///
+/// # Safety
+/// The caller must:
+/// - Free the returned row_ids array using `tantivy_free_row_ids`
+/// - Free the error message (if not NULL) using `tantivy_free_error`
+char *tantivy_search_nested(void *reader_ptr,
+                            const uint8_t *query_proto_data,
+                            uintptr_t query_proto_len,
+                            int64_t **result_row_ids,
+                            uintptr_t *result_count);
+
+/// Free the row IDs array returned by tantivy_search_nested
+///
+/// # Safety
+/// Must only be called once with a pointer returned by tantivy_search_nested
+void tantivy_free_row_ids(int64_t *row_ids, uintptr_t count);
+
 RustResult tantivy_match_query(void *ptr, const char *query, void *bitset);
 
 RustResult tantivy_phrase_match_query(void *ptr, const char *query, uint32_t slop, void *bitset);

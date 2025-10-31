@@ -76,6 +76,11 @@ class PhyValueExpr : public Expr {
         return std::nullopt;
     }
 
+    std::shared_ptr<const milvus::expr::ValueExpr>
+    GetLogicalExpr() const {
+        return expr_;
+    }
+
  private:
     std::shared_ptr<const milvus::expr::ValueExpr> expr_;
     const int64_t active_count_;
