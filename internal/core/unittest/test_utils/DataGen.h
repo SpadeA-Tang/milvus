@@ -378,7 +378,8 @@ GenerateRandomSparseFloatVector(size_t rows,
     return tensor;
 }
 
-inline SchemaPtr CreateTestSchema() {
+inline SchemaPtr
+CreateTestSchema() {
     auto schema = std::make_shared<milvus::Schema>();
     auto bool_field =
         schema->AddDebugField("bool", milvus::DataType::BOOL, true);
@@ -566,20 +567,17 @@ DataGen(SchemaPtr schema,
             insert_data->mutable_fields_data()->AddAllocated(array.release());
         };
 
-    auto generate_float_vector = [&seed, &offset, &random, &distr](
-                                     auto& field_meta, int64_t N) {
+    auto generate_float_vector = [&offset, &random, &distr](auto& field_meta,
+                                                            int64_t N) {
         auto dim = field_meta.get_dim();
         vector<float> final(dim * N);
         bool is_ip = starts_with(field_meta.get_name().get(), "normalized");
-#pragma omp parallel for
         for (int n = 0; n < N; ++n) {
             vector<float> data(dim);
             float sum = 0;
 
-            std::default_random_engine er2(seed + n);
-            std::normal_distribution<> distr2(0, 1);
             for (auto& x : data) {
-                x = distr2(er2) + offset;
+                x = distr(random) + offset;
                 sum += x * x;
             }
             if (is_ip) {
@@ -676,7 +674,8 @@ DataGen(SchemaPtr schema,
             case DataType::VECTOR_ARRAY: {
                 auto dim = field_meta.get_dim();
                 vector<VectorFieldProto> vector_array(N);
-                for (int i = 0; i < N / repeat_count; ++i) {
+                // Generate unique vectors for each document by advancing random state
+                for (int i = 0; i < N; ++i) {
                     VectorFieldProto field_data;
                     field_data.set_dim(dim);
 
@@ -737,9 +736,8 @@ DataGen(SchemaPtr schema,
                         }
                     }
 
-                    for (int j = 0; j < repeat_count; ++j) {
-                        vector_array[i * repeat_count + j] = field_data;
-                    }
+                    // Each document gets its own unique vectors
+                    vector_array[i] = field_data;
                 }
                 insert_cols(vector_array, N, field_meta, random_valid);
                 break;
@@ -1151,7 +1149,10 @@ CreatePlaceholderGroup(int64_t num_queries,
 
 template <class TraitType = milvus::FloatVector>
 auto
-CreatePlaceholderGroup(int64_t num_queries, int dim, int64_t seed = 42) {
+CreatePlaceholderGroup(int64_t num_queries,
+                       int dim,
+                       int64_t seed = 42,
+                       bool is_element_level = false) {
     if (std::is_same_v<TraitType, milvus::BinaryVector>) {
         assert(dim % 8 == 0);
     }
@@ -1162,6 +1163,7 @@ CreatePlaceholderGroup(int64_t num_queries, int dim, int64_t seed = 42) {
     auto value = raw_group.add_placeholders();
     value->set_tag("$0");
     value->set_type(TraitType::placeholder_type);
+    value->set_is_element_level(is_element_level);
     // TODO caiyd: need update for Int8Vector
     std::normal_distribution<double> dis(0, 1);
     std::default_random_engine e(seed);

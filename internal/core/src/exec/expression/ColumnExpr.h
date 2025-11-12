@@ -18,6 +18,8 @@
 
 #include <fmt/core.h>
 #include <boost/variant.hpp>
+#include "common/Array.h"
+#include "common/ArrayOffsets.h"
 #include "common/EasyAssert.h"
 #include "common/OpContext.h"
 #include "common/Types.h"

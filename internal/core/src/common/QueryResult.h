@@ -28,6 +28,7 @@
 #include <NamedType/named_type.hpp>
 
 #include "common/FieldMeta.h"
+#include "common/ArrayOffsets.h"
 #include "pb/schema.pb.h"
 #include "knowhere/index/index_node.h"
 
@@ -122,16 +123,50 @@ struct OffsetDisPairComparator {
         return left->GetOffDis().first < right->GetOffDis().first;
     }
 };
-struct VectorIterator {
+/**
+ * @brief Abstract base class for vector iterators
+ *
+ * Provides a unified interface for iterating over (offset, distance) pairs
+ * in sorted order. Implementations can be:
+ * - ChunkMergeIterator: Merges multiple chunk iterators
+ * - ElementFilterIterator: Filters elements based on expressions
+ */
+class VectorIterator {
  public:
-    VectorIterator(int chunk_count,
-                   const std::vector<int64_t>& total_rows_until_chunk = {})
+    virtual ~VectorIterator() = default;
+
+    /**
+     * @brief Check if there are more elements
+     * @return true if Next() will return a valid result
+     */
+    virtual bool HasNext() = 0;
+
+    /**
+     * @brief Get the next (offset, distance) pair
+     * @return Optional pair of (offset, distance), or nullopt if exhausted
+     */
+    virtual std::optional<std::pair<int64_t, float>> Next() = 0;
+};
+
+/**
+ * @brief Multi-way merge iterator for vector search results from multiple chunks
+ *
+ * Merges knowhere iterators from different chunks using a min-heap,
+ * returning results in distance-sorted order.
+ */
+class ChunkMergeIterator : public VectorIterator {
+ public:
+    ChunkMergeIterator(int chunk_count,
+                       const std::vector<int64_t>& total_rows_until_chunk = {})
         : total_rows_until_chunk_(total_rows_until_chunk) {
         iterators_.reserve(chunk_count);
     }
 
-    std::optional<std::pair<int64_t, float>>
-    Next() {
+    bool HasNext() override {
+        return !heap_.empty();
+    }
+
+    std::optional<std::pair<int64_t, float>> Next() override {
         if (!heap_.empty()) {
             auto top = heap_.top();
             heap_.pop();
@@ -145,10 +180,7 @@ struct VectorIterator {
         }
         return std::nullopt;
     }
-    bool
-    HasNext() {
-        return !heap_.empty();
-    }
+
     bool
     AddIterator(knowhere::IndexNode::IteratorPtr iter) {
         if (!sealed && iter != nullptr) {
@@ -157,6 +189,7 @@ struct VectorIterator {
         }
         return false;
     }
+
     void
     seal() {
         sealed = true;
@@ -195,7 +228,7 @@ struct VectorIterator {
         heap_;
     bool sealed = false;
     std::vector<int64_t> total_rows_until_chunk_;
-    //currently, VectorIterator is guaranteed to be used serially without concurrent problem, in the future
+    //currently, ChunkMergeIterator is guaranteed to be used serially without concurrent problem, in the future
     //we may need to add mutex to protect the variable sealed
 };
 
@@ -230,15 +263,22 @@ struct SearchResult {
         for (int i = 0, vec_iter_idx = 0; i < kw_iterators.size(); i++) {
             vec_iter_idx = vec_iter_idx % nq;
             if (vector_iterators.size() < nq) {
-                auto vector_iterator = std::make_shared<VectorIterator>(
+                auto chunk_merge_iter = std::make_shared<ChunkMergeIterator>(
                     chunk_count, total_rows_until_chunk);
-                vector_iterators.emplace_back(vector_iterator);
+                vector_iterators.emplace_back(chunk_merge_iter);
             }
             const auto& kw_iterator = kw_iterators[i];
-            vector_iterators[vec_iter_idx++]->AddIterator(kw_iterator);
+            // Cast to ChunkMergeIterator to call AddIterator
+            auto chunk_merge_iter =
+                std::static_pointer_cast<ChunkMergeIterator>(
+                    vector_iterators[vec_iter_idx++]);
+            chunk_merge_iter->AddIterator(kw_iterator);
         }
         for (const auto& vector_iter : vector_iterators) {
-            vector_iter->seal();
+            // Cast to ChunkMergeIterator to call seal
+            auto chunk_merge_iter =
+                std::static_pointer_cast<ChunkMergeIterator>(vector_iter);
+            chunk_merge_iter->seal();
         }
         this->vector_iterators_ = vector_iterators;
     }
@@ -275,6 +315,66 @@ struct SearchResult {
         vector_iterators_;
     // record the storage usage in search
     StorageCost search_storage_cost_;
+
+    // ========== Element-level Search Support ==========
+
+    /**
+     * @brief Indicates if this SearchResult contains element-level results
+     *
+     * - true: element_indices_ and element_iterators_ are valid
+     * - false: seg_offsets_ and vector_iterators_ are valid (doc-level)
+     */
+    bool is_element_level_{false};
+
+    /**
+     * @brief Element indices within arrays (when is_element_level_=true)
+     *
+     * Each value represents the index within the array (0-based).
+     * Used together with seg_offsets_ to identify specific array elements:
+     * - seg_offsets_[i] = document ID
+     * - element_indices_[i] = index within that document's array
+     */
+    std::vector<int32_t> element_indices_;
+
+    /**
+     * @brief Element-level iterators (used in iterative filter mode)
+     *
+     * Similar to vector_iterators_ but operates on element granularity.
+     * Each iterator yields (element_id, distance) pairs.
+     */
+    std::optional<std::vector<std::shared_ptr<VectorIterator>>>
+        element_iterators_;
+
+    /**
+     * @brief Array field offsets for element ↔ doc conversion
+     *
+     * Required for all element-level operations.
+     * Shared across the entire query lifecycle.
+     */
+    std::shared_ptr<ArrayOffsets> array_offsets_;
+
+    // ========== Helper Methods ==========
+
+    /**
+     * @brief Check if result has iterators (either doc or element level)
+     */
+    bool
+    HasIterators() const {
+        return (is_element_level_ && element_iterators_.has_value()) ||
+               (!is_element_level_ && vector_iterators_.has_value());
+    }
+
+    /**
+     * @brief Get the appropriate iterators based on result type
+     */
+    std::optional<std::vector<std::shared_ptr<VectorIterator>>>
+    GetIterators() {
+        if (is_element_level_) {
+            return element_iterators_;
+        } else {
+            return vector_iterators_;
+        }
+    }
 };
 
 using SearchResultPtr = std::shared_ptr<SearchResult>;

@@ -23,6 +23,8 @@ type ParserVisitor struct {
 	parser.BasePlanVisitor
 	schema *typeutil.SchemaHelper
 	args   *ParserVisitorArgs
+	// currentStructArrayField stores the struct array field name when processing StructElementFilter
+	currentStructArrayField string
 }
 
 func NewParserVisitor(schema *typeutil.SchemaHelper, args *ParserVisitorArgs) *ParserVisitor {
@@ -595,6 +597,10 @@ func isRandomSampleExpr(expr *ExprWithType) bool {
 	return expr.expr.GetRandomSampleExpr() != nil
 }
 
+func isElementFilterExpr(expr *ExprWithType) bool {
+	return expr.expr.GetElementFilterExpr() != nil
+}
+
 const EPSILON = 1e-10
 
 func (v *ParserVisitor) VisitRandomSample(ctx *parser.RandomSampleContext) interface{} {
@@ -1052,6 +1058,9 @@ func (v *ParserVisitor) VisitLogicalAnd(ctx *parser.LogicalAndContext) interface
 	if isRandomSampleExpr(leftExpr) {
 		return errors.New("random sample expression can only be the last expression in the logical and expression")
 	}
+	if isElementFilterExpr(leftExpr) {
+		return errors.New("element filter expression can only be the last expression in the logical and expression")
+	}
 
 	if !canBeExecuted(leftExpr) || !canBeExecuted(rightExpr) {
 		return errors.New("'and' can only be used between boolean expressions")
@@ -1064,6 +1073,15 @@ func (v *ParserVisitor) VisitLogicalAnd(ctx *parser.LogicalAndContext) interface
 		expr = &planpb.Expr{
 			Expr: &planpb.Expr_RandomSampleExpr{
 				RandomSampleExpr: randomSampleExpr,
+			},
+		}
+	} else if isElementFilterExpr(rightExpr) {
+		// Similar to RandomSampleExpr, extract doc-level predicate
+		elementFilterExpr := rightExpr.expr.GetElementFilterExpr()
+		elementFilterExpr.Predicate = leftExpr.expr
+		expr = &planpb.Expr{
+			Expr: &planpb.Expr_ElementFilterExpr{
+				ElementFilterExpr: elementFilterExpr,
 			},
 		}
 	} else {
@@ -1974,5 +1992,89 @@ func (v *ParserVisitor) VisitTimestamptzCompare(ctx *parser.TimestamptzCompareCo
 	return &ExprWithType{
 		expr:     newExpr,
 		dataType: schemapb.DataType_Bool,
+	}
+}
+
+// VisitStructElementFilter handles StructElementFilter(structArrayField, elementExpr) syntax.
+func (v *ParserVisitor) VisitStructElementFilter(ctx *parser.StructElementFilterContext) interface{} {
+	// Get struct array field name (first parameter)
+	arrayFieldName := ctx.Identifier().GetText()
+
+	// Save current context and set new one for nested expression parsing
+	oldField := v.currentStructArrayField
+	v.currentStructArrayField = arrayFieldName
+	defer func() { v.currentStructArrayField = oldField }()
+
+	// Parse element expression (second parameter)
+	elementExpr := ctx.Expr().Accept(v)
+	if err := getError(elementExpr); err != nil {
+		return fmt.Errorf("cannot parse element expression: %s, error: %s", ctx.Expr().GetText(), err)
+	}
+
+	exprWithType := getExpr(elementExpr)
+	if exprWithType == nil {
+		return fmt.Errorf("invalid element expression: %s", ctx.Expr().GetText())
+	}
+
+	// Build ElementFilterExpr proto
+	return &ExprWithType{
+		expr: &planpb.Expr{
+			Expr: &planpb.Expr_ElementFilterExpr{
+				ElementFilterExpr: &planpb.ElementFilterExpr{
+					ElementExpr: exprWithType.expr,
+					StructName:  arrayFieldName,
+				},
+			},
+		},
+		dataType: schemapb.DataType_Bool,
+	}
+}
+
+// VisitStructSubField handles $[fieldName] syntax within StructElementFilter.
+func (v *ParserVisitor) VisitStructSubField(ctx *parser.StructSubFieldContext) interface{} {
+	// Extract the field name from $[fieldName]
+	tokenText := ctx.StructSubFieldIdentifier().GetText()
+	// Remove $[ prefix and ] suffix
+	if len(tokenText) < 4 || tokenText[:2] != "$[" || tokenText[len(tokenText)-1] != ']' {
+		return fmt.Errorf("invalid struct sub-field syntax: %s", tokenText)
+	}
+	fieldName := tokenText[2 : len(tokenText)-1]
+
+	// Check if we're inside an StructElementFilter context
+	if v.currentStructArrayField == "" {
+		return fmt.Errorf("$[%s] syntax can only be used inside StructElementFilter", fieldName)
+	}
+
+	// Construct full field name for struct array field
+	fullFieldName := v.currentStructArrayField + "[" + fieldName + "]"
+	// Get the struct array field info
+	field, err := v.schema.GetFieldFromName(fullFieldName)
+	if err != nil {
+		return fmt.Errorf("array field not found: %s, error: %s", fullFieldName, err)
+	}
+
+	// In element-level context, data_type should be the element type
+	elementType := field.GetElementType()
+
+	return &ExprWithType{
+		expr: &planpb.Expr{
+			Expr: &planpb.Expr_ColumnExpr{
+				ColumnExpr: &planpb.ColumnExpr{
+					Info: &planpb.ColumnInfo{
+						FieldId:         field.FieldID,
+						DataType:        elementType,        // Use element type, not storage type
+						IsPrimaryKey:    field.IsPrimaryKey,
+						IsAutoID:        field.AutoID,
+						IsPartitionKey:  field.IsPartitionKey,
+						IsClusteringKey: field.IsClusteringKey,
+						ElementType:     elementType,
+						Nullable:        field.GetNullable(),
+						IsElementLevel:  true, // Mark as element-level access
+					},
+				},
+			},
+		},
+		dataType:      elementType, // Expression evaluates to element type
+		nodeDependent: true,
 	}
 }

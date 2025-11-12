@@ -49,6 +49,9 @@ type PlanVisitor interface {
 	// Visit a parse tree produced by PlanParser#TemplateVariable.
 	VisitTemplateVariable(ctx *TemplateVariableContext) interface{}
 
+	// Visit a parse tree produced by PlanParser#StructElementFilter.
+	VisitStructElementFilter(ctx *StructElementFilterContext) interface{}
+
 	// Visit a parse tree produced by PlanParser#Equality.
 	VisitEquality(ctx *EqualityContext) interface{}
 
@@ -138,6 +141,9 @@ type PlanVisitor interface {
 
 	// Visit a parse tree produced by PlanParser#IsNull.
 	VisitIsNull(ctx *IsNullContext) interface{}
+
+	// Visit a parse tree produced by PlanParser#StructSubField.
+	VisitStructSubField(ctx *StructSubFieldContext) interface{}
 
 	// Visit a parse tree produced by PlanParser#Power.
 	VisitPower(ctx *PowerContext) interface{}

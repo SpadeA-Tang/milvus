@@ -21,6 +21,7 @@
 #include <index/ScalarIndex.h>
 
 #include "cachinglayer/CacheSlot.h"
+#include "common/ArrayOffsets.h"
 #include "common/EasyAssert.h"
 #include "common/Json.h"
 #include "common/OpContext.h"
@@ -200,6 +201,11 @@ class SegmentInterface {
 
     virtual void
     SetLoadInfo(const milvus::proto::segcore::SegmentLoadInfo& load_info) = 0;
+
+    // Get ArrayOffsets for element-level filtering on array fields
+    // Returns nullptr if the field doesn't have ArrayOffsets
+    virtual const ArrayOffsets*
+    GetArrayOffsets(FieldId field_id) const = 0;
 };
 
 // internal API for DSL calculation

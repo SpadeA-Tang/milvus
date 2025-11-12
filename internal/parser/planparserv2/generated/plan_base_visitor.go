@@ -63,6 +63,10 @@ func (v *BasePlanVisitor) VisitTemplateVariable(ctx *TemplateVariableContext) in
 	return v.VisitChildren(ctx)
 }
 
+func (v *BasePlanVisitor) VisitStructElementFilter(ctx *StructElementFilterContext) interface{} {
+	return v.VisitChildren(ctx)
+}
+
 func (v *BasePlanVisitor) VisitEquality(ctx *EqualityContext) interface{} {
 	return v.VisitChildren(ctx)
 }
@@ -180,6 +184,10 @@ func (v *BasePlanVisitor) VisitSTEuqals(ctx *STEuqalsContext) interface{} {
 }
 
 func (v *BasePlanVisitor) VisitIsNull(ctx *IsNullContext) interface{} {
+	return v.VisitChildren(ctx)
+}
+
+func (v *BasePlanVisitor) VisitStructSubField(ctx *StructSubFieldContext) interface{} {
 	return v.VisitChildren(ctx)
 }
 

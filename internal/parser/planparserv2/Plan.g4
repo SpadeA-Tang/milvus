@@ -8,6 +8,7 @@ expr:
 	| StringLiteral											                     # String
 	| (Identifier|Meta)           			      							     # Identifier
 	| JSONIdentifier                                                             # JSONIdentifier
+	| StructSubFieldIdentifier                                                   # StructSubField
 	| LBRACE Identifier RBRACE                                                   # TemplateVariable
 	| '(' expr ')'											                     # Parens
 	| '[' expr (',' expr)* ','? ']'                                              # Array
@@ -17,6 +18,7 @@ expr:
 	| TEXTMATCH'('Identifier',' StringLiteral')'                                 # TextMatch
 	| PHRASEMATCH'('Identifier',' StringLiteral (',' expr)? ')'       			 # PhraseMatch
 	| RANDOMSAMPLE'(' expr ')'						     						 # RandomSample
+	| StructElementFilter'('Identifier',' expr')'                                # StructElementFilter
 	| expr POW expr											                     # Power
 	| op = (ADD | SUB | BNOT | NOT) expr					                     # Unary
 //	| '(' typeName ')' expr									                     # Cast
@@ -108,6 +110,7 @@ ArrayContains: 'array_contains' | 'ARRAY_CONTAINS';
 ArrayContainsAll: 'array_contains_all' | 'ARRAY_CONTAINS_ALL';
 ArrayContainsAny: 'array_contains_any' | 'ARRAY_CONTAINS_ANY';
 ArrayLength: 'array_length' | 'ARRAY_LENGTH';
+StructElementFilter: 'struct_element_filter' | 'STRUCT_ELEMENT_FILTER';
 
 STEuqals:'st_equals' | 'ST_EQUALS';
 STTouches:'st_touches' | 'ST_TOUCHES';
@@ -135,6 +138,7 @@ Meta: '$meta';
 
 StringLiteral: EncodingPrefix? ('"' DoubleSCharSequence? '"' | '\'' SingleSCharSequence? '\'');
 JSONIdentifier: (Identifier | Meta)('[' (StringLiteral | DecimalConstant) ']')+;
+StructSubFieldIdentifier: '$[' Identifier ']';
 
 fragment EncodingPrefix: 'u8' | 'u' | 'U' | 'L';
 

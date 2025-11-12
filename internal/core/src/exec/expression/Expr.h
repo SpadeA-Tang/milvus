@@ -21,6 +21,8 @@
 #include <string>
 #include <type_traits>
 
+#include "common/Array.h"
+#include "common/ArrayOffsets.h"
 #include "common/FieldDataInterface.h"
 #include "common/Json.h"
 #include "common/OpContext.h"
@@ -677,6 +679,82 @@ class SegmentExpr : public Expr {
             }
         }
         return input->size();
+    }
+
+    // Process element-level data by element IDs
+    // Handles the type mismatch between storage (ArrayView) and element type
+    // Currently only implemented for sealed chunked segments
+    template <typename ElementType, typename FUNC, typename... ValTypes>
+    int64_t
+    ProcessElementLevelByOffsets(
+        FUNC func,
+        std::function<bool(const milvus::SkipIndex&, FieldId, int)> skip_func,
+        OffsetVector* element_ids,
+        TargetBitmapView res,
+        TargetBitmapView valid_res,
+        ValTypes... values) {
+        auto& skip_index = segment_->GetSkipIndex();
+        if (segment_->type() == SegmentType::Sealed) {
+            AssertInfo(
+                segment_->is_chunked(),
+                "Element-level filtering requires chunked segment for sealed");
+
+            auto* array_offsets = segment_->GetArrayOffsets(field_id_);
+            if (!array_offsets) {
+                ThrowInfo(ErrorCode::UnexpectedError,
+                          "ArrayOffsets not found for field {}",
+                          field_id_.get());
+            }
+
+            size_t processed_size = 0;
+
+            for (size_t i = 0; i < element_ids->size(); i++) {
+                int64_t element_id = (*element_ids)[i];
+
+                auto [doc_id, elem_idx] =
+                    array_offsets->ElementIDToDoc(element_id);
+
+                auto [chunk_id, chunk_offset] =
+                    segment_->get_chunk_by_offset(field_id_, doc_id);
+
+                auto pw = segment_->get_views_by_offsets<ArrayView>(
+                    op_ctx_, field_id_, chunk_id, {int32_t(chunk_offset)});
+                auto [array_vec, valid_data] = pw.get();
+
+                if ((!skip_func ||
+                     !skip_func(skip_index, field_id_, chunk_id)) &&
+                    (!namespace_skip_func_.has_value() ||
+                     !namespace_skip_func_.value()(chunk_id))) {
+                    // Extract element from ArrayView
+                    auto value = array_vec[0].get_data<ElementType>(elem_idx);
+                    bool is_valid = !valid_data.data() || valid_data[0];
+
+                    func.template operator()<FilterType::random>(
+                        &value,
+                        &is_valid,
+                        nullptr,
+                        1,
+                        res + processed_size,
+                        valid_res + processed_size,
+                        values...);
+                } else {
+                    // Chunk is skipped - handle exactly like ProcessDataByOffsets
+                    if (valid_data.size() > processed_size &&
+                        !valid_data[processed_size]) {
+                        res[processed_size] = valid_res[processed_size] = false;
+                    }
+                }
+
+                processed_size++;
+            }
+
+            return processed_size;
+        }
+
+        // Growing segment: not implemented yet
+        ThrowInfo(
+            ErrorCode::Unsupported,
+            "Element-level filtering not implemented for growing segments");
     }
 
     // Template parameter to control whether segment offsets are needed (for GIS functions)

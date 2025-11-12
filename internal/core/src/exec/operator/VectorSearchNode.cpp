@@ -102,6 +102,7 @@ PhyVectorSearchNode::GetOutput() {
                             search_result);
 
     search_result.total_data_cnt_ = final_view.size();
+    search_result.is_element_level_ = ph.is_element_level_;
 
     span.GetSpan()->SetAttribute(
         "result_count", static_cast<int>(search_result.seg_offsets_.size()));

@@ -167,6 +167,15 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
                          FieldId field_id,
                          const std::string& nested_path) const override;
 
+    const ArrayOffsets*
+    GetArrayOffsets(FieldId field_id) const override {
+        auto it = array_offsets_map_.find(field_id);
+        if (it != array_offsets_map_.end()) {
+            return it->second.get();
+        }
+        return nullptr;
+    }
+
     void
     BulkGetJsonData(milvus::OpContext* op_ctx,
                     FieldId field_id,
@@ -588,6 +597,14 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
     // whether the segment is sorted by the pk
     // 1. will skip index loading for primary key field
     bool is_sorted_by_pk_ = false;
+
+    // ArrayOffsets for element-level filtering on array fields
+    // field_id -> ArrayOffsets mapping
+    std::unordered_map<FieldId, std::shared_ptr<ArrayOffsets>>
+        array_offsets_map_;
+    // struct_name -> ArrayOffsets mapping (temporary during load)
+    std::unordered_map<std::string, std::shared_ptr<ArrayOffsets>>
+        struct_to_array_offsets_;
 };
 
 inline SegmentSealedUPtr

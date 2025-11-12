@@ -27,6 +27,7 @@
 #include "common/Common.h"
 #include "common/Types.h"
 #include "common/Exception.h"
+#include "common/ArrayOffsets.h"
 #include "segcore/SegmentInterface.h"
 
 namespace milvus {
@@ -301,6 +302,88 @@ class QueryContext : public Context {
         return plan_options_;
     }
 
+    // ========== Element-level Query Support ==========
+
+    /**
+     * @brief Set whether this is an element-level query
+     */
+    void
+    set_is_element_level_query(bool is_element_level) {
+        is_element_level_query_ = is_element_level;
+    }
+
+    /**
+     * @brief Check if this is an element-level query
+     */
+    bool
+    is_element_level_query() const {
+        return is_element_level_query_;
+    }
+
+    /**
+     * @brief Set the array field name for element-level query
+     * @param field_name Name of the array field (e.g., "products")
+     */
+    void
+    set_struct_name(const std::string& field_name) {
+        struct_name_ = field_name;
+    }
+
+    /**
+     * @brief Get the array field name
+     */
+    const std::string&
+    get_struct_name() const {
+        return struct_name_;
+    }
+
+    /**
+     * @brief Set array offsets for element-level operations
+     * @param offsets Shared pointer to ArrayOffsets
+     */
+    void
+    set_array_offsets(std::shared_ptr<ArrayOffsets> offsets) {
+        array_offsets_ = offsets;
+    }
+
+    /**
+     * @brief Get array offsets
+     * @return Shared pointer to ArrayOffsets, nullptr if not set
+     */
+    std::shared_ptr<ArrayOffsets>
+    get_array_offsets() const {
+        return array_offsets_;
+    }
+
+    /**
+     * @brief Set element-level bitset (for Pre-filter mode)
+     * @param bitset Element-level filter bitset
+     */
+    void
+    set_element_level_bitset(TargetBitmap&& bitset) {
+        element_level_bitset_ = std::move(bitset);
+    }
+
+    /**
+     * @brief Get element-level bitset
+     * @return Optional bitset, nullopt if not set
+     */
+    std::optional<TargetBitmap>
+    get_element_level_bitset() {
+        if (element_level_bitset_.has_value()) {
+            return std::move(element_level_bitset_.value());
+        }
+        return std::nullopt;
+    }
+
+    /**
+     * @brief Check if element-level bitset is available
+     */
+    bool
+    has_element_level_bitset() const {
+        return element_level_bitset_.has_value();
+    }
+
  private:
     folly::Executor* executor_;
     //folly::Executor::KeepAlive<> executor_keepalive_;
@@ -329,6 +412,12 @@ class QueryContext : public Context {
     int32_t consistency_level_ = 0;
 
     query::PlanOptions plan_options_;
+
+    // ========== Element-level Query State ==========
+    bool is_element_level_query_{false};
+    std::string struct_name_;
+    std::shared_ptr<ArrayOffsets> array_offsets_{nullptr};
+    std::optional<TargetBitmap> element_level_bitset_;
 };
 
 // Represent the state of one thread of query execution.

@@ -2642,6 +2642,33 @@ ChunkedSegmentSealedImpl::load_field_data_common(
 
     bool generated_interim_index = generate_interim_index(field_id, num_rows);
 
+    // Build ArrayOffsets for array fields that belong to a struct
+    if (data_type == DataType::ARRAY) {
+        auto& field_meta = schema_->operator[](field_id);
+        const std::string& field_name = field_meta.get_name().get();
+
+        // Check if this field belongs to a struct (field name contains '[' and ']')
+        if (field_name.find('[') != std::string::npos &&
+            field_name.find(']') != std::string::npos) {
+            // Extract struct name: "structA[field_name]" -> "structA"
+            std::string struct_name =
+                field_name.substr(0, field_name.find('['));
+
+            // Check if ArrayOffsets for this struct already exists
+            if (struct_to_array_offsets_.find(struct_name) ==
+                struct_to_array_offsets_.end()) {
+                // First field of this struct, build ArrayOffsets
+                auto array_offsets = std::make_shared<ArrayOffsets>(
+                    ArrayOffsets::BuildFromSegment(this, struct_name));
+                struct_to_array_offsets_[struct_name] = array_offsets;
+            }
+
+            // Map this field_id to the shared ArrayOffsets
+            array_offsets_map_[field_id] =
+                struct_to_array_offsets_[struct_name];
+        }
+    }
+
     std::unique_lock lck(mutex_);
     AssertInfo(!get_bit(field_data_ready_bitset_, field_id),
                "field {} data already loaded",

@@ -497,6 +497,13 @@ class SegmentGrowingImpl : public SegmentGrowing {
                   "RemoveJsonStats not implemented for SegmentGrowingImpl");
     }
 
+    const ArrayOffsets*
+    GetArrayOffsets(FieldId field_id) const override {
+        // TODO: Implement ArrayOffsets for SegmentGrowing
+        // For now, return nullptr (element-level filtering not supported for growing segment)
+        return nullptr;
+    }
+
  protected:
     int64_t
     num_chunk(FieldId field_id) const override;

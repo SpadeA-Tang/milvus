@@ -48,11 +48,27 @@ func newTestSchema(EnableDynamicField bool) *schemapb.CollectionSchema {
 		ElementType: schemapb.DataType_VarChar,
 	})
 
+	structArrayField := &schemapb.StructArrayFieldSchema{
+		FieldID: 132, Name: "struct_array", Fields: []*schemapb.FieldSchema{
+			{
+				FieldID: 133, Name: "struct_array[sub_str]", IsPrimaryKey: false, Description: "sub struct array field for string",
+				DataType:    schemapb.DataType_Array,
+				ElementType: schemapb.DataType_VarChar,
+			},
+			{
+				FieldID: 134, Name: "struct_array[sub_int]", IsPrimaryKey: false, Description: "sub struct array field for int",
+				DataType:    schemapb.DataType_Array,
+				ElementType: schemapb.DataType_Int32,
+			},
+		},
+	}
+
 	return &schemapb.CollectionSchema{
 		Name:               "test",
 		Description:        "schema for test used",
 		AutoID:             true,
 		Fields:             fields,
+		StructArrayFields:  []*schemapb.StructArrayFieldSchema{structArrayField},
 		EnableDynamicField: EnableDynamicField,
 	}
 }
@@ -2206,5 +2222,19 @@ func TestExpr_GISFunctionsInvalidParameterTypes(t *testing.T) {
 
 	for _, expr := range invalidTypeExprs {
 		assertInvalidExpr(t, schema, expr)
+	}
+}
+
+func TestExpr_StructElementFilter(t *testing.T) {
+	schema := newTestSchema(true)
+	helper, err := typeutil.CreateSchemaHelper(schema)
+	assert.NoError(t, err)
+
+	exprs := []string{
+		`struct_element_filter(struct_array, $[sub_str] == "1" || $[sub_int] > 1)`,
+	}
+
+	for _, expr := range exprs {
+		assertValidExpr(t, helper, expr)
 	}
 }
