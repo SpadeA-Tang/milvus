@@ -35,7 +35,6 @@ set(MILVUS_TEST_FILES
         init_gtest.cpp
         # test_loading.cpp
         # test_exec.cpp
-        test_element_filter.cpp
         # test_expr_materialized_view.cpp
         # test_float16.cpp
         # test_group_by.cpp
@@ -50,8 +49,7 @@ set(MILVUS_TEST_FILES
         # test_rust_result.cpp
         # test_storage_v2_index_raw_data.cpp
         # test_group_by_json.cpp
-        # test_rtree_index_wrapper.cpp
-        # test_rtree_index.cpp
+        test_element_filter.cpp
         )
 
 if ( NOT (INDEX_ENGINE STREQUAL "cardinal") )

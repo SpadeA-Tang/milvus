@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/cockroachdb/errors"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 
@@ -55,7 +56,7 @@ func (s *Server) serverID() int64 {
 	return 0
 }
 
-func (s *Server) getFieldNameByID(schema *schemapb.CollectionSchema, fieldID int64) (string, error) {
+func (s *Server) defaultIndexNameByID(schema *schemapb.CollectionSchema, fieldID int64) (string, error) {
 	for _, field := range schema.GetFields() {
 		if field.FieldID == fieldID {
 			return field.Name, nil
@@ -184,7 +185,7 @@ func (s *Server) CreateIndex(ctx context.Context, req *indexpb.CreateIndexReques
 
 	if req.GetIndexName() == "" {
 		indexes := s.meta.indexMeta.GetFieldIndexes(req.GetCollectionID(), req.GetFieldID(), req.GetIndexName())
-		fieldName, err := s.getFieldNameByID(schema, req.GetFieldID())
+		fieldName, err := s.defaultIndexNameByID(schema, req.GetFieldID())
 		if err != nil {
 			log.Warn("get field name from schema failed", zap.Int64("fieldID", req.GetFieldID()))
 			return merr.Status(err), nil
@@ -211,6 +212,14 @@ func (s *Server) CreateIndex(ctx context.Context, req *indexpb.CreateIndexReques
 
 	indexID, err := s.meta.indexMeta.CanCreateIndex(req, isJson)
 	if err != nil {
+		if errors.Is(err, errIndexOperationIgnored) {
+			log.Info("index already exists",
+				zap.Int64("collectionID", req.GetCollectionID()),
+				zap.Int64("fieldID", req.GetFieldID()),
+				zap.String("indexName", req.GetIndexName()))
+			metrics.IndexRequestCounter.WithLabelValues(metrics.SuccessLabel).Inc()
+			return merr.Success(), nil
+		}
 		log.Error("Check CanCreateIndex fail", zap.Error(err))
 		metrics.IndexRequestCounter.WithLabelValues(metrics.FailLabel).Inc()
 		return merr.Status(err), nil
@@ -1046,13 +1055,24 @@ func (s *Server) GetIndexInfos(ctx context.Context, req *indexpb.GetIndexInfoReq
 						segIdx.PartitionID, segIdx.SegmentID, segIdx.IndexFileKeys)
 					indexParams := s.meta.indexMeta.GetIndexParams(segIdx.CollectionID, segIdx.IndexID)
 					indexParams = append(indexParams, s.meta.indexMeta.GetTypeParams(segIdx.CollectionID, segIdx.IndexID)...)
+					// respect segment-based index type
+					for _, param := range indexParams {
+						if param.Key == common.IndexTypeKey && segIdx.IndexType != "" && segIdx.IndexType != param.Value {
+							param.Value = segIdx.IndexType
+							break
+						}
+					}
+					indexName := s.meta.indexMeta.GetIndexNameByID(segIdx.CollectionID, segIdx.IndexID)
+					if segIdx.IndexType != "" && segIdx.IndexType != indexName {
+						indexName = segIdx.IndexType
+					}
 					ret.SegmentInfo[segID].IndexInfos = append(ret.SegmentInfo[segID].IndexInfos,
 						&indexpb.IndexFilePathInfo{
 							SegmentID:           segID,
 							FieldID:             s.meta.indexMeta.GetFieldIDByIndexID(segIdx.CollectionID, segIdx.IndexID),
 							IndexID:             segIdx.IndexID,
 							BuildID:             segIdx.BuildID,
-							IndexName:           s.meta.indexMeta.GetIndexNameByID(segIdx.CollectionID, segIdx.IndexID),
+							IndexName:           indexName,
 							IndexParams:         indexParams,
 							IndexFilePaths:      indexFilePaths,
 							SerializedSize:      segIdx.IndexSerializedSize,

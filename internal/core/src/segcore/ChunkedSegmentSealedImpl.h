@@ -215,30 +215,17 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
     const Schema&
     get_schema() const override;
 
-    std::vector<SegOffset>
-    search_pk(milvus::OpContext* op_ctx,
-              const PkType& pk,
-              Timestamp timestamp) const override;
-
-    template <typename Condition>
-    std::vector<SegOffset>
-    search_sorted_pk(milvus::OpContext* op_ctx,
-                     const PkType& pk,
-                     Condition condition) const;
-
     void
     pk_range(milvus::OpContext* op_ctx,
              proto::plan::OpType op,
              const PkType& pk,
              BitsetTypeView& bitset) const override;
 
-    template <typename Condition>
     void
     search_sorted_pk_range(milvus::OpContext* op_ctx,
                            proto::plan::OpType op,
                            const PkType& pk,
-                           BitsetTypeView& bitset,
-                           Condition condition) const;
+                           BitsetTypeView& bitset) const;
 
     std::unique_ptr<DataArray>
     get_vector(milvus::OpContext* op_ctx,
@@ -289,9 +276,6 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
     int64_t
     num_rows_until_chunk(FieldId field_id, int64_t chunk_id) const override;
 
-    std::string
-    debug() const override;
-
     SegcoreError
     Delete(int64_t size,
            const IdArray* pks,
@@ -327,6 +311,11 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
         return schema_->get_fields().find(field_id) !=
                schema_->get_fields().end();
     }
+
+    void
+    prefetch_chunks(milvus::OpContext* op_ctx,
+                    FieldId field_id,
+                    const std::vector<int64_t>& chunk_ids) const override;
 
  protected:
     // blob and row_count

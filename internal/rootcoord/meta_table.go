@@ -52,10 +52,14 @@ import (
 
 var (
 	errIgnoredAlterAlias       = errors.New("ignored alter alias")       // alias already created on current collection, so it can be ignored.
+	errIgnoredAlterCollection  = errors.New("ignored alter collection")  // collection already created, so it can be ignored.
+	errIgnoredAlterDatabase    = errors.New("ignored alter database")    // database already created, so it can be ignored.
 	errIgnoredCreateCollection = errors.New("ignored create collection") // create collection with same schema, so it can be ignored.
 	errIgnoerdCreatePartition  = errors.New("ignored create partition")  // partition is already exist, so it can be ignored.
 	errIgnoredDropCollection   = errors.New("ignored drop collection")   // drop collection or database not found, so it can be ignored.
 	errIgnoredDropPartition    = errors.New("ignored drop partition")    // drop partition not found, so it can be ignored.
+
+	errAlterCollectionNotFound = errors.New("alter collection not found") // alter collection not found, so it can be ignored.
 )
 
 type MetaTableChecker interface {
@@ -100,7 +104,7 @@ type IMetaTable interface {
 	GetPChannelInfo(ctx context.Context, pchannel string) *rootcoordpb.GetPChannelInfoResponse
 	AddPartition(ctx context.Context, partition *model.Partition) error
 	DropPartition(ctx context.Context, collectionID UniqueID, partitionID UniqueID, ts Timestamp) error
-	RemovePartition(ctx context.Context, dbID int64, collectionID UniqueID, partitionID UniqueID, ts Timestamp) error
+	RemovePartition(ctx context.Context, collectionID UniqueID, partitionID UniqueID, ts Timestamp) error
 
 	// Alias
 	AlterAlias(ctx context.Context, result message.BroadcastResultAlterAliasMessageV2) error
@@ -108,8 +112,8 @@ type IMetaTable interface {
 	DescribeAlias(ctx context.Context, dbName string, alias string, ts Timestamp) (string, error)
 	ListAliases(ctx context.Context, dbName string, collectionName string, ts Timestamp) ([]string, error)
 
-	AlterCollection(ctx context.Context, oldColl *model.Collection, newColl *model.Collection, ts Timestamp, fieldModify bool) error
-	RenameCollection(ctx context.Context, dbName string, oldName string, newDBName string, newName string, ts Timestamp) error
+	AlterCollection(ctx context.Context, result message.BroadcastResultAlterCollectionMessageV2) error
+	CheckIfCollectionRenamable(ctx context.Context, dbName string, oldName string, newDBName string, newName string) error
 	GetGeneralCount(ctx context.Context) int
 
 	// TODO: it'll be a big cost if we handle the time travel logic, since we should always list all aliases in catalog.
@@ -349,6 +353,7 @@ func (mt *MetaTable) CheckIfDatabaseCreatable(ctx context.Context, req *milvuspb
 	defer mt.ddLock.RUnlock()
 
 	if _, ok := mt.dbName2Meta[dbName]; ok || mt.aliases.exist(dbName) || mt.names.exist(dbName) {
+		// TODO: idempotency check here.
 		return fmt.Errorf("database already exist: %s", dbName)
 	}
 
@@ -372,12 +377,12 @@ func (mt *MetaTable) CreateDatabase(ctx context.Context, db *model.Database, ts 
 
 func (mt *MetaTable) createDatabasePrivate(ctx context.Context, db *model.Database, ts typeutil.Timestamp) error {
 	dbName := db.Name
-	if err := mt.catalog.CreateDatabase(ctx, db, ts); err != nil {
+	if err := hookutil.CreateEZByDBProperties(db.Properties); err != nil {
 		return err
 	}
 
-	// Call back cipher plugin when creating database succeeded
-	if err := hookutil.CreateEZByDBProperties(db.Properties); err != nil {
+	if err := mt.catalog.CreateDatabase(ctx, db, ts); err != nil {
+		hookutil.RemoveEZByDBProperties(db.Properties) // ignore the error since create database failed
 		return err
 	}
 
@@ -551,6 +556,8 @@ func (mt *MetaTable) DropCollection(ctx context.Context, collectionID UniqueID, 
 
 	clone := coll.Clone()
 	clone.State = pb.CollectionState_CollectionDropping
+	clone.UpdateTimestamp = ts
+
 	ctx1 := contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
 	if err := mt.catalog.AlterCollection(ctx1, coll, clone, metastore.MODIFY, ts, false); err != nil {
 		return err
@@ -611,6 +618,9 @@ func (mt *MetaTable) RemoveCollection(ctx context.Context, collectionID UniqueID
 	if !ok {
 		log.Ctx(ctx).Warn("not found collection, skip remove", zap.Int64("collectionID", collectionID))
 		return nil
+	}
+	if coll.State != pb.CollectionState_CollectionDropping {
+		return fmt.Errorf("remove collection which state is not dropping, collectionID: %d, state: %s", collectionID, coll.State.String())
 	}
 
 	ctx1 := contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
@@ -923,22 +933,56 @@ func (mt *MetaTable) ListCollectionPhysicalChannels(ctx context.Context) map[typ
 	return chanMap
 }
 
-func (mt *MetaTable) AlterCollection(ctx context.Context, oldColl *model.Collection, newColl *model.Collection, ts Timestamp, fieldModify bool) error {
+// AlterCollection is used to alter a collection in the meta table.
+func (mt *MetaTable) AlterCollection(ctx context.Context, result message.BroadcastResultAlterCollectionMessageV2) error {
+	header := result.Message.Header()
+	body := result.Message.MustBody()
+
 	mt.ddLock.Lock()
 	defer mt.ddLock.Unlock()
 
-	ctx1 := contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
-	if err := mt.catalog.AlterCollection(ctx1, oldColl, newColl, metastore.MODIFY, ts, fieldModify); err != nil {
-		return err
+	coll, ok := mt.collID2Meta[header.CollectionId]
+	if !ok {
+		// collection not exists, return directly.
+		return errAlterCollectionNotFound
 	}
-	mt.collID2Meta[oldColl.CollectionID] = newColl
-	log.Ctx(ctx).Info("alter collection finished", zap.Int64("collectionID", oldColl.CollectionID), zap.Uint64("ts", ts))
+
+	oldColl := coll.Clone()
+	newColl := coll.Clone()
+	newColl.ApplyUpdates(header, body)
+	fieldModify := false
+	dbChanged := false
+	for _, path := range header.UpdateMask.GetPaths() {
+		switch path {
+		case message.FieldMaskCollectionSchema:
+			fieldModify = true
+		case message.FieldMaskDB:
+			dbChanged = true
+		}
+	}
+	newColl.UpdateTimestamp = result.GetMaxTimeTick()
+
+	ctx1 := contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
+	if !dbChanged {
+		if err := mt.catalog.AlterCollection(ctx1, oldColl, newColl, metastore.MODIFY, newColl.UpdateTimestamp, fieldModify); err != nil {
+			return err
+		}
+	} else {
+		if err := mt.catalog.AlterCollectionDB(ctx1, oldColl, newColl, newColl.UpdateTimestamp); err != nil {
+			return err
+		}
+	}
+
+	mt.names.remove(oldColl.DBName, oldColl.Name)
+	mt.names.insert(newColl.DBName, newColl.Name, newColl.CollectionID)
+	mt.collID2Meta[header.CollectionId] = newColl
+	log.Ctx(ctx).Info("alter collection finished", zap.Bool("dbChanged", dbChanged), zap.Int64("collectionID", oldColl.CollectionID), zap.Uint64("ts", newColl.UpdateTimestamp))
 	return nil
 }
 
-func (mt *MetaTable) RenameCollection(ctx context.Context, dbName string, oldName string, newDBName string, newName string, ts Timestamp) error {
-	mt.ddLock.Lock()
-	defer mt.ddLock.Unlock()
+func (mt *MetaTable) CheckIfCollectionRenamable(ctx context.Context, dbName string, oldName string, newDBName string, newName string) error {
+	mt.ddLock.RLock()
+	defer mt.ddLock.RUnlock()
 
 	ctx = contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
 	log := log.Ctx(ctx).With(
@@ -955,8 +999,21 @@ func (mt *MetaTable) RenameCollection(ctx context.Context, dbName string, oldNam
 		return fmt.Errorf("target database:%s not found", newDBName)
 	}
 
-	// check if new name already belongs to another existing collection
-	coll, err := mt.getCollectionByNameInternal(ctx, newDBName, newName, ts)
+	// old collection should not be an alias
+	_, ok = mt.aliases.get(dbName, oldName)
+	if ok {
+		log.Warn("unsupported use a alias to rename collection")
+		return fmt.Errorf("unsupported use an alias to rename collection, alias:%s", oldName)
+	}
+
+	_, ok = mt.aliases.get(newDBName, newName)
+	if ok {
+		log.Warn("cannot rename collection to an existing alias")
+		return fmt.Errorf("cannot rename collection to an existing alias: %s", newName)
+	}
+
+	// check new collection already exists
+	coll, err := mt.getCollectionByNameInternal(ctx, newDBName, newName, typeutil.MaxTimestamp)
 	if coll != nil {
 		log.Warn("duplicated new collection name, already taken by another collection or alias.")
 		return fmt.Errorf("duplicated new collection name %s:%s with other collection name or alias", newDBName, newName)
@@ -967,34 +1024,17 @@ func (mt *MetaTable) RenameCollection(ctx context.Context, dbName string, oldNam
 	}
 
 	// get old collection meta
-	oldColl, err := mt.getCollectionByNameInternal(ctx, dbName, oldName, ts)
+	oldColl, err := mt.getCollectionByNameInternal(ctx, dbName, oldName, typeutil.MaxTimestamp)
 	if err != nil {
 		log.Warn("fail to find collection with old name", zap.Error(err))
 		return err
 	}
 
-	newColl := oldColl.Clone()
-	newColl.Name = newName
-	newColl.DBName = dbName
-	newColl.DBID = targetDB.ID
-	if oldColl.DBID == newColl.DBID {
-		if err := mt.catalog.AlterCollection(ctx, oldColl, newColl, metastore.MODIFY, ts, false); err != nil {
-			log.Warn("alter collection by catalog failed", zap.Error(err))
-			return err
-		}
-	} else {
-		if err := mt.catalog.AlterCollectionDB(ctx, oldColl, newColl, ts); err != nil {
-			log.Warn("alter collectionDB by catalog failed", zap.Error(err))
-			return err
-		}
+	// unsupported rename collection while the collection has aliases
+	aliases := mt.listAliasesByID(oldColl.CollectionID)
+	if len(aliases) > 0 && oldColl.DBID != targetDB.ID {
+		return errors.New("fail to rename db name, must drop all aliases of this collection before rename")
 	}
-
-	mt.names.insert(newDBName, newName, oldColl.CollectionID)
-	mt.names.remove(dbName, oldName)
-
-	mt.collID2Meta[oldColl.CollectionID] = newColl
-
-	log.Info("rename collection finished")
 	return nil
 }
 
@@ -1113,18 +1153,15 @@ func (mt *MetaTable) DropPartition(ctx context.Context, collectionID UniqueID, p
 	return nil
 }
 
-func (mt *MetaTable) RemovePartition(ctx context.Context, dbID int64, collectionID UniqueID, partitionID UniqueID, ts Timestamp) error {
+func (mt *MetaTable) RemovePartition(ctx context.Context, collectionID UniqueID, partitionID UniqueID, ts Timestamp) error {
 	mt.ddLock.Lock()
 	defer mt.ddLock.Unlock()
 
-	ctx1 := contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
-	if err := mt.catalog.DropPartition(ctx1, dbID, collectionID, partitionID, ts); err != nil {
-		return err
-	}
 	coll, ok := mt.collID2Meta[collectionID]
 	if !ok {
 		return nil
 	}
+
 	loc := -1
 	for idx, part := range coll.Partitions {
 		if part.PartitionID == partitionID {
@@ -1132,9 +1169,20 @@ func (mt *MetaTable) RemovePartition(ctx context.Context, dbID int64, collection
 			break
 		}
 	}
-	if loc != -1 {
-		coll.Partitions = append(coll.Partitions[:loc], coll.Partitions[loc+1:]...)
+	if loc == -1 {
+		log.Ctx(ctx).Warn("not found partition, skip remove", zap.Int64("collection", collectionID), zap.Int64("partition", partitionID))
+		return nil
 	}
+	partition := coll.Partitions[loc]
+	if partition.State != pb.PartitionState_PartitionDropping {
+		return fmt.Errorf("remove partition which state is not dropping, collection: %d, partition: %d, state: %s", collectionID, partitionID, partition.State.String())
+	}
+
+	ctx1 := contextutil.WithTenantID(ctx, Params.CommonCfg.ClusterName.GetValue())
+	if err := mt.catalog.DropPartition(ctx1, coll.DBID, collectionID, partitionID, ts); err != nil {
+		return err
+	}
+	coll.Partitions = append(coll.Partitions[:loc], coll.Partitions[loc+1:]...)
 	log.Ctx(ctx).Info("remove partition", zap.Int64("collection", collectionID), zap.Int64("partition", partitionID), zap.Uint64("ts", ts))
 	return nil
 }

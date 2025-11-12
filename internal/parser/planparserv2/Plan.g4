@@ -1,7 +1,8 @@
 grammar Plan;
 
 expr:
-  Identifier (op1=(ADD | SUB) INTERVAL interval_string=StringLiteral)? op2=(LT | LE | GT | GE | EQ | NE) ISO compare_string=StringLiteral # TimestamptzCompare
+  Identifier (op1=(ADD | SUB) INTERVAL interval_string=StringLiteral)? op2=(LT | LE | GT | GE | EQ | NE) ISO compare_string=StringLiteral # TimestamptzCompareForward
+	| ISO compare_string=StringLiteral op2=(LT | LE | GT | GE | EQ | NE) Identifier (op1=(ADD | SUB) INTERVAL interval_string=StringLiteral)? # TimestamptzCompareReverse
 	| IntegerConstant											                     # Integer
 	| FloatingConstant										                     # Floating
 	| BooleanConstant										                     # Boolean
@@ -15,10 +16,10 @@ expr:
 	| EmptyArray                                                                 # EmptyArray
 	| EXISTS expr                                                                # Exists
 	| expr LIKE StringLiteral                                                    # Like
-	| TEXTMATCH'('Identifier',' StringLiteral')'                                 # TextMatch
+	| TEXTMATCH'('Identifier',' StringLiteral (',' textMatchOption)? ')'         # TextMatch
 	| PHRASEMATCH'('Identifier',' StringLiteral (',' expr)? ')'       			 # PhraseMatch
 	| RANDOMSAMPLE'(' expr ')'						     						 # RandomSample
-	| StructElementFilter'('Identifier',' expr')'                                # StructElementFilter
+	| ElementFilter'('Identifier',' expr')'                                	     # ElementFilter
 	| expr POW expr											                     # Power
 	| op = (ADD | SUB | BNOT | NOT) expr					                     # Unary
 //	| '(' typeName ')' expr									                     # Cast
@@ -51,6 +52,9 @@ expr:
 	| (Identifier | JSONIdentifier) ISNULL                                                          # IsNull
 	| (Identifier | JSONIdentifier) ISNOTNULL                                                       # IsNotNull;
 
+textMatchOption:
+	MINIMUM_SHOULD_MATCH ASSIGN IntegerConstant;
+
 // typeName: ty = (BOOL | INT8 | INT16 | INT32 | INT64 | FLOAT | DOUBLE);
 
 // BOOL: 'bool';
@@ -77,6 +81,8 @@ PHRASEMATCH: 'phrase_match'|'PHRASE_MATCH';
 RANDOMSAMPLE: 'random_sample' | 'RANDOM_SAMPLE';
 INTERVAL: 'interval' | 'INTERVAL';
 ISO: 'iso' | 'ISO';
+MINIMUM_SHOULD_MATCH: 'minimum_should_match' | 'MINIMUM_SHOULD_MATCH';
+ASSIGN: '=';
 
 ADD: '+';
 SUB: '-';
@@ -110,7 +116,7 @@ ArrayContains: 'array_contains' | 'ARRAY_CONTAINS';
 ArrayContainsAll: 'array_contains_all' | 'ARRAY_CONTAINS_ALL';
 ArrayContainsAny: 'array_contains_any' | 'ARRAY_CONTAINS_ANY';
 ArrayLength: 'array_length' | 'ARRAY_LENGTH';
-StructElementFilter: 'struct_element_filter' | 'STRUCT_ELEMENT_FILTER';
+ElementFilter: 'element_filter' | 'ELEMENT_FILTER';
 
 STEuqals:'st_equals' | 'ST_EQUALS';
 STTouches:'st_touches' | 'ST_TOUCHES';

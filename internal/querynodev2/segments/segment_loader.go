@@ -66,7 +66,8 @@ import (
 )
 
 const (
-	UsedDiskMemoryRatio = 4
+	UsedDiskMemoryRatio      = 4
+	UsedDiskMemoryRatioAisaq = 64
 )
 
 var errRetryTimerNotified = errors.New("retry timer notified")
@@ -374,10 +375,6 @@ func (loader *segmentLoader) Load(ctx context.Context,
 				return errors.Wrap(err, "At LoadBloomFilter")
 			}
 			segment.SetBloomFilter(bfs)
-		}
-
-		if err = segment.FinishLoad(); err != nil {
-			return errors.Wrap(err, "At FinishLoad")
 		}
 
 		if segment.Level() != datapb.SegmentLevel_L0 {
@@ -962,6 +959,10 @@ func (loader *segmentLoader) loadSealedSegment(ctx context.Context, loadInfo *qu
 	}
 	loadRawDataSpan := tr.RecordSpan()
 
+	if err = segment.FinishLoad(); err != nil {
+		return errors.Wrap(err, "At FinishLoad")
+	}
+
 	// load text indexes.
 	for _, info := range textIndexes {
 		if err := segment.LoadTextIndex(ctx, info, schemaHelper); err != nil {
@@ -1041,6 +1042,9 @@ func (loader *segmentLoader) LoadSegment(ctx context.Context,
 	} else {
 		if err := segment.LoadMultiFieldData(ctx); err != nil {
 			return err
+		}
+		if err := segment.FinishLoad(); err != nil {
+			return errors.Wrap(err, "At FinishLoad")
 		}
 	}
 
@@ -1951,7 +1955,14 @@ func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 					fieldIndexInfo.GetBuildID())
 			}
 
-			if !multiplyFactor.TieredEvictionEnabled {
+			needWarmup := false
+			if isVectorType {
+				needWarmup = paramtable.Get().QueryNodeCfg.TieredWarmupVectorIndex.GetValue() == "sync"
+			} else {
+				needWarmup = paramtable.Get().QueryNodeCfg.TieredWarmupScalarIndex.GetValue() == "sync"
+			}
+
+			if !multiplyFactor.TieredEvictionEnabled || needWarmup {
 				indexMemorySize += estimateResult.MaxMemoryCost
 				segDiskLoadingSize += estimateResult.MaxDiskCost
 			}
@@ -2002,6 +2013,7 @@ func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 		var legacyNilSchema bool
 		mmapEnabled := true
 		isVectorType := true
+		needWarmup := false
 
 		for _, fieldID := range fieldIDs {
 			// get field schema from fieldID
@@ -2022,6 +2034,11 @@ func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 
 			supportInterimIndexDataType = supportInterimIndexDataType || SupportInterimIndexDataType(fieldSchema.GetDataType())
 			isVectorType = isVectorType && typeutil.IsVectorType(fieldSchema.GetDataType())
+			if isVectorType {
+				needWarmup = needWarmup || paramtable.Get().QueryNodeCfg.TieredWarmupVectorIndex.GetValue() == "sync"
+			} else {
+				needWarmup = needWarmup || paramtable.Get().QueryNodeCfg.TieredWarmupScalarIndex.GetValue() == "sync"
+			}
 			mmapEnabled = mmapEnabled && isDataMmapEnable(fieldSchema)
 			containsTimestampField = containsTimestampField || DoubleMemorySystemField(fieldSchema.GetFieldID())
 			doubleMomoryDataField = doubleMomoryDataField || DoubleMemoryDataType(fieldSchema.GetDataType())
@@ -2031,7 +2048,7 @@ func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 			continue
 		}
 
-		if !multiplyFactor.TieredEvictionEnabled {
+		if !multiplyFactor.TieredEvictionEnabled || needWarmup {
 			interimIndexEnable := multiplyFactor.EnableInterminSegmentIndex && !isGrowingMmapEnable() && supportInterimIndexDataType
 			if interimIndexEnable {
 				segMemoryLoadingSize += uint64(float64(binlogSize) * multiplyFactor.tempSegmentIndexFactor)
@@ -2041,11 +2058,11 @@ func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 		if isVectorType {
 			mmapVectorField := paramtable.Get().QueryNodeCfg.MmapVectorField.GetAsBool()
 			if mmapVectorField {
-				if !multiplyFactor.TieredEvictionEnabled {
+				if !multiplyFactor.TieredEvictionEnabled || needWarmup {
 					segDiskLoadingSize += binlogSize
 				}
 			} else {
-				if !multiplyFactor.TieredEvictionEnabled {
+				if !multiplyFactor.TieredEvictionEnabled || needWarmup {
 					segMemoryLoadingSize += binlogSize
 				}
 			}
@@ -2061,15 +2078,15 @@ func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 		}
 
 		if !mmapEnabled {
-			if !multiplyFactor.TieredEvictionEnabled {
+			if !multiplyFactor.TieredEvictionEnabled || needWarmup {
 				segMemoryLoadingSize += binlogSize
 				if doubleMomoryDataField {
 					segMemoryLoadingSize += binlogSize
 				}
 			}
 		} else {
-			if !multiplyFactor.TieredEvictionEnabled {
-				segDiskLoadingSize += uint64(getBinlogDataDiskSize(fieldBinlog))
+			if !multiplyFactor.TieredEvictionEnabled || needWarmup {
+				segDiskLoadingSize += uint64(getBinlogDataMemorySize(fieldBinlog))
 			}
 		}
 	}
