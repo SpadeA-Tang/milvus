@@ -23,6 +23,9 @@
 #include <memory>
 #include <vector>
 #include <cmath>
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <sstream>
 
 #include "cachinglayer/CacheSlot.h"
 #include "cachinglayer/Manager.h"
@@ -42,6 +45,42 @@ namespace milvus {
 using GroupChunkVector = std::vector<std::shared_ptr<GroupChunk>>;
 
 using namespace milvus::cachinglayer;
+
+// Helper function to get stacktrace
+inline std::string
+GetStackTrace() {
+    const int max_frames = 64;
+    void* frames[max_frames];
+    int frame_count = backtrace(frames, max_frames);
+    char** symbols = backtrace_symbols(frames, frame_count);
+
+    std::ostringstream oss;
+    for (int i = 0; i < frame_count; ++i) {
+        // Try to demangle C++ symbols
+        std::string symbol(symbols[i]);
+        size_t begin = symbol.find('(');
+        size_t end = symbol.find('+', begin);
+
+        if (begin != std::string::npos && end != std::string::npos &&
+            begin < end) {
+            std::string mangled = symbol.substr(begin + 1, end - begin - 1);
+            int status;
+            char* demangled =
+                abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status);
+            if (status == 0 && demangled) {
+                oss << "  [" << i << "] " << symbol.substr(0, begin + 1)
+                    << demangled << symbol.substr(end) << "\n";
+                free(demangled);
+            } else {
+                oss << "  [" << i << "] " << symbol << "\n";
+            }
+        } else {
+            oss << "  [" << i << "] " << symbol << "\n";
+        }
+    }
+    free(symbols);
+    return oss.str();
+}
 
 // ChunkedColumnGroup represents a collection of group chunks
 class ChunkedColumnGroup {
@@ -272,6 +311,8 @@ class ProxyChunkColumn : public ChunkedColumnInterface {
     PinWrapper<SpanBase>
     Span(milvus::OpContext* op_ctx, int64_t chunk_id) const override {
         if (!IsChunkedColumnDataType(data_type_)) {
+            std::string stacktrace_str = GetStackTrace();
+            LOG_INFO("debug=== backtrace: {}", stacktrace_str);
             ThrowInfo(ErrorCode::Unsupported,
                       "[StorageV2] Span only supported for ChunkedColumn");
         }

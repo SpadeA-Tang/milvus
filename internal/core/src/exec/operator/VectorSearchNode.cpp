@@ -92,6 +92,7 @@ PhyVectorSearchNode::GetOutput() {
     milvus::BitsetView final_view((uint8_t*)col_input->GetRawData(),
                                   col_input->size());
     auto op_context = query_context_->get_op_context();
+    // todo(SpadeA): need to pass is_element_level to make check more rigorously?
     segment_->vector_search(search_info_,
                             src_data,
                             src_offsets,

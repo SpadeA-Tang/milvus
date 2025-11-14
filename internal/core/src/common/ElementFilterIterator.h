@@ -70,7 +70,8 @@ class ElementFilterIterator : public VectorIterator {
      *
      * @return true if more elements are available, false otherwise
      */
-    bool HasNext() override;
+    bool
+    HasNext() override;
 
     /**
      * @brief Get the next filtered element
@@ -78,7 +79,8 @@ class ElementFilterIterator : public VectorIterator {
      * @return std::optional containing (element_id, distance) if available,
      *         std::nullopt otherwise
      */
-    std::optional<std::pair<int64_t, float>> Next() override;
+    std::optional<std::pair<int64_t, float>>
+    Next() override;
 
  private:
     /**
@@ -90,7 +92,8 @@ class ElementFilterIterator : public VectorIterator {
      *   3. Filter elements based on evaluation results
      *   4. Cache passing elements in filtered_buffer_
      */
-    void FetchAndFilterBatch();
+    void
+    FetchAndFilterBatch();
 
     // Base iterator to fetch elements from
     std::shared_ptr<VectorIterator> base_iterator_;

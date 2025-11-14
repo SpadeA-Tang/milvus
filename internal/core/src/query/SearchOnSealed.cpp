@@ -150,6 +150,10 @@ SearchOnSealedColumn(const Schema& schema,
                              search_info.metric_type_,
                              search_info.round_decimal_);
 
+    if (data_type == DataType::VECTOR_ARRAY && query_offsets == nullptr) {
+        // embedding-search-embedding on embedding list pattern
+        data_type = element_type;
+    }
     auto offset = 0;
     for (int i = 0; i < num_chunk; ++i) {
         auto pw = column->DataOfChunk(op_context, i);

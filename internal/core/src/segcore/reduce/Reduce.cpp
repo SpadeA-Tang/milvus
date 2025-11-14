@@ -451,6 +451,15 @@ ReduceHelper::GetSearchResultDataSlice(const int slice_index,
     // reserve space for distances
     search_result_data->mutable_scores()->Resize(result_count, 0);
 
+    for (auto search_result : search_results_) {
+        if (search_result->is_element_level_) {
+            search_result_data->mutable_element_indices()
+                ->mutable_data()
+                ->Resize(result_count, -1);
+            break;
+        }
+    }
+
     // fill pks and distances
     for (auto qi = nq_begin; qi < nq_end; qi++) {
         int64_t topk_count = 0;
@@ -499,6 +508,13 @@ ReduceHelper::GetSearchResultDataSlice(const int slice_index,
 
                 search_result_data->mutable_scores()->Set(
                     loc, search_result->distances_[ki]);
+
+                if (search_result->is_element_level_) {
+                    search_result_data->mutable_element_indices()
+                        ->mutable_data()
+                        ->Set(loc, search_result->element_indices_[ki]);
+                }
+
                 // set result offset to fill output fields data
                 result_pairs[loc] = {&search_result->output_fields_data_, ki};
             }

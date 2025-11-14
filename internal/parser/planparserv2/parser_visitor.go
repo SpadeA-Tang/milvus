@@ -752,7 +752,7 @@ func (v *ParserVisitor) VisitTerm(ctx *parser.TermContext) interface{} {
 	}
 }
 
-func (v *ParserVisitor) getChildColumnInfo(identifier, child antlr.TerminalNode) (*planpb.ColumnInfo, error) {
+func (v *ParserVisitor) getChildColumnInfo(identifier, child, structSubField antlr.TerminalNode) (*planpb.ColumnInfo, error) {
 	if identifier != nil {
 		childExpr, err := v.translateIdentifier(identifier.GetText())
 		if err != nil {
@@ -761,7 +761,47 @@ func (v *ParserVisitor) getChildColumnInfo(identifier, child antlr.TerminalNode)
 		return toColumnInfo(childExpr), nil
 	}
 
+	if structSubField != nil {
+		return v.getColumnInfoFromStructSubField(structSubField.GetText())
+	}
+
 	return v.getColumnInfoFromJSONIdentifier(child.GetText())
+}
+
+func (v *ParserVisitor) getColumnInfoFromStructSubField(tokenText string) (*planpb.ColumnInfo, error) {
+	// Remove $[ prefix and ] suffix
+	if len(tokenText) < 4 || tokenText[:2] != "$[" || tokenText[len(tokenText)-1] != ']' {
+		return nil, fmt.Errorf("invalid struct sub-field syntax: %s", tokenText)
+	}
+	fieldName := tokenText[2 : len(tokenText)-1]
+
+	// Check if we're inside an ElementFilter context
+	if v.currentStructArrayField == "" {
+		return nil, fmt.Errorf("$[%s] syntax can only be used inside ElementFilter", fieldName)
+	}
+
+	// Construct full field name for struct array field
+	fullFieldName := v.currentStructArrayField + "[" + fieldName + "]"
+	// Get the struct array field info
+	field, err := v.schema.GetFieldFromName(fullFieldName)
+	if err != nil {
+		return nil, fmt.Errorf("array field not found: %s, error: %s", fullFieldName, err)
+	}
+
+	// In element-level context, data_type should be the element type
+	elementType := field.GetElementType()
+
+	return &planpb.ColumnInfo{
+		FieldId:         field.FieldID,
+		DataType:        elementType, // Use element type, not storage type
+		IsPrimaryKey:    field.IsPrimaryKey,
+		IsAutoID:        field.AutoID,
+		IsPartitionKey:  field.IsPartitionKey,
+		IsClusteringKey: field.IsClusteringKey,
+		ElementType:     elementType,
+		Nullable:        field.GetNullable(),
+		IsElementLevel:  true, // Mark as element-level access
+	}, nil
 }
 
 // VisitCall parses the expr to call plan.
@@ -791,7 +831,7 @@ func (v *ParserVisitor) VisitCall(ctx *parser.CallContext) interface{} {
 
 // VisitRange translates expr to range plan.
 func (v *ParserVisitor) VisitRange(ctx *parser.RangeContext) interface{} {
-	columnInfo, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier())
+	columnInfo, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier(), ctx.StructSubFieldIdentifier())
 	if err != nil {
 		return err
 	}
@@ -872,7 +912,7 @@ func (v *ParserVisitor) VisitRange(ctx *parser.RangeContext) interface{} {
 
 // VisitReverseRange parses the expression like "1 > a > 0".
 func (v *ParserVisitor) VisitReverseRange(ctx *parser.ReverseRangeContext) interface{} {
-	columnInfo, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier())
+	columnInfo, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier(), ctx.StructSubFieldIdentifier())
 	if err != nil {
 		return err
 	}
@@ -1384,7 +1424,7 @@ func (v *ParserVisitor) VisitEmptyArray(ctx *parser.EmptyArrayContext) interface
 }
 
 func (v *ParserVisitor) VisitIsNotNull(ctx *parser.IsNotNullContext) interface{} {
-	column, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier())
+	column, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier(), nil)
 	if err != nil {
 		return err
 	}
@@ -1424,7 +1464,7 @@ func (v *ParserVisitor) VisitIsNotNull(ctx *parser.IsNotNullContext) interface{}
 }
 
 func (v *ParserVisitor) VisitIsNull(ctx *parser.IsNullContext) interface{} {
-	column, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier())
+	column, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier(), nil)
 	if err != nil {
 		return err
 	}
@@ -1627,7 +1667,7 @@ func (v *ParserVisitor) VisitJSONContainsAny(ctx *parser.JSONContainsAnyContext)
 }
 
 func (v *ParserVisitor) VisitArrayLength(ctx *parser.ArrayLengthContext) interface{} {
-	columnInfo, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier())
+	columnInfo, err := v.getChildColumnInfo(ctx.Identifier(), ctx.JSONIdentifier(), nil)
 	if err != nil {
 		return err
 	}

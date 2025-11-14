@@ -66,7 +66,8 @@ struct ArrayOffsets {
     int64_t
     GetDocElementCount(int64_t doc_id) const {
         AssertInfo(doc_id >= 0 && doc_id < GetDocCount(),
-                   "doc_id out of range: {}", doc_id);
+                   "doc_id out of range: {}",
+                   doc_id);
         return offsets[doc_id + 1] - offsets[doc_id];
     }
 
@@ -84,7 +85,8 @@ struct ArrayOffsets {
     ElementIDToDoc(int64_t element_id) const {
         AssertInfo(!offsets.empty(), "ArrayOffsets not initialized");
         AssertInfo(element_id >= 0 && element_id < GetTotalElementCount(),
-                   "element_id out of range: {}", element_id);
+                   "element_id out of range: {}",
+                   element_id);
 
         // Binary search to find which doc this element belongs to
         auto it = std::upper_bound(offsets.begin(), offsets.end(), element_id);
@@ -106,12 +108,13 @@ struct ArrayOffsets {
     int64_t
     DocToElementID(int64_t doc_id, int64_t element_index) const {
         AssertInfo(doc_id >= 0 && doc_id < GetDocCount(),
-                   "doc_id out of range: {}", doc_id);
-        AssertInfo(element_index >= 0 &&
-                       element_index < GetDocElementCount(doc_id),
-                   "element_index out of range for doc {}: {}",
-                   doc_id,
-                   element_index);
+                   "doc_id out of range: {}",
+                   doc_id);
+        AssertInfo(
+            element_index >= 0 && element_index < GetDocElementCount(doc_id),
+            "element_index out of range for doc {}: {}",
+            doc_id,
+            element_index);
 
         return offsets[doc_id] + element_index;
     }

@@ -22,9 +22,8 @@ namespace milvus {
 
 ArrayOffsets
 ArrayOffsets::BuildFromSegment(const void* segment,
-                                const std::string& array_field_name) {
-    auto seg =
-        static_cast<const segcore::SegmentInternalInterface*>(segment);
+                               const std::string& array_field_name) {
+    auto seg = static_cast<const segcore::SegmentInternalInterface*>(segment);
 
     // TODO: Full implementation requires:
     // 1. Find StructArrayFieldSchema from schema using array_field_name

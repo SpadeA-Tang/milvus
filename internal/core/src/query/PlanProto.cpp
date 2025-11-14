@@ -154,6 +154,8 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
     milvus::plan::PlanNodePtr plannode;
     std::vector<milvus::plan::PlanNodePtr> sources;
 
+    LOG_INFO("debug=== plan_node_proto: {}", plan_node_proto.DebugString());
+
     // Build plan node chain based on predicate and filter execution strategy
     if (anns_proto.has_predicates()) {
         auto* predicate_proto = &anns_proto.predicates();
@@ -170,6 +172,8 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
             auto& element_filter_expr = predicate_proto->element_filter_expr();
             element_expr = ParseExprs(element_filter_expr.element_expr());
             struct_name = element_filter_expr.struct_name();
+
+            LOG_INFO("debug=== element_expr: {}", element_expr->ToString());
 
             // Extract doc-level predicate if present (like RandomSampleExpr.predicate)
             if (element_filter_expr.has_predicate()) {
@@ -192,6 +196,7 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
             plan_node->search_info_.iterative_filter_execution &&
             plan_node->search_info_.group_by_field_id_ == std::nullopt;
         if (is_iterative) {
+            LOG_INFO("debug=== is_iterative");
             plannode = std::make_shared<milvus::plan::MvccNode>(
                 milvus::plan::GetNextPlanNodeId());
             sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
@@ -217,6 +222,7 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
                 sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
             }
         } else {
+            LOG_INFO("debug=== not is_iterative");
             // Pre-filter mode: Filter(s) → MvccNode → VectorSearchNode
 
             // Add doc-level pre-filter if present

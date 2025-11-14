@@ -31,11 +31,10 @@ namespace exec {
 
 class PhyElementFilterBitsNode : public Operator {
  public:
-    PhyElementFilterBitsNode(
-        int32_t operator_id,
-        DriverContext* ctx,
-        const expr::TypedExprPtr& element_expr,
-        const std::string& struct_name);
+    PhyElementFilterBitsNode(int32_t operator_id,
+                             DriverContext* ctx,
+                             const expr::TypedExprPtr& element_expr,
+                             const std::string& struct_name);
 
     bool
     IsFilter() override {

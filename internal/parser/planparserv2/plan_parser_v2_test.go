@@ -2497,6 +2497,7 @@ func TestExpr_ElementFilter(t *testing.T) {
 	assert.NoError(t, err)
 
 	exprs := []string{
+		`element_filter(struct_array, 2 > $[sub_int] > 1)`,
 		`element_filter(struct_array, $[sub_str] == "1" || $[sub_int] > 1)`,
 	}
 

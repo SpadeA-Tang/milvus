@@ -139,13 +139,15 @@ class VectorIterator {
      * @brief Check if there are more elements
      * @return true if Next() will return a valid result
      */
-    virtual bool HasNext() = 0;
+    virtual bool
+    HasNext() = 0;
 
     /**
      * @brief Get the next (offset, distance) pair
      * @return Optional pair of (offset, distance), or nullopt if exhausted
      */
-    virtual std::optional<std::pair<int64_t, float>> Next() = 0;
+    virtual std::optional<std::pair<int64_t, float>>
+    Next() = 0;
 };
 
 /**
@@ -162,11 +164,13 @@ class ChunkMergeIterator : public VectorIterator {
         iterators_.reserve(chunk_count);
     }
 
-    bool HasNext() override {
+    bool
+    HasNext() override {
         return !heap_.empty();
     }
 
-    std::optional<std::pair<int64_t, float>> Next() override {
+    std::optional<std::pair<int64_t, float>>
+    Next() override {
         if (!heap_.empty()) {
             auto top = heap_.top();
             heap_.pop();
