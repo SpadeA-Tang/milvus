@@ -95,6 +95,10 @@ SearchOnGrowing(const segcore::SegmentGrowingImpl& segment,
     AssertInfo(IsVectorDataType(data_type),
                "[SearchOnGrowing]Data type isn't vector type");
 
+    LOG_INFO("debug=== SearchOnGrowing: data_type: {}, element_type: {}",
+             data_type,
+             element_type);
+
     auto topk = info.topk_;
     auto metric_type = info.metric_type_;
     auto round_decimal = info.round_decimal_;
@@ -173,6 +177,11 @@ SearchOnGrowing(const segcore::SegmentGrowingImpl& segment,
 
         auto vec_size_per_chunk = vec_ptr->get_size_per_chunk();
         auto max_chunk = upper_div(active_count, vec_size_per_chunk);
+
+        if (data_type == DataType::VECTOR_ARRAY && query_offsets == nullptr) {
+            // embedding-search-embedding on embedding list pattern
+            data_type = element_type;
+        }
 
         for (int chunk_id = current_chunk_id; chunk_id < max_chunk;
              ++chunk_id) {

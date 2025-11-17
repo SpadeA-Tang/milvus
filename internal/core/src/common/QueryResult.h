@@ -353,9 +353,9 @@ struct SearchResult {
      * @brief Array field offsets for element ↔ doc conversion
      *
      * Required for all element-level operations.
-     * Shared across the entire query lifecycle.
+     * Borrowed from segment, valid during query lifecycle.
      */
-    std::shared_ptr<ArrayOffsets> array_offsets_;
+    const ArrayOffsets* array_offsets_{nullptr};
 
     // ========== Helper Methods ==========
 

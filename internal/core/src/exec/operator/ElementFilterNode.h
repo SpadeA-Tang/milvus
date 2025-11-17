@@ -112,9 +112,6 @@ class PhyElementFilterNode : public Operator {
     TargetBitmap
     EvaluateElementBatch(const std::vector<int64_t>& element_ids);
 
-    void
-    LoadArrayOffsets();
-
     // ========== Member Variables ==========
 
     std::unique_ptr<ExprSet> element_exprs_;

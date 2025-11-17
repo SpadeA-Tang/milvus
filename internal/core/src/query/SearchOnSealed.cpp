@@ -45,6 +45,10 @@ SearchOnSealedIndex(const Schema& schema,
     // TODO(SPARSE): see todo in PlanImpl.h::PlaceHolder.
     auto dim = is_sparse ? 0 : field.get_dim();
 
+    LOG_INFO("debug=== SearchOnSealedIndex: data_type: {}, element_type: {}",
+             field.get_data_type(),
+             field.get_element_type());
+
     AssertInfo(record.is_ready(field_id), "[SearchOnSealed]Record isn't ready");
     // Keep the field_indexing smart pointer, until all reference by raw dropped.
     auto field_indexing = record.get_field_indexing(field_id);
@@ -118,6 +122,11 @@ SearchOnSealedColumn(const Schema& schema,
 
     auto data_type = field.get_data_type();
     auto element_type = field.get_element_type();
+
+    LOG_INFO("debug=== SearchOnSealedColumn: data_type: {}, element_type: {}",
+             data_type,
+             element_type);
+
     // TODO(SPARSE): see todo in PlanImpl.h::PlaceHolder.
     auto dim =
         data_type == DataType::VECTOR_SPARSE_U32_F32 ? 0 : field.get_dim();

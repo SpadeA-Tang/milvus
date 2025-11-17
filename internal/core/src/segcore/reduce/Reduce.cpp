@@ -207,6 +207,9 @@ ReduceHelper::SortEqualScoresOneNQ(size_t nq_begin,
                 PkType temp_pk =
                     std::move(search_result->primary_keys_[start + i]);
                 int64_t temp_offset = search_result->seg_offsets_[start + i];
+                int32_t temp_elem_idx = search_result->is_element_level_
+                                            ? search_result->element_indices_[start + i]
+                                            : -1;
 
                 size_t curr = i;
                 while (indices[curr] != i) {
@@ -215,12 +218,19 @@ ReduceHelper::SortEqualScoresOneNQ(size_t nq_begin,
                         std::move(search_result->primary_keys_[start + next]);
                     search_result->seg_offsets_[start + curr] =
                         search_result->seg_offsets_[start + next];
+                    if (search_result->is_element_level_) {
+                        search_result->element_indices_[start + curr] =
+                            search_result->element_indices_[start + next];
+                    }
                     indices[curr] = curr;  // Mark as processed
                     curr = next;
                 }
 
                 search_result->primary_keys_[start + curr] = std::move(temp_pk);
                 search_result->seg_offsets_[start + curr] = temp_offset;
+                if (search_result->is_element_level_) {
+                    search_result->element_indices_[start + curr] = temp_elem_idx;
+                }
                 indices[curr] = curr;
             }
         }
@@ -258,6 +268,10 @@ ReduceHelper::RefreshSingleSearchResult(SearchResult* search_result,
                 search_result->distances_[offset];
             search_result->seg_offsets_[index] =
                 search_result->seg_offsets_[offset];
+            if (search_result->is_element_level_) {
+                search_result->element_indices_[index] =
+                    search_result->element_indices_[offset];
+            }
             index++;
             real_topks[j]++;
         }
@@ -265,6 +279,9 @@ ReduceHelper::RefreshSingleSearchResult(SearchResult* search_result,
     search_result->primary_keys_.resize(index);
     search_result->distances_.resize(index);
     search_result->seg_offsets_.resize(index);
+    if (search_result->is_element_level_) {
+        search_result->element_indices_.resize(index);
+    }
 }
 
 void

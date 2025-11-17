@@ -30,7 +30,8 @@ PhyElementFilterNode::PhyElementFilterNode(
                element_filter_node->output_type(),
                operator_id,
                element_filter_node->id(),
-               "PhyElementFilterNode") {
+               "PhyElementFilterNode"),
+      struct_name_(element_filter_node->struct_name()) {
     ExecContext* exec_context = operator_context_->get_exec_context();
     query_context_ = exec_context->get_query_context();
     std::vector<expr::TypedExprPtr> exprs;
@@ -41,24 +42,6 @@ PhyElementFilterNode::PhyElementFilterNode(
 void
 PhyElementFilterNode::AddInput(RowVectorPtr& input) {
     input_ = std::move(input);
-}
-
-void
-PhyElementFilterNode::LoadArrayOffsets() {
-    // Check if already loaded
-    if (query_context_->get_array_offsets() != nullptr) {
-        return;
-    }
-
-    // Load array offsets from segment
-    const auto* segment = query_context_->get_segment();
-
-    // POC: BuildFromSegment currently assumes 3 elements per document
-    // TODO: Implement full segment interface extension to read actual offsets
-    auto array_offsets = std::make_shared<ArrayOffsets>(
-        ArrayOffsets::BuildFromSegment(segment, struct_name_));
-
-    query_context_->set_array_offsets(array_offsets);
 }
 
 RowVectorPtr
@@ -93,7 +76,17 @@ PhyElementFilterNode::GetOutput() {
             "PhyElementFilterNode expects vector_iterators in search result");
     }
 
-    LoadArrayOffsets();
+    auto segment = query_context_->get_segment();
+    auto field_meta = milvus::FindFirstArrayFieldInStruct(segment->get_schema(),
+                                                          struct_name_);
+    auto field_id = field_meta.get_id();
+    auto array_offsets = segment->GetArrayOffsets(field_id);
+    if (array_offsets == nullptr) {
+        ThrowInfo(ErrorCode::UnexpectedError,
+                  "ArrayOffsets not found for field {}",
+                  field_id.get());
+    }
+    query_context_->set_array_offsets(array_offsets);
 
     // ========== Step 2: Wrap each iterator with ElementFilterIterator ==========
     // For element-level search, iterators should be in vector_iterators_

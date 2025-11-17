@@ -79,9 +79,6 @@ class PhyElementFilterBitsNode : public Operator {
     TargetBitmap
     ExtractDocBitset();
 
-    void
-    LoadArrayOffsets();
-
     TargetBitmap
     DocBitsetToElementBitset(const TargetBitmap& doc_bitset);
 

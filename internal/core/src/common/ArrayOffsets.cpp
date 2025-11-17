@@ -17,41 +17,108 @@
 #include "ArrayOffsets.h"
 #include "segcore/SegmentInterface.h"
 #include "log/Log.h"
+#include "common/EasyAssert.h"
 
 namespace milvus {
+
+namespace {
+ArrayOffsets
+BuildArrayOffsetsFromColumn(const segcore::SegmentInternalInterface* segment,
+                            const FieldMeta& field_meta,
+                            int64_t row_count) {
+    FieldId field_id = field_meta.get_id();
+    auto data_type = field_meta.get_data_type();
+
+    ArrayOffsets result;
+    result.doc_count = row_count;
+
+    auto temp_op_ctx = std::make_unique<OpContext>();
+    auto op_ctx_ptr = temp_op_ctx.get();
+
+    int64_t num_chunks = segment->num_chunk(field_id);
+    int64_t current_doc_id = 0;
+
+    if (data_type == DataType::VECTOR_ARRAY) {
+        for (int64_t chunk_id = 0; chunk_id < num_chunks; ++chunk_id) {
+            auto pin_wrapper = segment->chunk_view<VectorArrayView>(
+                op_ctx_ptr, field_id, chunk_id);
+            const auto& [vector_array_views, valid_flags] = pin_wrapper.get();
+
+            for (size_t i = 0; i < vector_array_views.size(); ++i) {
+                int64_t array_len = 0;
+                if (valid_flags.empty() || valid_flags[i]) {
+                    array_len = vector_array_views[i].length();
+                }
+                // Add (doc_id, element_index) for each element
+                for (int32_t j = 0; j < array_len; ++j) {
+                    result.element_info.emplace_back(current_doc_id, j);
+                }
+                current_doc_id++;
+            }
+        }
+    } else {
+        for (int64_t chunk_id = 0; chunk_id < num_chunks; ++chunk_id) {
+            auto pin_wrapper =
+                segment->chunk_view<ArrayView>(op_ctx_ptr, field_id, chunk_id);
+            const auto& [array_views, valid_flags] = pin_wrapper.get();
+
+            for (size_t i = 0; i < array_views.size(); ++i) {
+                int64_t array_len = 0;
+                if (valid_flags.empty() || valid_flags[i]) {
+                    array_len = array_views[i].length();
+                }
+                // Add (doc_id, element_index) for each element
+                for (int32_t j = 0; j < array_len; ++j) {
+                    result.element_info.emplace_back(current_doc_id, j);
+                }
+                current_doc_id++;
+            }
+        }
+    }
+
+    AssertInfo(current_doc_id == row_count,
+               "Document count mismatch: expected {}, got {}",
+               row_count,
+               current_doc_id);
+
+    return result;
+}
+
+}  // anonymous namespace
 
 ArrayOffsets
 ArrayOffsets::BuildFromSegment(const void* segment,
                                const std::string& array_field_name) {
     auto seg = static_cast<const segcore::SegmentInternalInterface*>(segment);
 
-    // TODO: Full implementation requires:
-    // 1. Find StructArrayFieldSchema from schema using array_field_name
-    // 2. Determine the field_id of the offsets column or access method
-    // 3. Read offsets data from segment to build ArrayOffsets
-    //
-    // Current POC implementation:
-    // - Assumes each document has a fixed number of elements (3 elements per doc)
-    // - This allows us to verify the entire element-level filtering pipeline
-    // - Will be replaced with actual segment data access later
-
     int64_t row_count = seg->get_row_count();
-    std::vector<int64_t> element_counts;
-    element_counts.reserve(row_count);
-
-    // POC: Assume each doc has 3 elements
-    for (int64_t i = 0; i < row_count; ++i) {
-        element_counts.push_back(3);
+    if (row_count == 0) {
+        LOG_INFO(
+            "ArrayOffsets::BuildFromSegment: empty segment for struct '{}'",
+            array_field_name);
+        ArrayOffsets result;
+        result.doc_count = 0;
+        return result;
     }
 
-    LOG_INFO(
-        "ArrayOffsets::BuildFromSegment (POC): struct_name={}, doc_count={}, "
-        "elements_per_doc=3, total_elements={}",
-        array_field_name,
-        row_count,
-        row_count * 3);
+    const auto& schema = seg->get_schema();
+    const auto& array_field_meta =
+        FindFirstArrayFieldInStruct(schema, array_field_name);
 
-    return BuildFromElementCounts(element_counts);
+    ArrayOffsets result =
+        BuildArrayOffsetsFromColumn(seg, array_field_meta, row_count);
+
+    int64_t total_elements = result.GetTotalElementCount();
+
+    LOG_INFO(
+        "ArrayOffsets::BuildFromSegment: struct_name='{}', "
+        "field_id={}, row_count={}, total_elements={}",
+        array_field_name,
+        array_field_meta.get_id().get(),
+        row_count,
+        total_elements);
+
+    return result;
 }
 
 }  // namespace milvus

@@ -63,12 +63,17 @@ PhyElementFilterBitsNode::GetOutput() {
     // ========== Step 1: Extract doc-level bitset from input ==========
     TargetBitmap doc_bitset = ExtractDocBitset();
 
-    // ========== Step 2: Load array offsets ==========
-    LoadArrayOffsets();
-    auto array_offsets = query_context_->get_array_offsets();
-    AssertInfo(array_offsets != nullptr,
-               "Array offsets not loaded for struct: {}",
-               struct_name_);
+    auto segment = query_context_->get_segment();
+    auto field_meta = milvus::FindFirstArrayFieldInStruct(segment->get_schema(),
+                                                          struct_name_);
+    auto field_id = field_meta.get_id();
+    auto array_offsets = segment->GetArrayOffsets(field_id);
+    if (array_offsets == nullptr) {
+        ThrowInfo(ErrorCode::UnexpectedError,
+                  "ArrayOffsets not found for field {}",
+                  field_id.get());
+    }
+    query_context_->set_array_offsets(array_offsets);
 
     // ========== Step 3: Convert to element-level bitset ==========
     TargetBitmap element_bitset = DocBitsetToElementBitset(doc_bitset);
@@ -112,24 +117,6 @@ PhyElementFilterBitsNode::ExtractDocBitset() {
     return bitset;
 }
 
-void
-PhyElementFilterBitsNode::LoadArrayOffsets() {
-    // Check if already loaded
-    if (query_context_->get_array_offsets() != nullptr) {
-        return;
-    }
-
-    // Load array offsets from segment
-    const auto* segment = query_context_->get_segment();
-
-    // POC: BuildFromSegment currently assumes 3 elements per document
-    // TODO: Implement full segment interface extension to read actual offsets
-    auto array_offsets = std::make_shared<ArrayOffsets>(
-        ArrayOffsets::BuildFromSegment(segment, struct_name_));
-
-    query_context_->set_array_offsets(array_offsets);
-}
-
 TargetBitmap
 PhyElementFilterBitsNode::DocBitsetToElementBitset(
     const TargetBitmap& doc_bitset) {
@@ -146,16 +133,10 @@ PhyElementFilterBitsNode::DocBitsetToElementBitset(
 
     TargetBitmap element_bitset(total_elements);
 
-    // Convert: if doc passes, all its elements pass
-    for (int64_t doc_id = 0; doc_id < doc_count; ++doc_id) {
+    for (int64_t elem_id = 0; elem_id < total_elements; ++elem_id) {
+        int32_t doc_id = array_offsets->element_info[elem_id].first;
         if (doc_bitset[doc_id]) {
-            int64_t start = array_offsets->offsets[doc_id];
-            int64_t end = array_offsets->offsets[doc_id + 1];
-
-            // Set all elements of this doc to true
-            for (int64_t elem_id = start; elem_id < end; ++elem_id) {
-                element_bitset[elem_id] = true;
-            }
+            element_bitset[elem_id] = true;
         }
     }
 
