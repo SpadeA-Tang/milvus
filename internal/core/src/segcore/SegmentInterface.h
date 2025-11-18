@@ -204,7 +204,7 @@ class SegmentInterface {
 
     // Get ArrayOffsets for element-level filtering on array fields
     // Returns nullptr if the field doesn't have ArrayOffsets
-    virtual const ArrayOffsets*
+    virtual const IArrayOffsets*
     GetArrayOffsets(FieldId field_id) const = 0;
 };
 

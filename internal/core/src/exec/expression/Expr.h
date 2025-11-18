@@ -749,12 +749,65 @@ class SegmentExpr : public Expr {
             }
 
             return processed_size;
-        }
+        } else {
+            auto* array_offsets = segment_->GetArrayOffsets(field_id_);
+            if (!array_offsets) {
+                ThrowInfo(ErrorCode::UnexpectedError,
+                          "ArrayOffsets not found for field {}",
+                          field_id_.get());
+            }
 
-        // Growing segment: not implemented yet
-        ThrowInfo(
-            ErrorCode::Unsupported,
-            "Element-level filtering not implemented for growing segments");
+            auto& skip_index = segment_->GetSkipIndex();
+            size_t processed_size = 0;
+
+            for (size_t i = 0; i < element_ids->size(); i++) {
+                int64_t element_id = (*element_ids)[i];
+
+                auto [doc_id, elem_idx] =
+                    array_offsets->ElementIDToDoc(element_id);
+
+                // Calculate chunk_id and chunk_offset for this doc
+                auto chunk_id = doc_id / size_per_chunk_;
+                auto chunk_offset = doc_id % size_per_chunk_;
+
+                // Get the Array chunk (Growing segment stores Array, not ArrayView)
+                auto pw = segment_->chunk_data<Array>(
+                    op_ctx_, field_id_, chunk_id);
+                auto chunk = pw.get();
+                const Array* array_ptr = chunk.data() + chunk_offset;
+                const bool* valid_data = chunk.valid_data();
+                if (valid_data != nullptr) {
+                    valid_data += chunk_offset;
+                }
+
+                if ((!skip_func ||
+                     !skip_func(skip_index, field_id_, chunk_id)) &&
+                    (!namespace_skip_func_.has_value() ||
+                     !namespace_skip_func_.value()(chunk_id))) {
+                    // Extract element from Array
+                    auto value = array_ptr->get_data<ElementType>(elem_idx);
+                    bool is_valid = !valid_data || valid_data[0];
+
+                    func.template operator()<FilterType::random>(
+                        &value,
+                        &is_valid,
+                        nullptr,
+                        1,
+                        res + processed_size,
+                        valid_res + processed_size,
+                        values...);
+                } else {
+                    // Chunk is skipped
+                    if (valid_data && !valid_data[0]) {
+                        res[processed_size] = valid_res[processed_size] = false;
+                    }
+                }
+
+                processed_size++;
+            }
+
+            return processed_size;
+        }
     }
 
     // Template parameter to control whether segment offsets are needed (for GIS functions)

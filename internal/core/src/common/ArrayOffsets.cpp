@@ -121,4 +121,49 @@ ArrayOffsets::BuildFromSegment(const void* segment,
     return result;
 }
 
+void
+GrowingArrayOffsets::Insert(int64_t doc_id_start,
+                            const int32_t* array_lengths,
+                            int64_t count) {
+    std::unique_lock lock(mutex_);
+
+    for (int64_t i = 0; i < count; ++i) {
+        int64_t doc_id = doc_id_start + i;
+        int32_t array_len = array_lengths[i];
+
+        if (doc_id == committed_doc_count_) {
+            for (int32_t j = 0; j < array_len; ++j) {
+                element_info_.emplace_back(static_cast<int32_t>(doc_id), j);
+            }
+            committed_doc_count_++;
+
+            // Try to drain pending documents
+            DrainPendingDocs();
+        } else {
+            // Cache this document for later
+            pending_docs_[doc_id] = {doc_id, array_len};
+        }
+    }
+}
+
+void
+GrowingArrayOffsets::DrainPendingDocs() {
+    while (true) {
+        auto it = pending_docs_.find(committed_doc_count_);
+        if (it == pending_docs_.end()) {
+            break;
+        }
+
+        // Commit this pending document
+        const auto& pending = it->second;
+        for (int32_t j = 0; j < pending.array_len; ++j) {
+            element_info_.emplace_back(static_cast<int32_t>(pending.doc_id), j);
+        }
+        committed_doc_count_++;
+
+        // Remove from pending
+        pending_docs_.erase(it);
+    }
+}
+
 }  // namespace milvus

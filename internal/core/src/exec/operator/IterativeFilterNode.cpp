@@ -89,7 +89,7 @@ insert_helper(milvus::SearchResult& search_result,
               const int64_t nq_index,
               const int64_t unity_topk,
               const int i,
-              const ArrayOffsets* array_offsets = nullptr) {
+              const IArrayOffsets* array_offsets = nullptr) {
     auto pos = large_is_better
                    ? find_binsert_position<true>(search_result.distances_,
                                                  nq_index * unity_topk,

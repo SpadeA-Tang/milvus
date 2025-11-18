@@ -167,7 +167,7 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
                          FieldId field_id,
                          const std::string& nested_path) const override;
 
-    const ArrayOffsets*
+    const IArrayOffsets*
     GetArrayOffsets(FieldId field_id) const override {
         auto it = array_offsets_map_.find(field_id);
         if (it != array_offsets_map_.end()) {

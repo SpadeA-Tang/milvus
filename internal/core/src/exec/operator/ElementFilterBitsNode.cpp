@@ -134,7 +134,7 @@ PhyElementFilterBitsNode::DocBitsetToElementBitset(
     TargetBitmap element_bitset(total_elements);
 
     for (int64_t elem_id = 0; elem_id < total_elements; ++elem_id) {
-        int32_t doc_id = array_offsets->element_info[elem_id].first;
+        int32_t doc_id = array_offsets->ElementIDToDoc(elem_id).first;
         if (doc_bitset[doc_id]) {
             element_bitset[elem_id] = true;
         }

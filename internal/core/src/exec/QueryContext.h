@@ -323,11 +323,11 @@ class QueryContext : public Context {
     }
 
     void
-    set_array_offsets(const ArrayOffsets* offsets) {
+    set_array_offsets(const IArrayOffsets* offsets) {
         array_offsets_ = offsets;
     }
 
-    const ArrayOffsets*
+    const IArrayOffsets*
     get_array_offsets() const {
         return array_offsets_;
     }
@@ -381,7 +381,7 @@ class QueryContext : public Context {
 
     bool is_element_level_query_{false};
     std::string struct_name_;
-    const ArrayOffsets* array_offsets_{nullptr};
+    const IArrayOffsets* array_offsets_{nullptr};
     std::optional<TargetBitmap> element_level_bitset_;
 };
 
