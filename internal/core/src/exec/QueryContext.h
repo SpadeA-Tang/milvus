@@ -332,7 +332,7 @@ class QueryContext : public Context {
         return array_offsets_;
     }
 
-    int64_t
+    void
     set_active_element_count(int64_t count) {
         active_element_count_ = count;
     }
