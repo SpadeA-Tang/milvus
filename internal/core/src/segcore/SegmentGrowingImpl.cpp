@@ -56,6 +56,33 @@ using namespace milvus::cachinglayer;
 namespace {
 
 void
+ExtractArrayLengthsFromFieldData(const std::vector<FieldDataPtr>& field_data,
+                                 const FieldMeta& field_meta,
+                                 int32_t* array_lengths) {
+    auto data_type = field_meta.get_data_type();
+    int64_t offset = 0;
+
+    for (const auto& data : field_data) {
+        auto num_rows = data->get_num_rows();
+
+        if (data_type == DataType::VECTOR_ARRAY) {
+            // Get raw pointer to VectorArray data
+            auto* raw_data = static_cast<const VectorArray*>(data->Data());
+            for (int64_t i = 0; i < num_rows; ++i) {
+                array_lengths[offset + i] = raw_data[i].length();
+            }
+        } else {
+            // For regular array types (INT32, FLOAT, etc.)
+            auto* raw_data = static_cast<const ArrayView*>(data->Data());
+            for (int64_t i = 0; i < num_rows; ++i) {
+                array_lengths[offset + i] = raw_data[i].length();
+            }
+        }
+        offset += num_rows;
+    }
+}
+
+void
 ExtractArrayLengths(const proto::schema::FieldData& field_data,
                     const FieldMeta& field_meta,
                     int64_t num_rows,
@@ -542,6 +569,23 @@ SegmentGrowingImpl::load_field_data_common(
         index->Commit();
         // Reload reader so that the index can be read immediately
         index->Reload();
+    }
+
+    // update ArrayOffsets for struct fields
+    if (struct_representative_fields_.count(field_id) > 0) {
+        std::vector<int32_t> array_lengths(num_rows);
+        ExtractArrayLengthsFromFieldData(
+            field_data, field_meta, array_lengths.data());
+
+        auto offsets_it = array_offsets_map_.find(field_id);
+        if (offsets_it != array_offsets_map_.end()) {
+            offsets_it->second->Insert(
+                reserved_offset, array_lengths.data(), num_rows);
+        }
+
+        LOG_INFO("Updated ArrayOffsets for field {} with {} rows",
+                 field_id.get(),
+                 num_rows);
     }
 
     // update the mem size

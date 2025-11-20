@@ -31,10 +31,11 @@ namespace exec {
 
 class PhyElementFilterBitsNode : public Operator {
  public:
-    PhyElementFilterBitsNode(int32_t operator_id,
-                             DriverContext* ctx,
-                             const expr::TypedExprPtr& element_expr,
-                             const std::string& struct_name);
+    PhyElementFilterBitsNode(
+        int32_t operator_id,
+        DriverContext* ctx,
+        const std::shared_ptr<const plan::ElementFilterBitsNode>&
+            element_filter_bits_node);
 
     bool
     IsFilter() override {
@@ -43,7 +44,7 @@ class PhyElementFilterBitsNode : public Operator {
 
     bool
     NeedInput() const override {
-        return !is_finished_;
+        return !input_;
     }
 
     void
@@ -76,14 +77,11 @@ class PhyElementFilterBitsNode : public Operator {
     }
 
  private:
-    TargetBitmap
-    ExtractDocBitset();
+    FixedVector<int32_t>
+    DocBitsetToElementOffsets(const TargetBitmapView& doc_bitset);
 
-    TargetBitmap
-    DocBitsetToElementBitset(const TargetBitmap& doc_bitset);
-
-    TargetBitmap
-    EvaluateElementExpression(const TargetBitmap& valid_elements);
+    std::pair<TargetBitmap, TargetBitmap>
+    EvaluateElementExpression(FixedVector<int32_t>& element_offsets);
 
     std::unique_ptr<ExprSet> element_exprs_;
     QueryContext* query_context_;

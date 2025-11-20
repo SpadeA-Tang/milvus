@@ -424,6 +424,8 @@ PhyBinaryRangeFilterExpr::ExecRangeVisitorImplForData(EvalCtx& context) {
                                     val2);
         }
     } else {
+        AssertInfo(!expr_->column_.is_element_level_,
+                   "Element-level filtering is not supported without offsets");
         processed_size = ProcessDataChunks<T>(
             execute_sub_batch, skip_index_func, res, valid_res, val1, val2);
     }

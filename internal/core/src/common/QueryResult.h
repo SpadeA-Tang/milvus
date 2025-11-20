@@ -320,57 +320,19 @@ struct SearchResult {
     // record the storage usage in search
     StorageCost search_storage_cost_;
 
-    // ========== Element-level Search Support ==========
-
-    /**
-     * @brief Indicates if this SearchResult contains element-level results
-     *
-     * - true: element_indices_ and element_iterators_ are valid
-     * - false: seg_offsets_ and vector_iterators_ are valid (doc-level)
-     */
     bool is_element_level_{false};
-
-    /**
-     * @brief Element indices within arrays (when is_element_level_=true)
-     *
-     * Each value represents the index within the array (0-based).
-     * Used together with seg_offsets_ to identify specific array elements:
-     * - seg_offsets_[i] = document ID
-     * - element_indices_[i] = index within that document's array
-     */
     std::vector<int32_t> element_indices_;
-
-    /**
-     * @brief Element-level iterators (used in iterative filter mode)
-     *
-     * Similar to vector_iterators_ but operates on element granularity.
-     * Each iterator yields (element_id, distance) pairs.
-     */
     std::optional<std::vector<std::shared_ptr<VectorIterator>>>
         element_iterators_;
-
-    /**
-     * @brief Array field offsets for element ↔ doc conversion
-     *
-     * Required for all element-level operations.
-     * Borrowed from segment, valid during query lifecycle.
-     */
     const ArrayOffsets* array_offsets_{nullptr};
+    std::vector<std::unique_ptr<uint8_t[]>> chunk_buffers_{};
 
-    // ========== Helper Methods ==========
-
-    /**
-     * @brief Check if result has iterators (either doc or element level)
-     */
     bool
     HasIterators() const {
         return (is_element_level_ && element_iterators_.has_value()) ||
                (!is_element_level_ && vector_iterators_.has_value());
     }
 
-    /**
-     * @brief Get the appropriate iterators based on result type
-     */
     std::optional<std::vector<std::shared_ptr<VectorIterator>>>
     GetIterators() {
         if (is_element_level_) {

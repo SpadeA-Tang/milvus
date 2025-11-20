@@ -253,6 +253,10 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
                 }
             }
 
+            plannode = std::make_shared<milvus::plan::MvccNode>(
+                milvus::plan::GetNextPlanNodeId(), sources);
+            sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
+
             // Add element-level pre-filter if needed
             if (is_element_level) {
                 plannode = std::make_shared<plan::ElementFilterBitsNode>(
@@ -262,10 +266,6 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
                     sources);
                 sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
             }
-
-            plannode = std::make_shared<milvus::plan::MvccNode>(
-                milvus::plan::GetNextPlanNodeId(), sources);
-            sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
 
             plannode = std::make_shared<milvus::plan::VectorSearchNode>(
                 milvus::plan::GetNextPlanNodeId(), sources);

@@ -771,8 +771,8 @@ class SegmentExpr : public Expr {
                 auto chunk_offset = doc_id % size_per_chunk_;
 
                 // Get the Array chunk (Growing segment stores Array, not ArrayView)
-                auto pw = segment_->chunk_data<Array>(
-                    op_ctx_, field_id_, chunk_id);
+                auto pw =
+                    segment_->chunk_data<Array>(op_ctx_, field_id_, chunk_id);
                 auto chunk = pw.get();
                 const Array* array_ptr = chunk.data() + chunk_offset;
                 const bool* valid_data = chunk.valid_data();

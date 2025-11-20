@@ -332,6 +332,16 @@ class QueryContext : public Context {
         return array_offsets_;
     }
 
+    int64_t
+    set_active_element_count(int64_t count) {
+        active_element_count_ = count;
+    }
+
+    int64_t
+    get_active_element_count() const {
+        return active_element_count_;
+    }
+
     void
     set_element_level_bitset(TargetBitmap&& bitset) {
         element_level_bitset_ = std::move(bitset);
@@ -382,6 +392,7 @@ class QueryContext : public Context {
     bool is_element_level_query_{false};
     std::string struct_name_;
     const IArrayOffsets* array_offsets_{nullptr};
+    int64_t active_element_count_{0};  // Total elements in active documents
     std::optional<TargetBitmap> element_level_bitset_;
 };
 

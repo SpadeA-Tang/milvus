@@ -16,6 +16,9 @@
 
 #include "ElementFilterBitsNode.h"
 #include "common/Tracer.h"
+#include "fmt/format.h"
+
+#include "monitor/Monitor.h"
 
 namespace milvus {
 namespace exec {
@@ -23,20 +26,20 @@ namespace exec {
 PhyElementFilterBitsNode::PhyElementFilterBitsNode(
     int32_t operator_id,
     DriverContext* driverctx,
-    const expr::TypedExprPtr& element_expr,
-    const std::string& struct_name)
+    const std::shared_ptr<const plan::ElementFilterBitsNode>&
+        element_filter_bits_node)
     : Operator(driverctx,
                DataType::NONE,  // TODO: Define proper output type
                operator_id,
                "element_filter_bits_plan_node",  // TODO: Get from plan node
                "PhyElementFilterBitsNode"),
-      struct_name_(struct_name) {
+      struct_name_(element_filter_bits_node->struct_name()) {
     ExecContext* exec_context = operator_context_->get_exec_context();
     query_context_ = exec_context->get_query_context();
 
     // Build expression set from element-level expression
     std::vector<expr::TypedExprPtr> exprs;
-    exprs.emplace_back(element_expr);
+    exprs.emplace_back(element_filter_bits_node->element_filter());
     element_exprs_ = std::make_unique<ExprSet>(exprs, exec_context);
 }
 
@@ -47,21 +50,17 @@ PhyElementFilterBitsNode::AddInput(RowVectorPtr& input) {
 
 RowVectorPtr
 PhyElementFilterBitsNode::GetOutput() {
-    if (is_finished_ || !no_more_input_) {
+    if (is_finished_ || input_ == nullptr) {
         return nullptr;
     }
+
+    DeferLambda([&]() { is_finished_ = true; });
 
     tracer::AutoSpan span(
         "PhyElementFilterBitsNode::GetOutput", tracer::GetRootSpan(), true);
 
-    DeferLambda([&]() { is_finished_ = true; });
-
-    if (input_ == nullptr) {
-        return nullptr;
-    }
-
-    // ========== Step 1: Extract doc-level bitset from input ==========
-    TargetBitmap doc_bitset = ExtractDocBitset();
+    std::chrono::high_resolution_clock::time_point start_time =
+        std::chrono::high_resolution_clock::now();
 
     auto segment = query_context_->get_segment();
     auto field_meta = milvus::FindFirstArrayFieldInStruct(segment->get_schema(),
@@ -74,96 +73,139 @@ PhyElementFilterBitsNode::GetOutput() {
                   field_id.get());
     }
     query_context_->set_array_offsets(array_offsets);
+    auto [first_elem, _] =
+        array_offsets->DocIDToElementID(query_context_->get_active_count());
+    query_context_->set_active_element_count(first_elem);
 
-    // ========== Step 3: Convert to element-level bitset ==========
-    TargetBitmap element_bitset = DocBitsetToElementBitset(doc_bitset);
+    auto col_input = GetColumnVector(input_);
+    TargetBitmapView doc_bitset(col_input->GetRawData(), col_input->size());
+    TargetBitmapView doc_bitset_valid(col_input->GetValidRawData(),
+                                      col_input->size());
+    doc_bitset.flip();
 
-    // ========== Step 4: Evaluate element-level expression ==========
-    TargetBitmap expr_result = EvaluateElementExpression(element_bitset);
+    // Convert doc bitset to element offsets
+    FixedVector<int32_t> element_offsets =
+        DocBitsetToElementOffsets(doc_bitset);
 
-    // ========== Step 5: Combine results (AND operation) ==========
-    // Only elements that pass both doc-level and element-level filters
-    element_bitset &= expr_result;
+    auto [expr_result, valid_expr_result] =
+        EvaluateElementExpression(element_offsets);
 
-    // ========== Step 6: Write to QueryContext ==========
-    query_context_->set_element_level_bitset(std::move(element_bitset));
     query_context_->set_is_element_level_query(true);
     query_context_->set_struct_name(struct_name_);
 
-    tracer::AddEvent(fmt::format("struct_name: {}, total_elements: {}",
-                                 struct_name_,
-                                 array_offsets->GetTotalElementCount()));
+    std::chrono::high_resolution_clock::time_point end_time =
+        std::chrono::high_resolution_clock::now();
+    double cost =
+        std::chrono::duration<double, std::micro>(end_time - start_time)
+            .count();
+    milvus::monitor::internal_core_search_latency_scalar.Observe(cost / 1000);
 
-    // ========== Step 7: Return input (passthrough) ==========
-    return input_;
+    auto filtered_count = expr_result.count();
+    tracer::AddEvent(
+        fmt::format("struct_name: {}, total_elements: {}, output_rows: {}, "
+                    "filtered: {}, cost_us: {}",
+                    struct_name_,
+                    array_offsets->GetTotalElementCount(),
+                    array_offsets->GetTotalElementCount() - filtered_count,
+                    filtered_count,
+                    cost));
+
+    std::vector<VectorPtr> col_res;
+    col_res.push_back(std::make_shared<ColumnVector>(
+        std::move(expr_result), std::move(valid_expr_result)));
+    return std::make_shared<RowVector>(col_res);
 }
 
-// =============================================================================
-// Private Methods - Implementation Stubs
-// =============================================================================
-
-TargetBitmap
-PhyElementFilterBitsNode::ExtractDocBitset() {
-    // TODO: Implement doc bitset extraction from input_ RowVector
-    //
-    // The doc-level bitset should be encoded in the input RowVector.
-    // This depends on how FilterBitsNode/MvccNode encodes the bitset.
-    //
-    // POC implementation: Assume all docs pass (all bits set to true)
-    int64_t doc_count = query_context_->get_active_count();
-    TargetBitmap bitset(doc_count);
-    bitset.set();  // All docs pass for now
-
-    return bitset;
-}
-
-TargetBitmap
-PhyElementFilterBitsNode::DocBitsetToElementBitset(
-    const TargetBitmap& doc_bitset) {
+FixedVector<int32_t>
+PhyElementFilterBitsNode::DocBitsetToElementOffsets(
+    const TargetBitmapView& doc_bitset) {
     auto array_offsets = query_context_->get_array_offsets();
     AssertInfo(array_offsets != nullptr, "Array offsets not available");
 
-    int64_t total_elements = array_offsets->GetTotalElementCount();
     int64_t doc_count = array_offsets->GetDocCount();
-
     AssertInfo(doc_bitset.size() == doc_count,
                "Doc bitset size mismatch: {} vs {}",
                doc_bitset.size(),
                doc_count);
 
-    TargetBitmap element_bitset(total_elements);
+    FixedVector<int32_t> element_offsets;
 
-    for (int64_t elem_id = 0; elem_id < total_elements; ++elem_id) {
-        int32_t doc_id = array_offsets->ElementIDToDoc(elem_id).first;
+    // For each document that passes the filter, get all its element offsets
+    for (int64_t doc_id = 0; doc_id < doc_count; ++doc_id) {
         if (doc_bitset[doc_id]) {
-            element_bitset[elem_id] = true;
+            // Get element range for this document
+            auto [first_elem, last_elem] =
+                array_offsets->DocIDToElementID(doc_id);
+
+            // Add all element IDs for this document
+            for (int64_t elem_id = first_elem; elem_id < last_elem; ++elem_id) {
+                element_offsets.push_back(static_cast<int32_t>(elem_id));
+            }
         }
     }
 
-    return element_bitset;
+    return element_offsets;
 }
 
-TargetBitmap
+std::pair<TargetBitmap, TargetBitmap>
 PhyElementFilterBitsNode::EvaluateElementExpression(
-    const TargetBitmap& valid_elements) {
-    auto array_offsets = query_context_->get_array_offsets();
-    int64_t total_elements = array_offsets->GetTotalElementCount();
+    FixedVector<int32_t>& element_offsets) {
+    tracer::AutoSpan span("PhyElementFilterBitsNode::EvaluateElementExpression",
+                          tracer::GetRootSpan(),
+                          true);
+    tracer::AddEvent(fmt::format("input_elements: {}", element_offsets.size()));
 
-    // TODO: Implement element-level expression evaluation
-    //
-    // This requires:
-    // 1. EvalCtx extension to support element-level evaluation mode
-    // 2. Expr extension to handle array[sub_field] syntax
-    // 3. Segment interface to provide element-level data access
-    //
-    // POC implementation: Assume all valid elements pass the expression
-    // Create result bitmap and copy valid_elements
-    TargetBitmap result(total_elements);
-    for (int64_t i = 0; i < total_elements; ++i) {
-        result[i] = valid_elements[i];
+    // Use offset interface by passing element_offsets as third parameter
+    EvalCtx eval_ctx(operator_context_->get_exec_context(),
+                     element_exprs_.get(),
+                     &element_offsets);
+
+    std::vector<VectorPtr> results;
+    element_exprs_->Eval(0, 1, true, eval_ctx, results);
+
+    AssertInfo(results.size() == 1 && results[0] != nullptr,
+               "ElementFilterBitsNode: expression evaluation should return "
+               "exactly one result");
+
+    TargetBitmap bitset;
+    TargetBitmap valid_bitset;
+    int64_t total_elements = query_context_->get_active_element_count();
+    bitset = TargetBitmap(total_elements, false);
+    valid_bitset = TargetBitmap(total_elements, true);
+
+    if (auto col_vec = std::dynamic_pointer_cast<ColumnVector>(results[0])) {
+        if (col_vec->IsBitmap()) {
+            auto col_vec = std::dynamic_pointer_cast<ColumnVector>(results[0]);
+            auto col_vec_size = col_vec->size();
+            TargetBitmapView bitsetview(col_vec->GetRawData(), col_vec_size);
+
+            AssertInfo(col_vec_size == element_offsets.size(),
+                       "ElementFilterBitsNode result size mismatch",
+                       "{} vs {}",
+                       col_vec_size,
+                       element_offsets.size());
+
+            for (size_t i = 0; i < element_offsets.size(); ++i) {
+                if (bitsetview[i]) {
+                    bitset[element_offsets[i]] = true;
+                }
+            }
+        } else {
+            ThrowInfo(ExprInvalid,
+                      "ElementFilterBitsNode result should be bitmap");
+        }
+    } else {
+        ThrowInfo(ExprInvalid,
+                  "ElementFilterBitsNode result should be ColumnVector");
     }
 
-    return result;
+    bitset.flip();
+
+    tracer::AddEvent(fmt::format("evaluated_elements: {}, total_elements: {}",
+                                 element_offsets.size(),
+                                 total_elements));
+
+    return std::make_pair(std::move(bitset), std::move(valid_bitset));
 }
 
 }  // namespace exec

@@ -24,9 +24,24 @@ using namespace milvus;
 using namespace milvus::query;
 using namespace milvus::segcore;
 
-TEST(ElementFilter, IterativeRangeExpr) {
+class ElementFilterSealed
+    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
+ protected:
+    bool
+    use_hints() const {
+        return std::get<0>(GetParam());
+    }
+    bool
+    load_index() const {
+        return std::get<1>(GetParam());
+    }
+};
+
+TEST_P(ElementFilterSealed, RangeExpr) {
+    bool with_hints = use_hints();
+    bool with_load_index = load_index();
     // Step 1: Prepare schema with array field
-    int dim = 8;
+    int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
                                                     DataType::VECTOR_FLOAT,
@@ -38,7 +53,7 @@ TEST(ElementFilter, IterativeRangeExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 100;
+    size_t N = 10000;
     int array_len = 3;
 
     // Step 2: Generate test data
@@ -97,15 +112,18 @@ TEST(ElementFilter, IterativeRangeExpr) {
     load_index_info.index_params["metric_type"] = knowhere::metric::L2;
     load_index_info.field_type = DataType::VECTOR_ARRAY;
     load_index_info.element_type = DataType::VECTOR_FLOAT;
-    segment->LoadIndex(load_index_info);
+    if (with_load_index) {
+        segment->LoadIndex(load_index_info);
+    }
 
     int topK = 5;
 
     // Step 5: Test with element-level filter
-    // Query: Search array elements, filter by element_value < 10
+    // Query: Search array elements, filter by element_value in (1250, 2555)
     {
-        std::string raw_plan =
-            boost::str(boost::format(R"(vector_anns: <
+        std::string hints_line =
+            with_hints ? R"(hints: "iterative_filter")" : "";
+        std::string raw_plan = boost::str(boost::format(R"(vector_anns: <
                                         field_id: %1%
                                         predicates: <
                                           element_filter_expr: <
@@ -117,13 +135,13 @@ TEST(ElementFilter, IterativeRangeExpr) {
                                                   element_type: Int32
                                                   is_element_level: true
                                                 >
-                                                lower_inclusive: true
+                                                lower_inclusive: false
                                                 upper_inclusive: false
                                                 lower_value: <
-                                                  int64_val: -100
+                                                  int64_val: 1250
                                                 >
                                                 upper_value: <
-                                                  int64_val: 100
+                                                  int64_val: 2555
                                                 >
                                               >
                                             >
@@ -148,12 +166,14 @@ TEST(ElementFilter, IterativeRangeExpr) {
                                         >
                                         query_info: <
                                           topk: 5
+                                          round_decimal: 3
                                           metric_type: "L2"
-                                          hints: "iterative_filter"
+                                          %4%
                                           search_params: "{\"ef\": 50}"
                                         >
                                         placeholder_tag: "$0">)") %
-                       vec_fid.get() % int_array_fid.get() % int64_fid.get());
+                                          vec_fid.get() % int_array_fid.get() %
+                                          int64_fid.get() % hints_line);
 
         proto::plan::PlanNode plan_node;
         auto ok =
@@ -189,11 +209,24 @@ TEST(ElementFilter, IterativeRangeExpr) {
 
         std::cout << "Element-level search returned:" << std::endl;
         for (auto i = 0; i < search_result->seg_offsets_.size(); i++) {
-            std::cout << "doc_id: " << search_result->seg_offsets_[i]
-                      << ", element_index: "
-                      << search_result->element_indices_[i] << std::endl;
-            std::cout << "distance: " << search_result->distances_[i]
-                      << std::endl;
+            int64_t doc_id = search_result->seg_offsets_[i];
+            int32_t elem_idx = search_result->element_indices_[i];
+            float distance = search_result->distances_[i];
+
+            std::cout << "doc_id: " << doc_id << ", element_index: " << elem_idx
+                      << ", distance: " << distance << std::endl;
+
+            // Verify the doc_id satisfies the predicate (id % 2 == 0)
+            ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
+                                     << " should satisfy (id % 2 == 0)";
+
+            // Verify element value is in range (1250, 2555)
+            // Element value = doc_id * array_len + elem_idx + 1
+            int element_value = doc_id * array_len + elem_idx + 1;
+            ASSERT_GT(element_value, 1250)
+                << "Element value " << element_value << " should be > 1250";
+            ASSERT_LT(element_value, 2555)
+                << "Element value " << element_value << " should be < 2555";
         }
 
         // Verify distances are sorted (ascending for L2)
@@ -205,9 +238,11 @@ TEST(ElementFilter, IterativeRangeExpr) {
     }
 }
 
-TEST(ElementFilter, IterativeUnaryExpr) {
+TEST_P(ElementFilterSealed, UnaryExpr) {
+    bool with_hints = use_hints();
+    bool with_load_index = load_index();
     // Step 1: Prepare schema with array field
-    int dim = 8;
+    int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
                                                     DataType::VECTOR_FLOAT,
@@ -219,7 +254,7 @@ TEST(ElementFilter, IterativeUnaryExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 100;
+    size_t N = 10000;
     int array_len = 3;
 
     // Step 2: Generate test data
@@ -278,15 +313,18 @@ TEST(ElementFilter, IterativeUnaryExpr) {
     load_index_info.index_params["metric_type"] = knowhere::metric::L2;
     load_index_info.field_type = DataType::VECTOR_ARRAY;
     load_index_info.element_type = DataType::VECTOR_FLOAT;
-    // segment->LoadIndex(load_index_info);
+    if (with_load_index) {
+        segment->LoadIndex(load_index_info);
+    }
 
     int topK = 5;
 
     // Step 5: Test with element-level filter
     // Query: Search array elements, filter by element_value < 10
     {
-        std::string raw_plan =
-            boost::str(boost::format(R"(vector_anns: <
+        std::string hints_line =
+            with_hints ? R"(hints: "iterative_filter")" : "";
+        std::string raw_plan = boost::str(boost::format(R"(vector_anns: <
                                       field_id: %1%
                                       predicates: <
                                         element_filter_expr: <
@@ -325,12 +363,14 @@ TEST(ElementFilter, IterativeUnaryExpr) {
                                       >
                                       query_info: <
                                         topk: 5
+                                        round_decimal: 3
                                         metric_type: "L2"
-                                        hints: "iterative_filter"
+                                        %4%
                                         search_params: "{\"ef\": 50}"
                                       >
                                       placeholder_tag: "$0">)") %
-                       vec_fid.get() % int_array_fid.get() % int64_fid.get());
+                                          vec_fid.get() % int_array_fid.get() %
+                                          int64_fid.get() % hints_line);
 
         proto::plan::PlanNode plan_node;
         auto ok =
@@ -381,8 +421,25 @@ TEST(ElementFilter, IterativeUnaryExpr) {
         }
     }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    ElementFilter,
+    ElementFilterSealed,
+    ::testing::Combine(::testing::Bool(),  // with_hints: true/false
+                       ::testing::Bool()   // with_load_index: true/false
+                       ),
+    [](const ::testing::TestParamInfo<ElementFilterSealed::ParamType>& info) {
+        bool with_hints = std::get<0>(info.param);
+        bool with_load_index = std::get<1>(info.param);
+        std::string name = "";
+        name += with_hints ? "WithHints" : "WithoutHints";
+        name += "_";
+        name += with_load_index ? "WithLoadIndex" : "WithoutLoadIndex";
+        return name;
+    });
+
 TEST(ElementFilter, GrowingSegmentArrayOffsets) {
-    int dim = 8;
+    int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
                                                     DataType::VECTOR_FLOAT,
@@ -394,7 +451,7 @@ TEST(ElementFilter, GrowingSegmentArrayOffsets) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 100;
+    size_t N = 10000;
     int array_len = 3;
 
     auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
@@ -466,7 +523,7 @@ TEST(ElementFilter, GrowingSegmentArrayOffsets) {
 
 TEST(ElementFilter, GrowingSegmentOutOfOrderInsert) {
     // Test out-of-order Insert handling in GrowingArrayOffsets
-    int dim = 8;
+    int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
                                                     DataType::VECTOR_FLOAT,
@@ -561,8 +618,18 @@ TEST(ElementFilter, GrowingSegmentOutOfOrderInsert) {
     }
 }
 
-TEST(ElementFilter, GrowingIterativeRangeExpr) {
-    int dim = 8;
+// Parameterized test fixture for GrowingIterativeRangeExpr
+class ElementFilterGrowing : public ::testing::TestWithParam<bool> {
+ protected:
+    bool
+    use_hints() const {
+        return GetParam();
+    }
+};
+
+TEST_P(ElementFilterGrowing, RangeExpr) {
+    bool with_hints = use_hints();
+    int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
                                                     DataType::VECTOR_FLOAT,
@@ -574,7 +641,7 @@ TEST(ElementFilter, GrowingIterativeRangeExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 100;
+    size_t N = 10000;
     int array_len = 3;
 
     // Generate test data
@@ -624,10 +691,11 @@ TEST(ElementFilter, GrowingIterativeRangeExpr) {
     int topK = 5;
 
     // Execute element-level search with iterative filter
-    // Query: Search array elements where (id % 2 == 0) AND (price_array element in range [-100, 100))
+    // Query: Search array elements where (id % 2 == 0) AND (price_array element in range (1250, 2555))
     {
-        std::string raw_plan =
-            boost::str(boost::format(R"(vector_anns: <
+        std::string hints_line =
+            with_hints ? R"(hints: "iterative_filter")" : "";
+        std::string raw_plan = boost::str(boost::format(R"(vector_anns: <
                                         field_id: %1%
                                         predicates: <
                                           element_filter_expr: <
@@ -639,13 +707,13 @@ TEST(ElementFilter, GrowingIterativeRangeExpr) {
                                                   element_type: Int32
                                                   is_element_level: true
                                                 >
-                                                lower_inclusive: true
+                                                lower_inclusive: false
                                                 upper_inclusive: false
                                                 lower_value: <
-                                                  int64_val: -100
+                                                  int64_val: 1250
                                                 >
                                                 upper_value: <
-                                                  int64_val: 100
+                                                  int64_val: 2555
                                                 >
                                               >
                                             >
@@ -670,12 +738,14 @@ TEST(ElementFilter, GrowingIterativeRangeExpr) {
                                         >
                                         query_info: <
                                           topk: 5
+                                          round_decimal: 3
                                           metric_type: "L2"
-                                          hints: "iterative_filter"
+                                          %4%
                                           search_params: "{\"ef\": 50}"
                                         >
                                         placeholder_tag: "$0">)") %
-                       vec_fid.get() % int_array_fid.get() % int64_fid.get());
+                                          vec_fid.get() % int_array_fid.get() %
+                                          int64_fid.get() % hints_line);
 
         proto::plan::PlanNode plan_node;
         auto ok =
@@ -732,6 +802,14 @@ TEST(ElementFilter, GrowingIterativeRangeExpr) {
             ASSERT_GE(elem_idx, 0) << "Element index should be >= 0";
             ASSERT_LT(elem_idx, array_len)
                 << "Element index should be < array_len";
+
+            // Verify element value is in range (1250, 2555)
+            // Element value = doc_id * array_len + elem_idx + 1
+            int element_value = doc_id * array_len + elem_idx + 1;
+            ASSERT_GT(element_value, 1250)
+                << "Element value " << element_value << " should be > 1250";
+            ASSERT_LT(element_value, 2555)
+                << "Element value " << element_value << " should be < 2555";
         }
 
         // Verify distances are sorted (ascending for L2)
@@ -741,6 +819,13 @@ TEST(ElementFilter, GrowingIterativeRangeExpr) {
                 << "Distances should be sorted in ascending order";
         }
     }
-
-    std::cout << "Growing segment end-to-end test passed!" << std::endl;
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    ElementFilter,
+    ElementFilterGrowing,
+    ::testing::Bool(),  // with_hints: true/false
+    [](const ::testing::TestParamInfo<ElementFilterGrowing::ParamType>& info) {
+        bool with_hints = info.param;
+        return with_hints ? "WithHints" : "WithoutHints";
+    });

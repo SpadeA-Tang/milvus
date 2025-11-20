@@ -575,7 +575,8 @@ StreamReducerHelper::RefreshSearchResult() {
                     reduced_group_by_values);
             }
             if (merged_search_result->is_element_level_) {
-                merged_search_result->element_indices_.swap(reduced_element_indices);
+                merged_search_result->element_indices_.swap(
+                    reduced_element_indices);
             }
         }
         std::partial_sum(

@@ -86,35 +86,135 @@ BuildArrayOffsetsFromColumn(const segcore::SegmentInternalInterface* segment,
 
 }  // anonymous namespace
 
+std::pair<int64_t, int64_t>
+ArrayOffsets::ElementIDToDoc(int64_t elem_id) const {
+    assert(elem_id >= 0 && elem_id < GetTotalElementCount());
+
+    const auto& [doc_id, elem_idx] = element_info[elem_id];
+    return {doc_id, elem_idx};
+}
+
+std::pair<int64_t, int64_t>
+ArrayOffsets::DocIDToElementID(int64_t doc_id) const {
+    assert(doc_id >= 0 && doc_id <= doc_count);
+
+    // If doc_id equals doc_count, return the total element count
+    // This represents "past the last document"
+    if (doc_id >= doc_count) {
+        return {GetTotalElementCount(), GetTotalElementCount()};
+    }
+
+    // Find the first and last element for this doc
+    int64_t first_elem_id = -1;
+    int64_t last_elem_id = -1;
+
+    // Linear search (can be optimized to binary search if needed)
+    for (int64_t i = 0; i < GetTotalElementCount(); i++) {
+        if (element_info[i].first == doc_id) {
+            if (first_elem_id == -1) {
+                first_elem_id = i;
+            }
+            last_elem_id = i;
+        } else if (element_info[i].first > doc_id) {
+            break;
+        }
+    }
+
+    // If no elements found for this doc (empty array)
+    if (first_elem_id == -1) {
+        // Find the position where elements of this doc would be
+        // This is the first element of the next doc
+        for (int64_t i = 0; i < GetTotalElementCount(); i++) {
+            if (element_info[i].first > doc_id) {
+                return {i, i};
+            }
+        }
+        // If no doc after this one, return total count
+        return {GetTotalElementCount(), GetTotalElementCount()};
+    }
+
+    return {first_elem_id, last_elem_id + 1};
+}
+
+std::pair<int64_t, int64_t>
+GrowingArrayOffsets::ElementIDToDoc(int64_t elem_id) const {
+    std::shared_lock lock(mutex_);
+    assert(elem_id >= 0 &&
+           elem_id < static_cast<int64_t>(element_info_.size()));
+    const auto& [doc_id, elem_idx] = element_info_[elem_id];
+    return {doc_id, elem_idx};
+}
+
+std::pair<int64_t, int64_t>
+GrowingArrayOffsets::DocIDToElementID(int64_t doc_id) const {
+    std::shared_lock lock(mutex_);
+    assert(doc_id >= 0 && doc_id <= committed_doc_count_);
+
+    // If doc_id equals or exceeds committed_doc_count_, return the total element count
+    // This represents "past the last document"
+    if (doc_id >= committed_doc_count_) {
+        return {static_cast<int64_t>(element_info_.size()),
+                static_cast<int64_t>(element_info_.size())};
+    }
+
+    // Find the first and last element for this doc
+    int64_t first_elem_id = -1;
+    int64_t last_elem_id = -1;
+
+    // Linear search (can be optimized to binary search if needed)
+    for (size_t i = 0; i < element_info_.size(); i++) {
+        if (element_info_[i].first == doc_id) {
+            if (first_elem_id == -1) {
+                first_elem_id = i;
+            }
+            last_elem_id = i;
+        } else if (element_info_[i].first > doc_id) {
+            break;
+        }
+    }
+
+    // If no elements found for this doc (empty array)
+    if (first_elem_id == -1) {
+        // Find the position where elements of this doc would be
+        // This is the first element of the next doc
+        for (size_t i = 0; i < element_info_.size(); i++) {
+            if (element_info_[i].first > doc_id) {
+                return {static_cast<int64_t>(i), static_cast<int64_t>(i)};
+            }
+        }
+        // If no doc after this one, return total count
+        return {static_cast<int64_t>(element_info_.size()),
+                static_cast<int64_t>(element_info_.size())};
+    }
+
+    return {first_elem_id, last_elem_id + 1};
+}
+
 ArrayOffsets
 ArrayOffsets::BuildFromSegment(const void* segment,
-                               const std::string& array_field_name) {
+                               const FieldMeta& field_meta) {
     auto seg = static_cast<const segcore::SegmentInternalInterface*>(segment);
 
     int64_t row_count = seg->get_row_count();
     if (row_count == 0) {
         LOG_INFO(
             "ArrayOffsets::BuildFromSegment: empty segment for struct '{}'",
-            array_field_name);
+            field_meta.get_name().get());
         ArrayOffsets result;
         result.doc_count = 0;
         return result;
     }
 
-    const auto& schema = seg->get_schema();
-    const auto& array_field_meta =
-        FindFirstArrayFieldInStruct(schema, array_field_name);
-
     ArrayOffsets result =
-        BuildArrayOffsetsFromColumn(seg, array_field_meta, row_count);
+        BuildArrayOffsetsFromColumn(seg, field_meta, row_count);
 
     int64_t total_elements = result.GetTotalElementCount();
 
     LOG_INFO(
         "ArrayOffsets::BuildFromSegment: struct_name='{}', "
         "field_id={}, row_count={}, total_elements={}",
-        array_field_name,
-        array_field_meta.get_id().get(),
+        field_meta.get_name().get(),
+        field_meta.get_id().get(),
         row_count,
         total_elements);
 
@@ -126,6 +226,8 @@ GrowingArrayOffsets::Insert(int64_t doc_id_start,
                             const int32_t* array_lengths,
                             int64_t count) {
     std::unique_lock lock(mutex_);
+
+    LOG_INFO("debug=== Insert doc_id_start {}, count {}", doc_id_start, count);
 
     for (int64_t i = 0; i < count; ++i) {
         int64_t doc_id = doc_id_start + i;

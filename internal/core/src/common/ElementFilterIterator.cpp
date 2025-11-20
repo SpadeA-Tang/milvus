@@ -67,7 +67,7 @@ ElementFilterIterator::FetchAndFilterBatch() {
     element_ids.reserve(batch_size_);
     distances.reserve(batch_size_);
 
-    while (element_ids.size() < batch_size_ && base_iterator_->HasNext()) {
+    while (base_iterator_->HasNext()) {
         auto pair = base_iterator_->Next();
         if (pair.has_value()) {
             element_ids.push_back(static_cast<int32_t>(pair->first));

@@ -982,6 +982,8 @@ PhyTermFilterExpr::ExecVisitorImplForData(EvalCtx& context) {
                                                      arg_set_);
         }
     } else {
+        AssertInfo(!expr_->column_.is_element_level_,
+                   "Element-level filtering is not supported without offsets");
         processed_size = ProcessDataChunks<T>(
             execute_sub_batch, skip_index_func, res, valid_res, arg_set_);
     }

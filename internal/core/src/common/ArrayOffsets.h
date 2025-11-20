@@ -22,6 +22,7 @@
 #include <shared_mutex>
 #include "common/Types.h"
 #include "common/EasyAssert.h"
+#include "common/FieldMeta.h"
 
 namespace milvus {
 
@@ -37,6 +38,29 @@ class IArrayOffsets {
 
     virtual std::pair<int64_t, int64_t>
     ElementIDToDoc(int64_t elem_id) const = 0;
+
+    // Convert doc ID to element ID range
+    // Returns pair of (first_element_id, last_element_id + 1)
+    // last_element_id + 1 means one past the last element (similar to end iterator)
+    virtual std::pair<int64_t, int64_t>
+    DocIDToElementID(int64_t doc_id) const = 0;
+
+    std::pair<TargetBitmap, TargetBitmap>
+    DocBitsetToElementBitset(const TargetBitmapView& doc_bitset,
+                             const TargetBitmapView& valid_doc_bitset) const {
+        auto doc_count = doc_bitset.size();
+        auto [element_count, _] = DocIDToElementID(doc_count);
+        TargetBitmap element_bitset(element_count);
+        TargetBitmap valid_element_bitset(element_count);
+
+        for (int64_t elem_id = 0; elem_id < element_count; ++elem_id) {
+            auto [doc_id, _] = ElementIDToDoc(elem_id);
+            element_bitset[elem_id] = doc_bitset[doc_id];
+            valid_element_bitset[elem_id] = valid_doc_bitset[doc_id];
+        }
+
+        return {std::move(element_bitset), std::move(valid_element_bitset)};
+    }
 };
 
 struct ArrayOffsets : public IArrayOffsets {
@@ -54,15 +78,13 @@ struct ArrayOffsets : public IArrayOffsets {
     }
 
     std::pair<int64_t, int64_t>
-    ElementIDToDoc(int64_t elem_id) const override {
-        assert(elem_id >= 0 && elem_id < GetTotalElementCount());
+    ElementIDToDoc(int64_t elem_id) const override;
 
-        const auto& [doc_id, elem_idx] = element_info[elem_id];
-        return {doc_id, elem_idx};
-    }
+    std::pair<int64_t, int64_t>
+    DocIDToElementID(int64_t doc_id) const override;
 
     static ArrayOffsets
-    BuildFromSegment(const void* segment, const std::string& array_field_name);
+    BuildFromSegment(const void* segment, const FieldMeta& field_meta);
 };
 
 class GrowingArrayOffsets : public IArrayOffsets {
@@ -85,13 +107,10 @@ class GrowingArrayOffsets : public IArrayOffsets {
     }
 
     std::pair<int64_t, int64_t>
-    ElementIDToDoc(int64_t elem_id) const override {
-        std::shared_lock lock(mutex_);
-        assert(elem_id >= 0 &&
-               elem_id < static_cast<int64_t>(element_info_.size()));
-        const auto& [doc_id, elem_idx] = element_info_[elem_id];
-        return {doc_id, elem_idx};
-    }
+    ElementIDToDoc(int64_t elem_id) const override;
+
+    std::pair<int64_t, int64_t>
+    DocIDToElementID(int64_t doc_id) const override;
 
  private:
     struct PendingDoc {

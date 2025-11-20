@@ -207,9 +207,10 @@ ReduceHelper::SortEqualScoresOneNQ(size_t nq_begin,
                 PkType temp_pk =
                     std::move(search_result->primary_keys_[start + i]);
                 int64_t temp_offset = search_result->seg_offsets_[start + i];
-                int32_t temp_elem_idx = search_result->is_element_level_
-                                            ? search_result->element_indices_[start + i]
-                                            : -1;
+                int32_t temp_elem_idx =
+                    search_result->is_element_level_
+                        ? search_result->element_indices_[start + i]
+                        : -1;
 
                 size_t curr = i;
                 while (indices[curr] != i) {
@@ -229,7 +230,8 @@ ReduceHelper::SortEqualScoresOneNQ(size_t nq_begin,
                 search_result->primary_keys_[start + curr] = std::move(temp_pk);
                 search_result->seg_offsets_[start + curr] = temp_offset;
                 if (search_result->is_element_level_) {
-                    search_result->element_indices_[start + curr] = temp_elem_idx;
+                    search_result->element_indices_[start + curr] =
+                        temp_elem_idx;
                 }
                 indices[curr] = curr;
             }

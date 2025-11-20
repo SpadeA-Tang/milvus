@@ -81,7 +81,8 @@ GroupReduceHelper::RefreshSingleSearchResult(SearchResult* search_result,
             group_by_values[index] =
                 search_result->group_by_values_.value()[offset];
             if (search_result->is_element_level_) {
-                element_indices[index] = search_result->element_indices_[offset];
+                element_indices[index] =
+                    search_result->element_indices_[offset];
             }
             index++;
             real_topks[j]++;
