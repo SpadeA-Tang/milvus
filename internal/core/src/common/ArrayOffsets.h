@@ -67,6 +67,8 @@ struct ArrayOffsets : public IArrayOffsets {
     std::vector<std::pair<int32_t, int32_t>> element_info;
     int64_t doc_count = 0;
 
+    std::vector<std::pair<int64_t, int64_t>> doc_to_element_range_;
+
     int64_t
     GetDocCount() const override {
         return doc_count;
@@ -124,6 +126,8 @@ class GrowingArrayOffsets : public IArrayOffsets {
  private:
     // Committed element mappings
     std::vector<std::pair<int32_t, int32_t>> element_info_;
+
+    std::vector<std::pair<int64_t, int64_t>> doc_to_element_range_;
 
     // Number of documents committed (contiguous from 0)
     int64_t committed_doc_count_ = 0;

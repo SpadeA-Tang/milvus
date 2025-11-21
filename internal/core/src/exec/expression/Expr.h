@@ -693,6 +693,7 @@ class SegmentExpr : public Expr {
         TargetBitmapView res,
         TargetBitmapView valid_res,
         ValTypes... values) {
+        auto accu_time = 0;
         auto& skip_index = segment_->GetSkipIndex();
         if (segment_->type() == SegmentType::Sealed) {
             AssertInfo(
@@ -748,6 +749,8 @@ class SegmentExpr : public Expr {
                 processed_size++;
             }
 
+            LOG_INFO("debug=== ProcessElementLevelByOffsets: time spent: {} ms",
+                     accu_time / 1000);
             return processed_size;
         } else {
             auto* array_offsets = segment_->GetArrayOffsets(field_id_);

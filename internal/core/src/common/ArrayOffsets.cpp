@@ -31,6 +31,7 @@ BuildArrayOffsetsFromColumn(const segcore::SegmentInternalInterface* segment,
 
     ArrayOffsets result;
     result.doc_count = row_count;
+    result.doc_to_element_range_.resize(row_count);
 
     auto temp_op_ctx = std::make_unique<OpContext>();
     auto op_ctx_ptr = temp_op_ctx.get();
@@ -49,10 +50,19 @@ BuildArrayOffsetsFromColumn(const segcore::SegmentInternalInterface* segment,
                 if (valid_flags.empty() || valid_flags[i]) {
                     array_len = vector_array_views[i].length();
                 }
+
+                // Record the start position for this doc
+                int64_t elem_start = result.element_info.size();
+
                 // Add (doc_id, element_index) for each element
                 for (int32_t j = 0; j < array_len; ++j) {
                     result.element_info.emplace_back(current_doc_id, j);
                 }
+
+                // Record the range for this doc (O(1) lookup later)
+                int64_t elem_end = result.element_info.size();
+                result.doc_to_element_range_[current_doc_id] = {elem_start, elem_end};
+
                 current_doc_id++;
             }
         }
@@ -67,10 +77,19 @@ BuildArrayOffsetsFromColumn(const segcore::SegmentInternalInterface* segment,
                 if (valid_flags.empty() || valid_flags[i]) {
                     array_len = array_views[i].length();
                 }
+
+                // Record the start position for this doc
+                int64_t elem_start = result.element_info.size();
+
                 // Add (doc_id, element_index) for each element
                 for (int32_t j = 0; j < array_len; ++j) {
                     result.element_info.emplace_back(current_doc_id, j);
                 }
+
+                // Record the range for this doc (O(1) lookup later)
+                int64_t elem_end = result.element_info.size();
+                result.doc_to_element_range_[current_doc_id] = {elem_start, elem_end};
+
                 current_doc_id++;
             }
         }
@@ -104,36 +123,7 @@ ArrayOffsets::DocIDToElementID(int64_t doc_id) const {
         return {GetTotalElementCount(), GetTotalElementCount()};
     }
 
-    // Find the first and last element for this doc
-    int64_t first_elem_id = -1;
-    int64_t last_elem_id = -1;
-
-    // Linear search (can be optimized to binary search if needed)
-    for (int64_t i = 0; i < GetTotalElementCount(); i++) {
-        if (element_info[i].first == doc_id) {
-            if (first_elem_id == -1) {
-                first_elem_id = i;
-            }
-            last_elem_id = i;
-        } else if (element_info[i].first > doc_id) {
-            break;
-        }
-    }
-
-    // If no elements found for this doc (empty array)
-    if (first_elem_id == -1) {
-        // Find the position where elements of this doc would be
-        // This is the first element of the next doc
-        for (int64_t i = 0; i < GetTotalElementCount(); i++) {
-            if (element_info[i].first > doc_id) {
-                return {i, i};
-            }
-        }
-        // If no doc after this one, return total count
-        return {GetTotalElementCount(), GetTotalElementCount()};
-    }
-
-    return {first_elem_id, last_elem_id + 1};
+    return doc_to_element_range_[doc_id];
 }
 
 std::pair<int64_t, int64_t>
@@ -157,37 +147,7 @@ GrowingArrayOffsets::DocIDToElementID(int64_t doc_id) const {
                 static_cast<int64_t>(element_info_.size())};
     }
 
-    // Find the first and last element for this doc
-    int64_t first_elem_id = -1;
-    int64_t last_elem_id = -1;
-
-    // Linear search (can be optimized to binary search if needed)
-    for (size_t i = 0; i < element_info_.size(); i++) {
-        if (element_info_[i].first == doc_id) {
-            if (first_elem_id == -1) {
-                first_elem_id = i;
-            }
-            last_elem_id = i;
-        } else if (element_info_[i].first > doc_id) {
-            break;
-        }
-    }
-
-    // If no elements found for this doc (empty array)
-    if (first_elem_id == -1) {
-        // Find the position where elements of this doc would be
-        // This is the first element of the next doc
-        for (size_t i = 0; i < element_info_.size(); i++) {
-            if (element_info_[i].first > doc_id) {
-                return {static_cast<int64_t>(i), static_cast<int64_t>(i)};
-            }
-        }
-        // If no doc after this one, return total count
-        return {static_cast<int64_t>(element_info_.size()),
-                static_cast<int64_t>(element_info_.size())};
-    }
-
-    return {first_elem_id, last_elem_id + 1};
+    return doc_to_element_range_[doc_id];
 }
 
 ArrayOffsets
@@ -234,9 +194,22 @@ GrowingArrayOffsets::Insert(int64_t doc_id_start,
         int32_t array_len = array_lengths[i];
 
         if (doc_id == committed_doc_count_) {
+            // Record the start position for this doc
+            int64_t elem_start = element_info_.size();
+
             for (int32_t j = 0; j < array_len; ++j) {
                 element_info_.emplace_back(static_cast<int32_t>(doc_id), j);
             }
+
+            // Record the end position for this doc
+            int64_t elem_end = element_info_.size();
+
+            // Ensure doc_to_element_range_ is large enough
+            if (static_cast<int64_t>(doc_to_element_range_.size()) <= doc_id) {
+                doc_to_element_range_.resize(doc_id + 1);
+            }
+            doc_to_element_range_[doc_id] = {elem_start, elem_end};
+
             committed_doc_count_++;
 
             // Try to drain pending documents
@@ -258,9 +231,23 @@ GrowingArrayOffsets::DrainPendingDocs() {
 
         // Commit this pending document
         const auto& pending = it->second;
+
+        // Record the start position for this doc
+        int64_t elem_start = element_info_.size();
+
         for (int32_t j = 0; j < pending.array_len; ++j) {
             element_info_.emplace_back(static_cast<int32_t>(pending.doc_id), j);
         }
+
+        // Record the end position for this doc
+        int64_t elem_end = element_info_.size();
+
+        // Ensure doc_to_element_range_ is large enough
+        if (static_cast<int64_t>(doc_to_element_range_.size()) <= pending.doc_id) {
+            doc_to_element_range_.resize(pending.doc_id + 1);
+        }
+        doc_to_element_range_[pending.doc_id] = {elem_start, elem_end};
+
         committed_doc_count_++;
 
         // Remove from pending

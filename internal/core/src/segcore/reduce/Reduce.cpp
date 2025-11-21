@@ -116,12 +116,17 @@ ReduceHelper::FilterInvalidSearchResult(SearchResult* search_result) {
                 real_topks[i]++;
                 offsets[valid_index] = offsets[index];
                 distances[valid_index] = distances[index];
+                if (search_result->is_element_level_)
+                    search_result->element_indices_[valid_index] =
+                        search_result->element_indices_[index];
                 valid_index++;
             }
         }
     }
     offsets.resize(valid_index);
     distances.resize(valid_index);
+    if (search_result->is_element_level_)
+        search_result->element_indices_.resize(valid_index);
     search_result->topk_per_nq_prefix_sum_.resize(nq + 1);
     std::partial_sum(real_topks.begin(),
                      real_topks.end(),

@@ -341,6 +341,9 @@ StreamReducerHelper::FilterInvalidSearchResult(SearchResult* search_result) {
                 if (search_result->group_by_values_.has_value())
                     search_result->group_by_values_.value()[valid_index] =
                         search_result->group_by_values_.value()[index];
+                if (search_result->is_element_level_)
+                    search_result->element_indices_[valid_index] =
+                        search_result->element_indices_[index];
                 valid_index++;
             }
         }
@@ -349,6 +352,8 @@ StreamReducerHelper::FilterInvalidSearchResult(SearchResult* search_result) {
     distances.resize(valid_index);
     if (search_result->group_by_values_.has_value())
         search_result->group_by_values_.value().resize(valid_index);
+    if (search_result->is_element_level_)
+        search_result->element_indices_.resize(valid_index);
 
     search_result->topk_per_nq_prefix_sum_.resize(total_nq + 1);
     std::partial_sum(real_topKs.begin(),
@@ -651,6 +656,13 @@ StreamReducerHelper::GetSearchResultDataSlice(int slice_index,
     // reserve space for distances
     search_result_data->mutable_scores()->Resize(result_count, 0);
 
+    // reserve space for element_indices if needed
+    if (merged_search_result->is_element_level_) {
+        search_result_data->mutable_element_indices()
+            ->mutable_data()
+            ->Resize(result_count, -1);
+    }
+
     //reserve space for group_by_values
     std::vector<GroupByValueType> group_by_values;
     if (plan_->plan_node_->search_info_.group_by_field_id_.has_value()) {
@@ -707,6 +719,15 @@ StreamReducerHelper::GetSearchResultDataSlice(int slice_index,
 
             search_result_data->mutable_scores()->Set(
                 loc, merged_search_result->distances_[ki]);
+
+            // set element_indices if present
+            if (merged_search_result->is_element_level_) {
+                int32_t elem_idx = merged_search_result->element_indices_[ki];
+                search_result_data->mutable_element_indices()
+                    ->mutable_data()
+                    ->Set(loc, elem_idx);
+            }
+
             // set group by values
             if (merged_search_result->group_by_values_.has_value() &&
                 ki < merged_search_result->group_by_values_.value().size())

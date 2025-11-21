@@ -61,7 +61,9 @@ PhyElementFilterBitsNode::GetOutput() {
 
     std::chrono::high_resolution_clock::time_point start_time =
         std::chrono::high_resolution_clock::now();
+    std::chrono::high_resolution_clock::time_point step_time;
 
+    // Step 1: Get array offsets
     auto segment = query_context_->get_segment();
     auto field_meta = milvus::FindFirstArrayFieldInStruct(segment->get_schema(),
                                                           struct_name_);
@@ -77,28 +79,50 @@ PhyElementFilterBitsNode::GetOutput() {
         array_offsets->DocIDToElementID(query_context_->get_active_count());
     query_context_->set_active_element_count(first_elem);
 
+    step_time = std::chrono::high_resolution_clock::now();
+    double step1_cost = std::chrono::duration<double, std::micro>(step_time - start_time).count();
+    LOG_INFO("debug=== ElementFilterBitsNode step1 (get array_offsets): {} ms", step1_cost / 1000);
+
+    // Step 2: Prepare doc bitset
     auto col_input = GetColumnVector(input_);
     TargetBitmapView doc_bitset(col_input->GetRawData(), col_input->size());
     TargetBitmapView doc_bitset_valid(col_input->GetValidRawData(),
                                       col_input->size());
     doc_bitset.flip();
 
-    // Convert doc bitset to element offsets
+    auto step2_start = std::chrono::high_resolution_clock::now();
+    double step2_cost = std::chrono::duration<double, std::micro>(step2_start - step_time).count();
+    LOG_INFO("debug=== ElementFilterBitsNode step2 (prepare doc_bitset): {} ms", step2_cost / 1000);
+
+    // Step 3: Convert doc bitset to element offsets
     FixedVector<int32_t> element_offsets =
         DocBitsetToElementOffsets(doc_bitset);
 
+    auto step3_start = std::chrono::high_resolution_clock::now();
+    double step3_cost = std::chrono::duration<double, std::micro>(step3_start - step2_start).count();
+    LOG_INFO("debug=== ElementFilterBitsNode step3 (DocBitsetToElementOffsets): {} ms, element_count: {}",
+             step3_cost / 1000, element_offsets.size());
+
+    // Step 4: Evaluate element expression
     auto [expr_result, valid_expr_result] =
         EvaluateElementExpression(element_offsets);
 
+    auto step4_start = std::chrono::high_resolution_clock::now();
+    double step4_cost = std::chrono::duration<double, std::micro>(step4_start - step3_start).count();
+    LOG_INFO("debug=== ElementFilterBitsNode step4 (EvaluateElementExpression): {} ms", step4_cost / 1000);
+
+    // Step 5: Set query context
     query_context_->set_is_element_level_query(true);
     query_context_->set_struct_name(struct_name_);
 
     std::chrono::high_resolution_clock::time_point end_time =
         std::chrono::high_resolution_clock::now();
-    double cost =
+    double total_cost =
         std::chrono::duration<double, std::micro>(end_time - start_time)
             .count();
-    milvus::monitor::internal_core_search_latency_scalar.Observe(cost / 1000);
+    milvus::monitor::internal_core_search_latency_scalar.Observe(total_cost / 1000);
+
+    LOG_INFO("debug=== ElementFilterBitsNode TOTAL: {} ms", total_cost / 1000);
 
     auto filtered_count = expr_result.count();
     tracer::AddEvent(
@@ -108,7 +132,7 @@ PhyElementFilterBitsNode::GetOutput() {
                     array_offsets->GetTotalElementCount(),
                     array_offsets->GetTotalElementCount() - filtered_count,
                     filtered_count,
-                    cost));
+                    total_cost));
 
     std::vector<VectorPtr> col_res;
     col_res.push_back(std::make_shared<ColumnVector>(
