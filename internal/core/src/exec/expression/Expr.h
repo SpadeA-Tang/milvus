@@ -707,46 +707,89 @@ class SegmentExpr : public Expr {
                           field_id_.get());
             }
 
+            // Batch process consecutive elements belonging to the same chunk
             size_t processed_size = 0;
+            size_t i = 0;
 
-            for (size_t i = 0; i < element_ids->size(); i++) {
+            // Reuse these vectors to avoid repeated heap allocations
+            FixedVector<int32_t> offsets;
+            FixedVector<int32_t> elem_indices;
+
+            while (i < element_ids->size()) {
+                // Start of a new chunk batch
                 int64_t element_id = (*element_ids)[i];
-
                 auto [doc_id, elem_idx] =
                     array_offsets->ElementIDToDoc(element_id);
-
                 auto [chunk_id, chunk_offset] =
                     segment_->get_chunk_by_offset(field_id_, doc_id);
 
-                auto pw = segment_->get_views_by_offsets<ArrayView>(
-                    op_ctx_, field_id_, chunk_id, {int32_t(chunk_offset)});
-                auto [array_vec, valid_data] = pw.get();
+                // Collect consecutive elements belonging to the same chunk
+                offsets.clear();
+                elem_indices.clear();
+                offsets.push_back(chunk_offset);
+                elem_indices.push_back(elem_idx);
 
-                if ((!skip_func ||
-                     !skip_func(skip_index, field_id_, chunk_id)) &&
-                    (!namespace_skip_func_.has_value() ||
-                     !namespace_skip_func_.value()(chunk_id))) {
-                    // Extract element from ArrayView
-                    auto value = array_vec[0].get_data<ElementType>(elem_idx);
-                    bool is_valid = !valid_data.data() || valid_data[0];
+                size_t batch_start = i;
+                i++;
 
-                    func.template operator()<FilterType::random>(
-                        &value,
-                        &is_valid,
-                        nullptr,
-                        1,
-                        res + processed_size,
-                        valid_res + processed_size,
-                        values...);
-                } else {
-                    // Chunk is skipped - handle exactly like ProcessDataByOffsets
-                    if (valid_data.size() > processed_size &&
-                        !valid_data[processed_size]) {
-                        res[processed_size] = valid_res[processed_size] = false;
+                // Look ahead for more elements in the same chunk
+                while (i < element_ids->size()) {
+                    int64_t next_element_id = (*element_ids)[i];
+                    auto [next_doc_id, next_elem_idx] =
+                        array_offsets->ElementIDToDoc(next_element_id);
+                    auto [next_chunk_id, next_chunk_offset] =
+                        segment_->get_chunk_by_offset(field_id_, next_doc_id);
+
+                    if (next_chunk_id != chunk_id) {
+                        break;  // Different chunk, process current batch
                     }
+
+                    offsets.push_back(next_chunk_offset);
+                    elem_indices.push_back(next_elem_idx);
+                    i++;
                 }
 
-                processed_size++;
+                // Batch fetch all ArrayViews for this chunk
+                auto start = std::chrono::high_resolution_clock::now();
+                auto pw = segment_->get_views_by_offsets<ArrayView>(
+                    op_ctx_, field_id_, chunk_id, offsets);
+                auto end = std::chrono::high_resolution_clock::now();
+                accu_time +=
+                    std::chrono::duration<double, std::micro>(end - start)
+                        .count();
+
+                auto [array_vec, valid_data] = pw.get();
+
+                // Process each element in this batch
+                for (size_t j = 0; j < offsets.size(); j++) {
+                    size_t result_idx = batch_start + j;
+
+                    if ((!skip_func ||
+                         !skip_func(skip_index, field_id_, chunk_id)) &&
+                        (!namespace_skip_func_.has_value() ||
+                         !namespace_skip_func_.value()(chunk_id))) {
+                        // Extract element from ArrayView
+                        auto value =
+                            array_vec[j].template get_data<ElementType>(elem_indices[j]);
+                        bool is_valid = !valid_data.data() || valid_data[j];
+
+                        func.template operator()<FilterType::random>(
+                            &value,
+                            &is_valid,
+                            nullptr,
+                            1,
+                            res + result_idx,
+                            valid_res + result_idx,
+                            values...);
+                    } else {
+                        // Chunk is skipped - handle exactly like ProcessDataByOffsets
+                        if (valid_data.size() > j && !valid_data[j]) {
+                            res[result_idx] = valid_res[result_idx] = false;
+                        }
+                    }
+
+                    processed_size++;
+                }
             }
 
             LOG_INFO("debug=== ProcessElementLevelByOffsets: time spent: {} ms",
