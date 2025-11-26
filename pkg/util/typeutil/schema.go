@@ -471,6 +471,15 @@ func (helper *SchemaHelper) GetFieldFromName(fieldName string) (*schemapb.FieldS
 func (helper *SchemaHelper) GetFieldFromNameDefaultJSON(fieldName string) (*schemapb.FieldSchema, error) {
 	offset, ok := helper.nameOffset[fieldName]
 	if !ok {
+		// Debug log: print nameOffset keys when field not found
+		nameOffsetKeys := make([]string, 0, len(helper.nameOffset))
+		for k := range helper.nameOffset {
+			nameOffsetKeys = append(nameOffsetKeys, k)
+		}
+		log.Info("debug=== GetFieldFromNameDefaultJSON field not in nameOffset, falling back to JSON",
+			zap.String("schemaName", helper.schema.Name),
+			zap.String("lookupFieldName", fieldName),
+			zap.Strings("nameOffsetKeys", nameOffsetKeys))
 		return helper.getDefaultJSONField(fieldName)
 	}
 	fieldSchema := helper.allFields[offset]

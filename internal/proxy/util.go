@@ -1244,12 +1244,35 @@ func validateFieldDataColumns(columns []*schemapb.FieldData, schema *schemaInfo)
 // It assumes that columns have been validated and does not perform validation.
 // Use validateFieldDataColumns before calling this function if validation is needed.
 func fillFieldPropertiesOnly(columns []*schemapb.FieldData, schema *schemaInfo) error {
+	// Debug log: print all struct subfield names in schema helper
+	for _, structField := range schema.CollectionSchema.GetStructArrayFields() {
+		for _, subField := range structField.GetFields() {
+			log.Info("debug=== fillFieldPropertiesOnly schema helper struct subfield",
+				zap.String("collectionName", schema.Name),
+				zap.String("structName", structField.Name),
+				zap.String("subFieldName", subField.Name),
+				zap.Int64("subFieldID", subField.FieldID))
+		}
+	}
+
 	for _, fieldData := range columns {
 		// Use schemaHelper to get field schema, automatically handles dynamic fields
 		fieldSchema, err := schema.schemaHelper.GetFieldFromNameDefaultJSON(fieldData.FieldName)
 		if err != nil {
+			log.Info("debug=== fillFieldPropertiesOnly field not found",
+				zap.String("collectionName", schema.Name),
+				zap.String("fieldName", fieldData.FieldName),
+				zap.Error(err))
 			return fmt.Errorf("fieldName %v not exist in collection schema", fieldData.FieldName)
 		}
+
+		// Debug log: print field lookup result
+		log.Info("debug=== fillFieldPropertiesOnly field lookup",
+			zap.String("collectionName", schema.Name),
+			zap.String("lookupFieldName", fieldData.FieldName),
+			zap.String("foundFieldName", fieldSchema.Name),
+			zap.Int64("assignedFieldID", fieldSchema.FieldID),
+			zap.Bool("isDynamic", fieldSchema.IsDynamic))
 
 		fieldData.FieldId = fieldSchema.FieldID
 		fieldData.Type = fieldSchema.DataType
@@ -1886,6 +1909,15 @@ func checkAndFlattenStructFieldData(schema *schemapb.CollectionSchema, insertMsg
 	structSchemaMap := make(map[string]*schemapb.StructArrayFieldSchema, len(schema.GetStructArrayFields()))
 	for _, structField := range schema.GetStructArrayFields() {
 		structSchemaMap[structField.Name] = structField
+		// Debug log: print struct schema subfield names
+		for _, subField := range structField.GetFields() {
+			log.Info("debug=== checkAndFlattenStructFieldData schema struct subfield",
+				zap.String("collectionName", schema.Name),
+				zap.String("structName", structField.Name),
+				zap.Int64("structFieldID", structField.FieldID),
+				zap.String("subFieldName", subField.Name),
+				zap.Int64("subFieldID", subField.FieldID))
+		}
 	}
 
 	fieldSchemaMap := make(map[string]*schemapb.FieldSchema, len(schema.GetFields()))
@@ -1960,6 +1992,13 @@ func checkAndFlattenStructFieldData(schema *schemapb.CollectionSchema, insertMsg
 				Field:     subField.Field,
 				IsDynamic: subField.IsDynamic,
 			}
+
+			// Debug log: print flattened struct subfield
+			log.Info("debug=== checkAndFlattenStructFieldData flattened subfield",
+				zap.String("collectionName", schema.Name),
+				zap.String("originalFieldName", subField.FieldName),
+				zap.String("transformedFieldName", transformedFieldName),
+				zap.Int64("fieldIdFromInput", subField.FieldId))
 
 			flattenedFields = append(flattenedFields, subFieldCopy)
 		}

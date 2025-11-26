@@ -538,13 +538,24 @@ func RowBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemap
 // When the length is not aligned, an error will be returned.
 func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *schemapb.CollectionSchema) (idata *InsertData, err error) {
 	srcFields := make(map[FieldID]*schemapb.FieldData)
+	// Debug log: print all incoming field IDs from message
+	incomingFieldIds := make([]int64, 0, len(msg.FieldsData))
 	for _, field := range msg.FieldsData {
 		if _, ok := field.Field.(*schemapb.FieldData_StructArrays); ok {
 			// unreachable
 			panic("struct is not flattened")
 		}
 		srcFields[field.FieldId] = field
+		incomingFieldIds = append(incomingFieldIds, field.FieldId)
+		// Debug log: print each incoming field
+		log.Info("debug=== ColumnBasedInsertMsgToInsertData incoming field",
+			zap.String("collectionName", collSchema.Name),
+			zap.String("fieldName", field.FieldName),
+			zap.Int64("fieldId", field.FieldId))
 	}
+	log.Info("debug=== ColumnBasedInsertMsgToInsertData all incoming fieldIds",
+		zap.String("collectionName", collSchema.Name),
+		zap.Int64s("incomingFieldIds", incomingFieldIds))
 
 	idata = &InsertData{
 		Data: make(map[FieldID]FieldData),
@@ -1599,6 +1610,26 @@ func GetDefaultValue(fieldSchema *schemapb.FieldSchema) interface{} {
 func fillMissingFields(schema *schemapb.CollectionSchema, insertData *InsertData) error {
 	batchRows := int64(insertData.GetRowNum())
 
+	// Debug log: print existing FieldIds in insertData
+	existingFieldIds := make([]int64, 0, len(insertData.Data))
+	for fieldId := range insertData.Data {
+		existingFieldIds = append(existingFieldIds, fieldId)
+	}
+	log.Info("debug=== fillMissingFields existing fieldIds in insertData",
+		zap.String("collectionName", schema.Name),
+		zap.Int64s("existingFieldIds", existingFieldIds))
+
+	// Debug log: print all struct subfields in schema
+	for _, structField := range schema.GetStructArrayFields() {
+		for _, subField := range structField.GetFields() {
+			log.Info("debug=== fillMissingFields schema struct subfield",
+				zap.String("collectionName", schema.Name),
+				zap.String("structName", structField.Name),
+				zap.String("subFieldName", subField.Name),
+				zap.Int64("subFieldID", subField.FieldID))
+		}
+	}
+
 	allFields := typeutil.GetAllFieldSchemas(schema)
 	for _, field := range allFields {
 		// Skip function output fields and system fields
@@ -1609,6 +1640,14 @@ func fillMissingFields(schema *schemapb.CollectionSchema, insertData *InsertData
 		_, exists := insertData.Data[field.GetFieldID()]
 
 		if !exists {
+			// Debug log: print missing field info
+			log.Info("debug=== fillMissingFields field missing",
+				zap.String("collectionName", schema.Name),
+				zap.String("fieldName", field.Name),
+				zap.Int64("expectedFieldID", field.GetFieldID()),
+				zap.Bool("nullable", field.GetNullable()),
+				zap.Bool("hasDefault", field.GetDefaultValue() != nil))
+
 			// Create default field data if not found
 			fieldData, err := NewFieldData(field.DataType, field, int(batchRows))
 			if err != nil {
@@ -1630,6 +1669,11 @@ func fillMissingFields(schema *schemapb.CollectionSchema, insertData *InsertData
 					}
 				}
 			} else {
+				log.Info("debug=== fillMissingFields ERROR: field not nullable and no default",
+					zap.String("collectionName", schema.Name),
+					zap.String("fieldName", field.Name),
+					zap.Int64("expectedFieldID", field.GetFieldID()),
+					zap.Int64s("existingFieldIds", existingFieldIds))
 				return merr.WrapErrServiceInternal(fmt.Sprintf("field %s is not nullable and has no default value", field.Name))
 			}
 			insertData.Data[field.GetFieldID()] = fieldData
