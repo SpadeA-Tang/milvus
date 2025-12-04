@@ -30,6 +30,7 @@
 #include "exec/expression/GISFunctionFilterExpr.h"
 #include "exec/expression/JsonContainsExpr.h"
 #include "exec/expression/LogicalBinaryExpr.h"
+#include "exec/expression/MatchExpr.h"
 #include "exec/expression/LogicalUnaryExpr.h"
 #include "exec/expression/NullExpr.h"
 #include "exec/expression/TermExpr.h"
@@ -164,6 +165,23 @@ CompileExpression(const expr::TypedExprPtr& expr,
                   const std::unordered_set<std::string>& flatten_candidates,
                   bool enable_constant_folding) {
     ExprPtr result;
+    auto op_ctx = context->get_op_context();
+
+    // MatchExpr special handling: predicate is stored as serialized protobuf bytes,
+    // passed directly to Tantivy FFI during Eval. No need to compile inputs.
+    if (auto match_expr =
+            std::dynamic_pointer_cast<const milvus::expr::MatchExpr>(expr)) {
+        return std::make_shared<PhyMatchFilterExpr>(
+            std::vector<ExprPtr>{},  // No compiled inputs - predicate is protobuf bytes
+            match_expr,
+            "PhyMatchFilterExpr",
+            op_ctx,
+            context->get_segment(),
+            context->get_active_count(),
+            context->query_config()->get_expr_batch_size(),
+            context->get_consistency_level());
+    }
+
     auto compiled_inputs = CompileInputs(expr, context, flatten_candidates);
 
     auto GetTypes = [](const std::vector<ExprPtr>& exprs) {
@@ -175,7 +193,6 @@ CompileExpression(const expr::TypedExprPtr& expr,
         return types;
     };
     auto input_types = GetTypes(compiled_inputs);
-    auto op_ctx = context->get_op_context();
 
     if (auto call = std::dynamic_pointer_cast<const expr::CallExpr>(expr)) {
         result = std::make_shared<PhyCallExpr>(

@@ -20,7 +20,6 @@
 
 #include "common/EasyAssert.h"
 #include "common/Types.h"
-#include "common/OpContext.h"
 #include "common/Vector.h"
 #include "exec/expression/Expr.h"
 #include "segcore/SegmentInterface.h"
@@ -28,37 +27,29 @@
 namespace milvus {
 namespace exec {
 
-class PhyValueExpr : public Expr {
+class PhyMatchFilterExpr : public SegmentExpr {
  public:
-    PhyValueExpr(const std::vector<std::shared_ptr<Expr>>& input,
-                 const std::shared_ptr<const milvus::expr::ValueExpr> expr,
-                 const std::string& name,
-                 milvus::OpContext* op_ctx,
-                 const segcore::SegmentInternalInterface* segment,
-                 int64_t active_count,
-                 int64_t batch_size)
-        : Expr(expr->type(), std::move(input), name, op_ctx),
-          expr_(expr),
-          active_count_(active_count),
-          batch_size_(batch_size) {
-        AssertInfo(input.empty(),
-                   "PhyValueExpr should not have input, but got " +
-                       std::to_string(input.size()));
-    }
+    PhyMatchFilterExpr(
+        std::vector<std::shared_ptr<Expr>> input,
+        const std::shared_ptr<const milvus::expr::MatchExpr>& expr,
+        const std::string& name,
+        milvus::OpContext* op_ctx,
+        const segcore::SegmentInternalInterface* segment,
+        int64_t active_count,
+        int64_t batch_size,
+        int32_t consistency_level);
 
     void
     Eval(EvalCtx& context, VectorPtr& result) override;
 
     void
     MoveCursor() override {
-        if (!has_offset_input_) {
-            int64_t real_batch_size =
-                current_pos_ + batch_size_ >= active_count_
-                    ? active_count_ - current_pos_
-                    : batch_size_;
+        // No cursor movement needed - Tantivy handles query execution internally
+    }
 
-            current_pos_ += real_batch_size;
-        }
+    bool
+    SupportOffsetInput() override {
+        return true;
     }
 
     std::string
@@ -68,25 +59,22 @@ class PhyValueExpr : public Expr {
 
     bool
     IsSource() const override {
-        return true;
+        return true;  // This is a source expression (queries Tantivy index)
     }
 
     std::optional<milvus::expr::ColumnInfo>
     GetColumnInfo() const override {
-        return std::nullopt;
-    }
-
-    std::shared_ptr<const milvus::expr::ValueExpr>
-    GetLogicalExpr() const {
-        return expr_;
+        return std::nullopt;  // Match expressions don't have a single column info
     }
 
  private:
-    std::shared_ptr<const milvus::expr::ValueExpr> expr_;
-    const int64_t active_count_;
-    int64_t current_pos_{0};
-    const int64_t batch_size_;
+    int64_t
+    GetCurrentRows() const {
+        return current_data_global_pos_;
+    }
+
+    std::shared_ptr<const milvus::expr::MatchExpr> expr_;
 };
 
-}  //namespace exec
+}  // namespace exec
 }  // namespace milvus

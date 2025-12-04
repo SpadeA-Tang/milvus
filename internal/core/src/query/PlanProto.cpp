@@ -593,6 +593,19 @@ ProtoParser::ParseGISFunctionFilterExprs(
 }
 
 expr::TypedExprPtr
+ProtoParser::ParseMatchExprs(const proto::plan::MatchExpr& expr_pb) {
+    auto struct_name = expr_pb.struct_name();
+    auto match_type = expr_pb.match_type();
+    auto count = expr_pb.count();
+
+    // Serialize predicate proto for Tantivy FFI (only serialize once here)
+    std::string predicate_proto_bytes = expr_pb.predicate().SerializeAsString();
+
+    return std::make_shared<expr::MatchExpr>(
+        struct_name, match_type, count, std::move(predicate_proto_bytes));
+}
+
+expr::TypedExprPtr
 ProtoParser::CreateAlwaysTrueExprs() {
     return std::make_shared<expr::AlwaysTrueExpr>();
 }
@@ -669,6 +682,10 @@ ProtoParser::ParseExprs(const proto::plan::Expr& expr_pb,
         case ppe::kTimestamptzArithCompareExpr: {
             result = ParseTimestamptzArithCompareExprs(
                 expr_pb.timestamptz_arith_compare_expr());
+            break;
+        }
+        case ppe::kMatchExpr: {
+            result = ParseMatchExprs(expr_pb.match_expr());
             break;
         }
         default: {

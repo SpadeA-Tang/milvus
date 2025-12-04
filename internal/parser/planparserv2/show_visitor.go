@@ -67,6 +67,8 @@ func (v *ShowExprVisitor) VisitExpr(expr *planpb.Expr) interface{} {
 		js["expr"] = v.VisitColumnExpr(realExpr.ColumnExpr)
 	case *planpb.Expr_NullExpr:
 		js["expr"] = v.VisitNullExpr(realExpr.NullExpr)
+	case *planpb.Expr_MatchExpr:
+		js["expr"] = v.VisitMatchExpr(realExpr.MatchExpr)
 	default:
 		js["expr"] = ""
 	}
@@ -185,6 +187,16 @@ func (v *ShowExprVisitor) VisitNullExpr(expr *planpb.NullExpr) interface{} {
 	js["expr_type"] = "null"
 	js["op"] = expr.Op.String()
 	js["column_info"] = extractColumnInfo(expr.GetColumnInfo())
+	return js
+}
+
+func (v *ShowExprVisitor) VisitMatchExpr(expr *planpb.MatchExpr) interface{} {
+	js := make(map[string]interface{})
+	js["expr_type"] = "match"
+	js["struct_name"] = expr.GetStructName()
+	js["match_type"] = expr.GetMatchType().String()
+	js["count"] = expr.GetCount()
+	js["predicate"] = v.VisitExpr(expr.GetPredicate())
 	return js
 }
 

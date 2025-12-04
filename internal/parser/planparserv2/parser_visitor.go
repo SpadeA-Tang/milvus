@@ -24,6 +24,8 @@ type ParserVisitor struct {
 	parser.BasePlanVisitor
 	schema *typeutil.SchemaHelper
 	args   *ParserVisitorArgs
+	// currentStructArrayField stores the struct array field name when processing MATCH_ALL
+	currentStructArrayField string
 }
 
 func NewParserVisitor(schema *typeutil.SchemaHelper, args *ParserVisitorArgs) *ParserVisitor {
@@ -163,7 +165,7 @@ func (v *ParserVisitor) VisitString(ctx *parser.StringContext) interface{} {
 }
 
 func checkDirectComparisonBinaryField(columnInfo *planpb.ColumnInfo) error {
-	if typeutil.IsArrayType(columnInfo.GetDataType()) && len(columnInfo.GetNestedPath()) == 0 {
+	if typeutil.IsArrayType(columnInfo.GetDataType()) && len(columnInfo.GetNestedPath()) == 0 && !columnInfo.GetIsElementAccess() {
 		return errors.New("can not comparisons array fields directly")
 	}
 	return nil
@@ -682,7 +684,10 @@ func (v *ParserVisitor) VisitTerm(ctx *parser.TermContext) interface{} {
 	}
 
 	dataType := columnInfo.GetDataType()
-	if typeutil.IsArrayType(dataType) && len(columnInfo.GetNestedPath()) != 0 {
+	// Use element type for IN operation in two cases:
+	// 1. Array with nested path (e.g., arr[0] IN [1, 2, 3])
+	// 2. Array with element access flag (e.g., e[intField] IN [1, 2] in MATCH_ALL)
+	if typeutil.IsArrayType(dataType) && (len(columnInfo.GetNestedPath()) != 0 || columnInfo.GetIsElementAccess()) {
 		dataType = columnInfo.GetElementType()
 	}
 
@@ -1189,6 +1194,79 @@ func (v *ParserVisitor) VisitBitOr(ctx *parser.BitOrContext) interface{} {
 	NestedPath: []string{"user"},
 }, nil
 */
+
+// getColumnInfoFromStructSubField parses $[fieldName] syntax within MATCH_ALL
+// input: $[sub_str] or $[sub_str][n]
+// output: finds field named "structArrayField[sub_str]" in schema
+// and returns ColumnInfo with element-level access
+func (v *ParserVisitor) getColumnInfoFromStructSubField(tokenText string) (*planpb.ColumnInfo, error) {
+	// Check if we're inside a MATCH_ALL context
+	if v.currentStructArrayField == "" {
+		return nil, fmt.Errorf("$[...] syntax can only be used inside MATCH_ALL")
+	}
+
+	// Parse: $[sub_str] or $[sub_str][n]
+	// Remove "$[" prefix
+	if !strings.HasPrefix(tokenText, "$[") {
+		return nil, fmt.Errorf("invalid struct sub-field syntax: %s", tokenText)
+	}
+
+	remaining := tokenText[2:] // "sub_str]" or "sub_str][n]"
+
+	// Extract sub-field name
+	bracketParts := strings.SplitN(remaining, "]", 2)
+	if len(bracketParts) < 1 || bracketParts[0] == "" {
+		return nil, fmt.Errorf("invalid struct sub-field syntax: %s", tokenText)
+	}
+
+	subFieldName := bracketParts[0] // "sub_str"
+
+	// Construct full field name for struct array field
+	fullFieldName := v.currentStructArrayField + "[" + subFieldName + "]"
+
+	// Look up the field in schema
+	field, err := v.schema.GetFieldFromName(fullFieldName)
+	if err != nil {
+		return nil, fmt.Errorf("struct sub-field not found: %s, error: %s", fullFieldName, err)
+	}
+
+	// In element-level context, data_type should be the element type
+	elementType := field.GetElementType()
+
+	// Process optional array index (e.g., [0])
+	nestedPath := make([]string, 0)
+	if len(bracketParts) > 1 && len(bracketParts[1]) > 0 {
+		remainingIndices := bracketParts[1] // "[n]" or ""
+		if strings.HasPrefix(remainingIndices, "[") && strings.HasSuffix(remainingIndices, "]") {
+			index := strings.Trim(remainingIndices, "[]")
+			if index == "" {
+				return nil, fmt.Errorf("invalid struct sub-field syntax: %s", tokenText)
+			}
+
+			// Must be a valid integer (array index)
+			if _, err := strconv.ParseInt(index, 10, 64); err != nil {
+				return nil, fmt.Errorf("struct array index must be an integer: \"%s\"", index)
+			}
+			nestedPath = append(nestedPath, index)
+		} else if remainingIndices != "" {
+			return nil, fmt.Errorf("invalid array index format in: %s", tokenText)
+		}
+	}
+
+	return &planpb.ColumnInfo{
+		FieldId:         field.FieldID,
+		DataType:        elementType, // Use element type, not storage type
+		IsPrimaryKey:    field.IsPrimaryKey,
+		IsAutoID:        field.AutoID,
+		NestedPath:      nestedPath,
+		IsPartitionKey:  field.IsPartitionKey,
+		IsClusteringKey: field.IsClusteringKey,
+		ElementType:     elementType,
+		Nullable:        field.GetNullable(),
+		IsElementAccess: true, // Mark as element-level access within MATCH_ALL
+	}, nil
+}
+
 // More tests refer to plan_parser_v2_test.go::Test_JSONExpr
 func (v *ParserVisitor) getColumnInfoFromJSONIdentifier(identifier string) (*planpb.ColumnInfo, error) {
 	identifier = decodeUnicode(identifier)
@@ -1259,6 +1337,29 @@ func (v *ParserVisitor) VisitJSONIdentifier(ctx *parser.JSONIdentifierContext) i
 	}
 }
 
+// VisitStructSubField handles $[fieldName] syntax within MATCH_ALL
+// Example: $[sub_str] or $[sub_str][0]
+func (v *ParserVisitor) VisitStructSubField(ctx *parser.StructSubFieldContext) interface{} {
+	tokenText := ctx.StructSubFieldIdentifier().GetText()
+
+	field, err := v.getColumnInfoFromStructSubField(tokenText)
+	if err != nil {
+		return err
+	}
+
+	return &ExprWithType{
+		expr: &planpb.Expr{
+			Expr: &planpb.Expr_ColumnExpr{
+				ColumnExpr: &planpb.ColumnExpr{
+					Info: field,
+				},
+			},
+		},
+		dataType:      field.GetDataType(),
+		nodeDependent: true,
+	}
+}
+
 func (v *ParserVisitor) VisitExists(ctx *parser.ExistsContext) interface{} {
 	child := ctx.Expr().Accept(v)
 	if err := getError(child); err != nil {
@@ -1294,6 +1395,98 @@ func (v *ParserVisitor) VisitExists(ctx *parser.ExistsContext) interface{} {
 		},
 		dataType: schemapb.DataType_Bool,
 	}
+}
+
+// parseMatchExpr is a helper function for parsing match expressions
+// matchType: the type of match operation (MatchAll, MatchAny, MatchLeast, MatchMost)
+// count: for MatchLeast/MatchMost, the count parameter (N); for MatchAll/MatchAny, this is ignored (0)
+func (v *ParserVisitor) parseMatchExpr(structArrayFieldName string, exprCtx parser.IExprContext, matchType planpb.MatchType, count int64, funcName string) interface{} {
+	// Check for nested match expression - not allowed
+	if v.currentStructArrayField != "" {
+		return fmt.Errorf("nested %s is not supported, already inside match expression for field: %s", funcName, v.currentStructArrayField)
+	}
+
+	// Set current context for element expression parsing
+	v.currentStructArrayField = structArrayFieldName
+	defer func() { v.currentStructArrayField = "" }()
+
+	// Parse the predicate expression
+	predicate := exprCtx.Accept(v)
+	if err := getError(predicate); err != nil {
+		return fmt.Errorf("cannot parse predicate expression: %s, error: %s", exprCtx.GetText(), err)
+	}
+
+	predicateExpr := getExpr(predicate)
+	if predicateExpr == nil {
+		return fmt.Errorf("invalid predicate expression in %s: %s", funcName, exprCtx.GetText())
+	}
+
+	// Build MatchExpr proto
+	return &ExprWithType{
+		expr: &planpb.Expr{
+			Expr: &planpb.Expr_MatchExpr{
+				MatchExpr: &planpb.MatchExpr{
+					StructName: structArrayFieldName,
+					Predicate:  predicateExpr.expr,
+					MatchType:  matchType,
+					Count:      count,
+				},
+			},
+		},
+		dataType: schemapb.DataType_Bool,
+	}
+}
+
+// VisitMatchAll handles MATCH_ALL expressions
+// Syntax: MATCH_ALL(structArrayField, $[intField] == 1 && $[strField] == "aaa")
+// All elements must match the predicate
+func (v *ParserVisitor) VisitMatchAll(ctx *parser.MatchAllContext) interface{} {
+	structArrayFieldName := ctx.Identifier().GetText()
+	return v.parseMatchExpr(structArrayFieldName, ctx.Expr(), planpb.MatchType_MatchAll, 0, "MATCH_ALL")
+}
+
+// VisitMatchAny handles MATCH_ANY expressions
+// Syntax: MATCH_ANY(structArrayField, $[intField] == 1 && $[strField] == "aaa")
+// At least one element must match the predicate
+func (v *ParserVisitor) VisitMatchAny(ctx *parser.MatchAnyContext) interface{} {
+	structArrayFieldName := ctx.Identifier().GetText()
+	return v.parseMatchExpr(structArrayFieldName, ctx.Expr(), planpb.MatchType_MatchAny, 0, "MATCH_ANY")
+}
+
+// VisitMatchLeast handles MATCH_LEAST expressions
+// Syntax: MATCH_LEAST(structArrayField, $[intField] == 1 && $[strField] == "aaa", N)
+// At least N elements must match the predicate
+func (v *ParserVisitor) VisitMatchLeast(ctx *parser.MatchLeastContext) interface{} {
+	structArrayFieldName := ctx.Identifier().GetText()
+
+	countStr := ctx.IntegerConstant().GetText()
+	count, err := strconv.ParseInt(countStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid count in MATCH_LEAST: %s", countStr)
+	}
+	if count <= 0 {
+		return fmt.Errorf("count in MATCH_LEAST must be positive, got: %d", count)
+	}
+
+	return v.parseMatchExpr(structArrayFieldName, ctx.Expr(), planpb.MatchType_MatchLeast, count, "MATCH_LEAST")
+}
+
+// VisitMatchMost handles MATCH_MOST expressions
+// Syntax: MATCH_MOST(structArrayField, $[intField] == 1 && $[strField] == "aaa", N)
+// At most N elements must match the predicate
+func (v *ParserVisitor) VisitMatchMost(ctx *parser.MatchMostContext) interface{} {
+	structArrayFieldName := ctx.Identifier().GetText()
+
+	countStr := ctx.IntegerConstant().GetText()
+	count, err := strconv.ParseInt(countStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid count in MATCH_MOST: %s", countStr)
+	}
+	if count < 0 {
+		return fmt.Errorf("count in MATCH_MOST cannot be negative, got: %d", count)
+	}
+
+	return v.parseMatchExpr(structArrayFieldName, ctx.Expr(), planpb.MatchType_MatchMost, count, "MATCH_MOST")
 }
 
 func (v *ParserVisitor) VisitArray(ctx *parser.ArrayContext) interface{} {

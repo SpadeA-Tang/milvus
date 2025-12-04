@@ -86,6 +86,11 @@ class PhyColumnExpr : public Expr {
         }
     }
 
+    std::shared_ptr<const milvus::expr::ColumnExpr>
+    GetLogicalExpr() const {
+        return expr_;
+    }
+
  private:
     int64_t
     GetCurrentRows() const {

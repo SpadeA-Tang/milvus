@@ -168,6 +168,8 @@ const (
 	JSONCastTypeKey     = "json_cast_type"
 	JSONPathKey         = "json_path"
 	JSONCastFunctionKey = "json_cast_function"
+
+	SubFieldNames = "sub_fields"
 )
 
 // expr query params

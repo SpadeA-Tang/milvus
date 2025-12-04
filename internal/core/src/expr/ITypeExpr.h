@@ -817,7 +817,7 @@ class GISFunctionFilterExpr : public ITypeFilterExpr {
         : column_(cloumn),
           op_(op),
           geometry_wkt_(geometry_wkt),
-          distance_(distance){};
+          distance_(distance) {};
     std::string
     ToString() const override {
         if (op_ == proto::plan::GISFunctionFilterExpr_GISOp_DWithin) {
@@ -878,6 +878,58 @@ class JsonContainsExpr : public ITypeFilterExpr {
     bool same_type_;
     const std::vector<proto::plan::GenericValue> vals_;
 };
+
+// MatchType mirrors the protobuf MatchType enum
+using MatchType = proto::plan::MatchType;
+
+class MatchExpr : public ITypeFilterExpr {
+ public:
+    MatchExpr(const std::string& struct_name,
+              MatchType match_type,
+              int64_t count,
+              std::string predicate_proto_bytes)
+        : struct_name_(struct_name),
+          match_type_(match_type),
+          count_(count),
+          predicate_proto_bytes_(std::move(predicate_proto_bytes)) {
+        // No inputs_ - predicate is passed directly to Tantivy as protobuf bytes
+    }
+
+    std::string
+    ToString() const override {
+        return fmt::format("MatchExpr(struct_name={}, match_type={}, count={})",
+                           struct_name_,
+                           proto::plan::MatchType_Name(match_type_),
+                           count_);
+    }
+
+    const std::string&
+    get_struct_name() const {
+        return struct_name_;
+    }
+
+    MatchType
+    get_match_type() const {
+        return match_type_;
+    }
+
+    int64_t
+    get_count() const {
+        return count_;
+    }
+
+    const std::string&
+    get_predicate_proto_bytes() const {
+        return predicate_proto_bytes_;
+    }
+
+ private:
+    std::string struct_name_;
+    MatchType match_type_;
+    int64_t count_;  // Used for MatchLeast/MatchMost
+    std::string predicate_proto_bytes_;  // Serialized proto::plan::Expr for Tantivy
+};
+
 }  // namespace expr
 }  // namespace milvus
 

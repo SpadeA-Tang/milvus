@@ -293,6 +293,25 @@ RustResult tantivy_ngram_match_query(void *ptr,
                                      uintptr_t max_gram,
                                      void *bitset);
 
+/// Search nested documents using a protobuf-encoded query
+///
+/// # Arguments
+/// * `reader_ptr` - Pointer to IndexReaderNestedWrapper
+/// * `query_proto_data` - Pointer to protobuf bytes
+/// * `query_proto_len` - Length of protobuf bytes
+/// * `bitset` - Pointer to bitset to receive matching parent row IDs
+///
+/// # Returns
+/// * Error message string if failed, NULL if succeeded
+///
+/// # Safety
+/// The caller must:
+/// - Free the error message (if not NULL) using `tantivy_free_error`
+char *tantivy_search_nested(void *reader_ptr,
+                            const uint8_t *query_proto_data,
+                            uintptr_t query_proto_len,
+                            void *bitset);
+
 RustResult tantivy_match_query(void *ptr,
                                const char *query,
                                uintptr_t min_should_match,
@@ -475,6 +494,71 @@ RustResult tantivy_index_add_array_keywords(void *ptr,
 RustResult tantivy_index_add_array_keywords_by_single_segment_writer(void *ptr,
                                                                      const char *const *array,
                                                                      uintptr_t len);
+
+/// Create a nested index writer for struct fields
+///
+/// # Arguments
+/// * `struct_name` - Name of the struct (for logging/debugging)
+/// * `field_names` - Array of field name pointers
+/// * `data_types` - Array of data types for each field
+/// * `num_fields` - Number of fields
+/// * `path` - Index directory path
+/// * `num_threads` - Number of writer threads
+/// * `overall_memory_budget_in_bytes` - Memory budget
+///
+/// # Returns
+/// * Error message string if failed, NULL if succeeded
+/// * `result_ptr` receives the writer pointer
+///
+/// # Safety
+/// Caller must free the writer using `tantivy_free_nested_index_writer`
+char *tantivy_create_nested_index(const char *struct_name,
+                                  const char *const *field_names,
+                                  const TantivyDataType *data_types,
+                                  uintptr_t num_fields,
+                                  const char *path,
+                                  uintptr_t num_threads,
+                                  uintptr_t overall_memory_budget_in_bytes,
+                                  void **result_ptr);
+
+/// Add nested documents for a row
+///
+/// # Arguments
+/// * `writer_ptr` - Pointer to IndexWriterNestedWrapper
+/// * `row_id` - The parent row ID
+/// * `field_data` - Array of pointers to field data arrays
+/// * `field_count` - Number of fields
+/// * `array_count` - Number of array elements (nested docs) to add
+///
+/// # Returns
+/// * Error message string if failed, NULL if succeeded
+char *tantivy_nested_index_add_documents(void *writer_ptr,
+                                         int64_t row_id,
+                                         const void *const *field_data,
+                                         uintptr_t field_count,
+                                         uintptr_t array_count);
+
+/// Commit the nested index
+char *tantivy_nested_index_commit(void *writer_ptr);
+
+/// Create a reader from the nested index writer
+///
+/// # Arguments
+/// * `writer_ptr` - Pointer to IndexWriterNestedWrapper
+/// * `set_bitset` - Callback function to set bitset
+/// * `result_ptr` - Receives the reader pointer
+///
+/// # Returns
+/// * Error message string if failed, NULL if succeeded
+char *tantivy_nested_create_reader_from_writer(void *writer_ptr,
+                                               SetBitsetFn set_bitset,
+                                               void **result_ptr);
+
+/// Free the nested index writer
+void tantivy_free_nested_index_writer(void *ptr);
+
+/// Free the nested index reader
+void tantivy_free_nested_index_reader(void *ptr);
 
 RustResult tantivy_create_text_writer(const char *field_name,
                                       const char *path,

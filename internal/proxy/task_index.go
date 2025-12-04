@@ -71,6 +71,7 @@ type createIndexTask struct {
 	collectionID                     UniqueID
 	functionSchema                   *schemapb.FunctionSchema
 	fieldSchema                      *schemapb.FieldSchema
+	structFieldSchema                *schemapb.StructArrayFieldSchema
 	userAutoIndexMetricTypeSpecified bool
 }
 
@@ -160,6 +161,47 @@ func (cit *createIndexTask) parseFunctionParamsToIndex(indexParamsMap map[string
 	default:
 		return nil
 	}
+
+	return nil
+}
+
+func (cit *createIndexTask) parseNestedIndexParams(ctx context.Context) error {
+	cit.newExtraParams = cit.req.GetExtraParams()
+	indexParamsMap := make(map[string]string)
+	keys := typeutil.NewSet[string]()
+	for _, kv := range cit.req.GetExtraParams() {
+		if keys.Contain(kv.GetKey()) {
+			return merr.WrapErrParameterInvalidMsg("duplicated index param (key=%s) (value=%s) found", kv.GetKey(), kv.GetValue())
+		}
+		keys.Insert(kv.GetKey())
+		if kv.Key == common.ParamsKey {
+			params, err := funcutil.JSONToMap(kv.Value)
+			if err != nil {
+				return err
+			}
+			for k, v := range params {
+				indexParamsMap[k] = v
+			}
+		} else {
+			indexParamsMap[kv.Key] = kv.Value
+		}
+	}
+
+	subFields := typeutil.NewSet[string]()
+	subFieldString := indexParamsMap[common.SubFieldNames]
+
+	// the subFieldString is something like  "intField,strField,floatField"
+	for _, subField := range strings.Split(subFieldString, ",") {
+		if subFields.Contain(subField) {
+			return merr.WrapErrParameterInvalidMsg("duplicated sub field (name=%s) found", subField)
+		}
+		if subField == "" {
+			return merr.WrapErrParameterInvalidMsg("empty sub field name found")
+		}
+		subFields.Insert(subField)
+	}
+
+	
 
 	return nil
 }
@@ -473,6 +515,12 @@ func (cit *createIndexTask) getIndexedFieldAndFunction(ctx context.Context) erro
 		return fmt.Errorf("failed to get collection schema: %s", err)
 	}
 
+	// check if the index is on a struct array field (nested index)
+	if structField := schema.schemaHelper.GetStructArrayFieldFromName(cit.req.GetFieldName()); structField != nil {
+		cit.structFieldSchema = structField
+		return nil
+	}
+
 	field, err := schema.schemaHelper.GetFieldFromNameDefaultJSON(cit.req.GetFieldName())
 	if err != nil {
 		log.Ctx(ctx).Error("create index on non-exist field", zap.Error(err))
@@ -573,6 +621,13 @@ func (cit *createIndexTask) PreExecute(ctx context.Context) error {
 	err = cit.getIndexedFieldAndFunction(ctx)
 	if err != nil {
 		return err
+	}
+
+	if cit.structFieldSchema != nil {
+		err = cit.parseNestedIndexParams(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	// check index param, not accurate, only some static rules

@@ -48,11 +48,27 @@ func newTestSchema(EnableDynamicField bool) *schemapb.CollectionSchema {
 		ElementType: schemapb.DataType_VarChar,
 	})
 
+	structArrayField := &schemapb.StructArrayFieldSchema{
+		FieldID: 132, Name: "struct_array", Fields: []*schemapb.FieldSchema{
+			{
+				FieldID: 133, Name: "struct_array[sub_str]", IsPrimaryKey: false, Description: "sub struct array field for string",
+				DataType:    schemapb.DataType_Array,
+				ElementType: schemapb.DataType_VarChar,
+			},
+			{
+				FieldID: 134, Name: "struct_array[sub_int]", IsPrimaryKey: false, Description: "sub struct array field for int",
+				DataType:    schemapb.DataType_Array,
+				ElementType: schemapb.DataType_Int32,
+			},
+		},
+	}
+
 	return &schemapb.CollectionSchema{
 		Name:               "test",
 		Description:        "schema for test used",
 		AutoID:             true,
 		Fields:             fields,
+		StructArrayFields:  []*schemapb.StructArrayFieldSchema{structArrayField},
 		EnableDynamicField: EnableDynamicField,
 	}
 }
@@ -2482,5 +2498,57 @@ func TestExpr_GISFunctionsInvalidParameterTypes(t *testing.T) {
 
 	for _, expr := range invalidTypeExprs {
 		assertInvalidExpr(t, schema, expr)
+	}
+}
+
+func TestExpr_StructArray(t *testing.T) {
+	schema := newTestSchema(true)
+	helper, err := typeutil.CreateSchemaHelper(schema)
+	assert.NoError(t, err)
+
+	exprStrs := []string{
+		// MATCH_ALL: All elements must match the predicate
+		`match_all(struct_array, $[sub_str] == "aaa" && $[sub_int] > 100)`,
+		`match_all(struct_array, $[sub_str] == "test")`,
+		`match_all(struct_array, $[sub_int] > 0)`,
+
+		// MATCH_ANY: At least one element matches the predicate
+		`match_any(struct_array, $[sub_str] == "aaa")`,
+		`match_any(struct_array, $[sub_int] >= 100)`,
+		`match_any(struct_array, $[sub_str] == "test" || $[sub_int] < 0)`,
+
+		// MATCH_LEAST: At least N elements match the predicate
+		`match_least(struct_array, $[sub_str] == "aaa", 2)`,
+		`match_least(struct_array, $[sub_int] > 0, 3)`,
+		`match_least(struct_array, $[sub_str] == "test" && $[sub_int] >= 100, 1)`,
+
+		// MATCH_MOST: At most N elements match the predicate
+		`match_most(struct_array, $[sub_str] == "aaa", 2)`,
+		`match_most(struct_array, $[sub_int] < 100, 5)`,
+		`match_most(struct_array, $[sub_str] == "invalid", 0)`,
+	}
+	for _, exprStr := range exprStrs {
+		assertValidExpr(t, helper, exprStr)
+	}
+}
+
+func TestExpr_StructArray_Invalid(t *testing.T) {
+	schema := newTestSchema(true)
+	helper, err := typeutil.CreateSchemaHelper(schema)
+	assert.NoError(t, err)
+
+	invalidExprs := []string{
+		// Invalid: count must be positive for MATCH_LEAST
+		`match_least(struct_array, $[sub_str] == "aaa", 0)`,
+		`match_least(struct_array, $[sub_str] == "aaa", -1)`,
+
+		// Invalid: count cannot be negative for MATCH_MOST
+		`match_most(struct_array, $[sub_str] == "aaa", -1)`,
+
+		// Invalid: $[field] syntax outside of match functions
+		`$[sub_str] == "aaa"`,
+	}
+	for _, exprStr := range invalidExprs {
+		assertInvalidExpr(t, helper, exprStr)
 	}
 }
