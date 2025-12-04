@@ -11,6 +11,7 @@ import "schema.proto";
 
 service IndexCoord {
     rpc CreateIndex(CreateIndexRequest) returns (common.Status){}
+    rpc CreateNestedIndex(CreateNestedIndexRequest) returns (common.Status){}
     rpc AlterIndex(AlterIndexRequest) returns (common.Status){}
     // Deprecated: use DescribeIndex instead
     rpc GetIndexState(GetIndexStateRequest) returns (GetIndexStateResponse) {}
@@ -58,6 +59,28 @@ message IndexInfo {
 
 message FieldIndex {
     IndexInfo index_info = 1;
+    bool deleted = 2;
+    uint64 create_time = 3;
+}
+
+message NestedIndexInfo {
+    int64 collectionID = 1;
+    int64 structFieldID = 2;
+    repeated int64 subFieldIDs = 3;
+    string index_name = 4;
+    int64 indexID = 5;
+    int64 indexed_rows = 6;
+    int64 total_rows = 7;
+    common.IndexState state = 8;
+    string fail_reason = 9;
+    string index_state_fail_reason = 10;
+    int64 pending_index_rows = 11;
+    int32 min_index_version = 12;
+    int32 max_index_version = 13;
+}
+
+message NestedIndex {
+    NestedIndexInfo index_info = 1;
     bool deleted = 2;
     uint64 create_time = 3;
 }
@@ -137,6 +160,16 @@ message CreateIndexRequest {
     bool is_auto_index = 7;
     repeated common.KeyValuePair user_index_params = 8;
     bool user_autoindex_metric_type_specified = 9;
+}
+
+message CreateNestedIndexRequest {
+    int64 collectionID = 1;
+    int64 struct_field_id = 2;  
+    string struct_field_name = 3;
+    repeated string sub_field_names = 4;
+    repeated int64 sub_field_ids = 5;
+    string index_name = 6;
+    uint64 timestamp = 7;
 }
 
 message AlterIndexRequest {

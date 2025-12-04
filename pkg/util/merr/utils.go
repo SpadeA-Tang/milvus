@@ -1040,6 +1040,14 @@ func WrapErrFieldNotFound[T any](field T, msg ...string) error {
 	return err
 }
 
+func WrapErrFieldNotFoundForStruct(structName string, fieldIDs []int64, msg ...string) error {
+	err := wrapFields(ErrFieldNotFound, value("structName", structName), value("fieldIDs", fieldIDs))
+	if len(msg) > 0 {
+		err = errors.Wrap(err, strings.Join(msg, "->"))
+	}
+	return err
+}
+
 func WrapErrFieldNameInvalid(field any, msg ...string) error {
 	err := wrapFields(ErrFieldInvalidName, value("field", field))
 	if len(msg) > 0 {

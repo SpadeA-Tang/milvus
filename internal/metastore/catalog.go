@@ -143,6 +143,11 @@ type DataCoordCatalog interface {
 	AlterIndexes(ctx context.Context, newIndexes []*model.Index) error
 	DropIndex(ctx context.Context, collID, dropIdxID typeutil.UniqueID) error
 
+	CreateNestedIndex(ctx context.Context, index *model.NestedIndex) error
+	ListNestedIndexes(ctx context.Context) ([]*model.NestedIndex, error)
+	AlterNestedIndexes(ctx context.Context, newIndexes []*model.NestedIndex) error
+	DropNestedIndex(ctx context.Context, collID, dropIdxID typeutil.UniqueID) error
+
 	CreateSegmentIndex(ctx context.Context, segIdx *model.SegmentIndex) error
 	ListSegmentIndexes(ctx context.Context) ([]*model.SegmentIndex, error)
 	AlterSegmentIndexes(ctx context.Context, newSegIdxes []*model.SegmentIndex) error

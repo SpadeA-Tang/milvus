@@ -57,6 +57,7 @@ const (
 	DataCoord_BroadcastAlteredCollection_FullMethodName  = "/milvus.proto.data.DataCoord/BroadcastAlteredCollection"
 	DataCoord_CheckHealth_FullMethodName                 = "/milvus.proto.data.DataCoord/CheckHealth"
 	DataCoord_CreateIndex_FullMethodName                 = "/milvus.proto.data.DataCoord/CreateIndex"
+	DataCoord_CreateNestedIndex_FullMethodName           = "/milvus.proto.data.DataCoord/CreateNestedIndex"
 	DataCoord_AlterIndex_FullMethodName                  = "/milvus.proto.data.DataCoord/AlterIndex"
 	DataCoord_GetIndexState_FullMethodName               = "/milvus.proto.data.DataCoord/GetIndexState"
 	DataCoord_GetSegmentIndexState_FullMethodName        = "/milvus.proto.data.DataCoord/GetSegmentIndexState"
@@ -119,6 +120,7 @@ type DataCoordClient interface {
 	BroadcastAlteredCollection(ctx context.Context, in *AlterCollectionRequest, opts ...grpc.CallOption) (*commonpb.Status, error)
 	CheckHealth(ctx context.Context, in *milvuspb.CheckHealthRequest, opts ...grpc.CallOption) (*milvuspb.CheckHealthResponse, error)
 	CreateIndex(ctx context.Context, in *indexpb.CreateIndexRequest, opts ...grpc.CallOption) (*commonpb.Status, error)
+	CreateNestedIndex(ctx context.Context, in *indexpb.CreateNestedIndexRequest, opts ...grpc.CallOption) (*commonpb.Status, error)
 	AlterIndex(ctx context.Context, in *indexpb.AlterIndexRequest, opts ...grpc.CallOption) (*commonpb.Status, error)
 	// Deprecated: use DescribeIndex instead
 	GetIndexState(ctx context.Context, in *indexpb.GetIndexStateRequest, opts ...grpc.CallOption) (*indexpb.GetIndexStateResponse, error)
@@ -450,6 +452,15 @@ func (c *dataCoordClient) CreateIndex(ctx context.Context, in *indexpb.CreateInd
 	return out, nil
 }
 
+func (c *dataCoordClient) CreateNestedIndex(ctx context.Context, in *indexpb.CreateNestedIndexRequest, opts ...grpc.CallOption) (*commonpb.Status, error) {
+	out := new(commonpb.Status)
+	err := c.cc.Invoke(ctx, DataCoord_CreateNestedIndex_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dataCoordClient) AlterIndex(ctx context.Context, in *indexpb.AlterIndexRequest, opts ...grpc.CallOption) (*commonpb.Status, error) {
 	out := new(commonpb.Status)
 	err := c.cc.Invoke(ctx, DataCoord_AlterIndex_FullMethodName, in, out, opts...)
@@ -654,6 +665,7 @@ type DataCoordServer interface {
 	BroadcastAlteredCollection(context.Context, *AlterCollectionRequest) (*commonpb.Status, error)
 	CheckHealth(context.Context, *milvuspb.CheckHealthRequest) (*milvuspb.CheckHealthResponse, error)
 	CreateIndex(context.Context, *indexpb.CreateIndexRequest) (*commonpb.Status, error)
+	CreateNestedIndex(context.Context, *indexpb.CreateNestedIndexRequest) (*commonpb.Status, error)
 	AlterIndex(context.Context, *indexpb.AlterIndexRequest) (*commonpb.Status, error)
 	// Deprecated: use DescribeIndex instead
 	GetIndexState(context.Context, *indexpb.GetIndexStateRequest) (*indexpb.GetIndexStateResponse, error)
@@ -780,6 +792,9 @@ func (UnimplementedDataCoordServer) CheckHealth(context.Context, *milvuspb.Check
 }
 func (UnimplementedDataCoordServer) CreateIndex(context.Context, *indexpb.CreateIndexRequest) (*commonpb.Status, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateIndex not implemented")
+}
+func (UnimplementedDataCoordServer) CreateNestedIndex(context.Context, *indexpb.CreateNestedIndexRequest) (*commonpb.Status, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateNestedIndex not implemented")
 }
 func (UnimplementedDataCoordServer) AlterIndex(context.Context, *indexpb.AlterIndexRequest) (*commonpb.Status, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AlterIndex not implemented")
@@ -1441,6 +1456,24 @@ func _DataCoord_CreateIndex_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DataCoord_CreateNestedIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(indexpb.CreateNestedIndexRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DataCoordServer).CreateNestedIndex(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DataCoord_CreateNestedIndex_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DataCoordServer).CreateNestedIndex(ctx, req.(*indexpb.CreateNestedIndexRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DataCoord_AlterIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(indexpb.AlterIndexRequest)
 	if err := dec(in); err != nil {
@@ -1903,6 +1936,10 @@ var DataCoord_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateIndex",
 			Handler:    _DataCoord_CreateIndex_Handler,
+		},
+		{
+			MethodName: "CreateNestedIndex",
+			Handler:    _DataCoord_CreateNestedIndex_Handler,
 		},
 		{
 			MethodName: "AlterIndex",

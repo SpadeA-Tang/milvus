@@ -868,6 +868,11 @@ func (s *Server) CreateIndex(ctx context.Context, req *indexpb.CreateIndexReques
 	return s.mixCoord.CreateIndex(ctx, req)
 }
 
+// CreateNestedIndex sends the build nested index request to DataCoord.
+func (s *Server) CreateNestedIndex(ctx context.Context, req *indexpb.CreateNestedIndexRequest) (*commonpb.Status, error) {
+	return s.mixCoord.CreateNestedIndex(ctx, req)
+}
+
 func (s *Server) AlterIndex(ctx context.Context, req *indexpb.AlterIndexRequest) (*commonpb.Status, error) {
 	return s.mixCoord.AlterIndex(ctx, req)
 }

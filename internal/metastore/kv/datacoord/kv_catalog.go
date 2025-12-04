@@ -604,6 +604,22 @@ func (kc *Catalog) DropIndex(ctx context.Context, collID typeutil.UniqueID, drop
 	return nil
 }
 
+func (kc *Catalog) CreateNestedIndex(ctx context.Context, index *model.NestedIndex) error {
+	return nil
+}
+
+func (kc *Catalog) ListNestedIndexes(ctx context.Context) ([]*model.NestedIndex, error) {
+	return nil, nil
+}
+
+func (kc *Catalog) AlterNestedIndexes(ctx context.Context, newIndexes []*model.NestedIndex) error {
+	return nil
+}
+
+func (kc *Catalog) DropNestedIndex(ctx context.Context, collID, dropIdxID typeutil.UniqueID) error {
+	return nil
+}
+
 func (kc *Catalog) CreateSegmentIndex(ctx context.Context, segIdx *model.SegmentIndex) error {
 	key := BuildSegmentIndexKey(segIdx.CollectionID, segIdx.PartitionID, segIdx.SegmentID, segIdx.BuildID)
 	value, err := proto.Marshal(model.MarshalSegmentIndexModel(segIdx))

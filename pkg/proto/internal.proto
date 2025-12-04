@@ -83,6 +83,16 @@ message CreateIndexRequest {
   repeated common.KeyValuePair extra_params = 8;
 }
 
+message CreateNestedIndexRequest {
+  int64 collectionID = 1;
+  int64 struct_field_id = 2;
+  string struct_field_name = 3;
+  repeated string sub_field_names = 4;
+  repeated int64 sub_field_ids = 5;
+  string index_name = 6;
+  uint64 timestamp = 7;
+}
+
 
 message SubSearchRequest {
   string dsl = 1;

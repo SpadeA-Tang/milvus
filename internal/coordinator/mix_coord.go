@@ -1129,6 +1129,10 @@ func (s *mixCoordImpl) CreateIndex(ctx context.Context, req *indexpb.CreateIndex
 	return s.datacoordServer.CreateIndex(ctx, req)
 }
 
+func (s *mixCoordImpl) CreateNestedIndex(ctx context.Context, req *indexpb.CreateNestedIndexRequest) (*commonpb.Status, error) {
+	return s.datacoordServer.CreateNestedIndex(ctx, req)
+}
+
 func (s *mixCoordImpl) AlterIndex(ctx context.Context, req *indexpb.AlterIndexRequest) (*commonpb.Status, error) {
 	return s.datacoordServer.AlterIndex(ctx, req)
 }

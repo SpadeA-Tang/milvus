@@ -96,6 +96,23 @@ func FieldExists(schema *schemapb.CollectionSchema, fieldID int64) bool {
 	return false
 }
 
+// Check whether the fieldIDs are all contained by the struct field.
+func NestedSubFieldsExists(schema *schemapb.CollectionSchema, structFieldID int64, fieldIDs []int64) bool {
+	for _, structField := range schema.StructArrayFields {
+		if structField.GetFieldID() == structFieldID {
+			for _, fieldID := range fieldIDs {
+				if !lo.ContainsBy(structField.Fields, func(f *schemapb.FieldSchema) bool {
+					return f.GetFieldID() == fieldID
+				}) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func isJsonField(schema *schemapb.CollectionSchema, fieldID int64) bool {
 	for _, f := range schema.Fields {
 		if f.FieldID == fieldID {
@@ -272,6 +289,53 @@ func (s *Server) CreateIndex(ctx context.Context, req *indexpb.CreateIndexReques
 		zap.String("IndexName", index.IndexName), zap.Int64("fieldID", index.FieldID),
 		zap.Int64("IndexID", index.IndexID))
 	metrics.IndexRequestCounter.WithLabelValues(metrics.SuccessLabel).Inc()
+	return merr.Success(), nil
+}
+
+// CreateNestedIndex creates a nested index on struct array field.
+// Index building is asynchronous, similar to CreateIndex.
+func (s *Server) CreateNestedIndex(ctx context.Context, req *indexpb.CreateNestedIndexRequest) (*commonpb.Status, error) {
+	log := log.Ctx(ctx).With(
+		zap.Int64("collectionID", req.GetCollectionID()),
+		zap.String("structFieldName", req.GetStructFieldName()),
+		zap.Strings("subFieldNames", req.GetSubFieldNames()),
+		zap.String("indexName", req.GetIndexName()),
+	)
+	log.Info("receive CreateNestedIndex request")
+
+	if err := merr.CheckHealthy(s.GetStateCode()); err != nil {
+		log.Warn(msgDataCoordIsUnhealthy(paramtable.GetNodeID()), zap.Error(err))
+		return merr.Status(err), nil
+	}
+	metrics.IndexRequestCounter.WithLabelValues(metrics.TotalLabel).Inc()
+
+	// Create a new broadcaster for the collection.
+	broadcaster, err := s.startBroadcastWithCollectionID(ctx, req.GetCollectionID())
+	if err != nil {
+		return merr.Status(err), nil
+	}
+	defer broadcaster.Close()
+
+	coll, err := s.broker.DescribeCollectionInternal(ctx, req.GetCollectionID())
+	if err := merr.CheckRPCCall(coll.Status, err); err != nil {
+		return merr.Status(err), nil
+	}
+	schema := coll.GetSchema()
+
+	if !NestedSubFieldsExists(schema, req.GetStructFieldId(), req.GetSubFieldIds()) {
+		return merr.Status(merr.WrapErrFieldNotFoundForStruct(req.GetStructFieldName(), req.GetSubFieldIds())), nil
+	}
+
+	if req.GetIndexName() == "" {
+
+	}
+
+	// TODO: Implement nested index creation
+	// 1. Validate struct field exists
+	// 2. Validate sub fields exist in struct
+	// 3. Create nested index meta
+	// 4. Trigger index building on segments
+
 	return merr.Success(), nil
 }
 
