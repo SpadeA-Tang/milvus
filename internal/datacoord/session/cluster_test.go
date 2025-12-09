@@ -446,6 +446,22 @@ func TestCluster_Index(t *testing.T) {
 	})
 }
 
+func TestCluster_NestedIndex(t *testing.T) {
+	t.Run("create nested index", func(t *testing.T) {
+		mockNodeManager := NewMockNodeManager(t)
+		cluster := NewCluster(mockNodeManager)
+
+		// Mock client
+		mockClient := mocks.NewMockDataNodeClient(t)
+		mockNodeManager.EXPECT().GetClient(mock.Anything).Return(mockClient, nil)
+		mockClient.EXPECT().CreateTask(mock.Anything, mock.Anything).Return(merr.Success(), nil)
+
+		// Test
+		err := cluster.CreateNestedIndex(1, &workerpb.CreateNestedIndexJobRequest{})
+		assert.NoError(t, err)
+	})
+}
+
 func TestCluster_Stats(t *testing.T) {
 	t.Run("create stats", func(t *testing.T) {
 		mockNodeManager := NewMockNodeManager(t)
@@ -679,6 +695,12 @@ func TestCluster_CreateProperties(t *testing.T) {
 			assert.Greater(t, rows, int64(0))
 			version := props.GetTaskVersion()
 			assert.Greater(t, version, int64(0))
+		case taskcommon.NestedIndex:
+			assert.Equal(t, taskcommon.NestedIndex, taskType)
+			rows := props.GetNumRows()
+			assert.Greater(t, rows, int64(0))
+			version := props.GetTaskVersion()
+			assert.Greater(t, version, int64(0))
 		case taskcommon.Stats:
 			assert.Equal(t, taskcommon.Stats, taskType)
 			rows := props.GetNumRows()
@@ -731,6 +753,17 @@ func TestCluster_CreateProperties(t *testing.T) {
 			IndexVersion: 1,
 		}
 		err := cluster.CreateIndex(1, req)
+		assert.NoError(t, err)
+	})
+
+	t.Run("CreateNestedIndex", func(t *testing.T) {
+		req := &workerpb.CreateNestedIndexJobRequest{
+			BuildID:      1,
+			TaskSlot:     1,
+			NumRows:      1000,
+			IndexVersion: 1,
+		}
+		err := cluster.CreateNestedIndex(1, req)
 		assert.NoError(t, err)
 	})
 

@@ -31,6 +31,7 @@ import (
 	globalTask "github.com/milvus-io/milvus/internal/datacoord/task"
 	"github.com/milvus-io/milvus/internal/metastore/model"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/indexparamcheck"
 	"github.com/milvus-io/milvus/internal/util/vecindexmgr"
 	"github.com/milvus-io/milvus/pkg/v2/common"
 	"github.com/milvus-io/milvus/pkg/v2/log"
@@ -168,6 +169,11 @@ func (it *indexBuildTask) CreateTaskOnWorker(nodeID int64, cluster session.Clust
 	// Handle special cases for certain index types or small segments
 	indexParams := it.meta.indexMeta.GetIndexParams(segIndex.CollectionID, segIndex.IndexID)
 	indexType := GetIndexType(indexParams)
+	if indexType == indexparamcheck.IndexNested {
+		it.createNestedIndexOnWorker(ctx, nodeID, cluster, segment, segIndex)
+		return
+	}
+
 	if isNoTrainIndex(indexType) || segIndex.NumRows < Params.DataCoordCfg.MinSegmentNumRowsToEnableIndex.GetAsInt64() {
 		log.Info("segment does not need index really, marking as finished", zap.Int64("numRows", segIndex.NumRows))
 		now := time.Now()
@@ -209,6 +215,40 @@ func (it *indexBuildTask) CreateTaskOnWorker(nodeID int64, cluster session.Clust
 	}
 
 	log.Info("index task assigned successfully")
+}
+
+func (it *indexBuildTask) createNestedIndexOnWorker(ctx context.Context, nodeID int64,
+	cluster session.Cluster, segment *SegmentInfo, segIndex *model.SegmentIndex) {
+	log := log.Ctx(ctx).With(zap.Int64("taskID", it.BuildID), zap.Int64("segmentID", it.SegmentID))
+	req, err := it.prepareNestedIndexJobRequest(ctx, segment, segIndex)
+	if err != nil {
+		log.Warn("failed to prepare nested index job request", zap.Error(err))
+		return
+	}
+
+	if err = it.UpdateTaskVersion(nodeID); err != nil {
+		log.Warn("failed to update task version", zap.Error(err))
+		return
+	}
+
+	defer func() {
+		if err != nil {
+			it.tryDropTaskOnWorker(cluster)
+		}
+	}()
+
+	if err = cluster.CreateNestedIndex(nodeID, req); err != nil {
+		log.Warn("failed to send nested index job to worker", zap.Error(err))
+		return
+	}
+
+	// Update state to in progress
+	if err = it.UpdateStateWithMeta(indexpb.JobState_JobStateInProgress, ""); err != nil {
+		log.Warn("failed to update task state", zap.Error(err))
+		return
+	}
+
+	log.Info("nested index task assigned successfully")
 }
 
 // Helper method to prepare job request
@@ -330,6 +370,84 @@ func (it *indexBuildTask) prepareJobRequest(ctx context.Context, segment *Segmen
 		Manifest:                  segment.GetManifestPath(),
 	}
 
+	WrapPluginContext(segment.GetCollectionID(), schema.GetProperties(), req)
+
+	return req, nil
+}
+
+func (it *indexBuildTask) prepareNestedIndexJobRequest(ctx context.Context, segment *SegmentInfo, segIndex *model.SegmentIndex) (*workerpb.CreateNestedIndexJobRequest, error) {
+	nestedIndex := it.meta.indexMeta.GetNestedIndexByIndexID(segIndex.CollectionID, segIndex.IndexID)
+	if nestedIndex == nil {
+		return nil, fmt.Errorf("nested index not found with index ID %d", segIndex.IndexID)
+	}
+	structFieldID := nestedIndex.StructFieldID
+	indexSubFieldIDs := nestedIndex.SubFieldIDs
+
+	collectionInfo, err := it.handler.GetCollection(ctx, segment.GetCollectionID())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get collection info: %w", err)
+	}
+
+	schema := collectionInfo.Schema
+	allSubFields := typeutil.GetAllFieldSchemasByStructFieldID(schema, structFieldID)
+
+	childFields := make([]*workerpb.ChildFieldInfo, 0, len(allSubFields))
+	var totalRows int64
+	for _, indexSubFieldID := range indexSubFieldIDs {
+		binlogIDs := getBinLogIDs(segment, indexSubFieldID)
+		rows := getTotalBinlogRows(segment, indexSubFieldID)
+		if totalRows != 0 && totalRows != rows {
+			return nil, fmt.Errorf("total rows of nested index sub field %d is not consistent, struct field %d, previous total rows %d, current total rows %d", indexSubFieldID, structFieldID, totalRows, rows)
+		}
+		totalRows = rows
+
+		var subField *schemapb.FieldSchema
+		for _, f := range allSubFields {
+			if f.FieldID == indexSubFieldID {
+				subField = f
+				break
+			}
+		}
+		if subField == nil {
+			return nil, fmt.Errorf("sub field not found with ID %d", indexSubFieldID)
+		}
+
+		childFields = append(childFields, &workerpb.ChildFieldInfo{
+			FieldId:   subField.FieldID,
+			FieldName: subField.Name,
+			FieldType: subField.DataType,
+			DataIds:   binlogIDs,
+			Field:     subField,
+		})
+	}
+
+	structFieldName := typeutil.GetStructFieldNameByStructFieldID(schema, structFieldID)
+	if structFieldName == "" {
+		return nil, fmt.Errorf("struct field name not found with struct field ID %d", structFieldID)
+	}
+
+	req := &workerpb.CreateNestedIndexJobRequest{
+		ClusterID:                 Params.CommonCfg.ClusterPrefix.GetValue(),
+		IndexFilePrefix:           path.Join(it.chunkManager.RootPath(), common.SegmentIndexPath),
+		BuildID:                   it.BuildID,
+		IndexVersion:              segIndex.IndexVersion + 1,
+		StorageVersion:            segment.GetStorageVersion(),
+		NumRows:                   totalRows,
+		CurrentScalarIndexVersion: it.indexEngineVersionManager.GetCurrentScalarIndexEngineVersion(),
+		CollectionID:              segment.GetCollectionID(),
+		PartitionID:               segment.GetPartitionID(),
+		SegmentID:                 segment.GetID(),
+		StructFieldId:             structFieldID,
+		StructFieldName:           structFieldName,
+		IndexID:                   segIndex.IndexID,
+		IndexName:                 nestedIndex.IndexName,
+		StorageConfig:             createStorageConfig(),
+		ChildFields:               childFields,
+		TaskSlot:                  it.taskSlot,
+		InsertLogs:                segment.GetBinlogs(),
+		Manifest:                  segment.GetManifestPath(),
+		LackBinlogRows:            segIndex.NumRows - totalRows,
+	}
 	WrapPluginContext(segment.GetCollectionID(), schema.GetProperties(), req)
 
 	return req, nil

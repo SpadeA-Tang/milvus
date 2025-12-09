@@ -329,6 +329,78 @@ func (node *DataNode) createIndexTask(ctx context.Context, req *workerpb.CreateJ
 	return ret, nil
 }
 
+func (node *DataNode) createNestedIndexTask(ctx context.Context, req *workerpb.CreateNestedIndexJobRequest) (*commonpb.Status, error) {
+	childFieldIDs := make([]int64, 0, len(req.GetChildFields()))
+	for _, child := range req.GetChildFields() {
+		childFieldIDs = append(childFieldIDs, child.GetFieldId())
+	}
+
+	log.Ctx(ctx).Info("DataNode building nested index ...",
+		zap.String("clusterID", req.GetClusterID()),
+		zap.Int64("buildID", req.GetBuildID()),
+		zap.Int64("indexID", req.GetIndexID()),
+		zap.String("indexName", req.GetIndexName()),
+		zap.Int64("collectionID", req.GetCollectionID()),
+		zap.Int64("partitionID", req.GetPartitionID()),
+		zap.Int64("segmentID", req.GetSegmentID()),
+		zap.Int64("structFieldID", req.GetStructFieldId()),
+		zap.String("structFieldName", req.GetStructFieldName()),
+		zap.Int64s("childFieldIDs", childFieldIDs),
+		zap.Int64("indexVersion", req.GetIndexVersion()),
+		zap.Int64("numRows", req.GetNumRows()),
+		zap.Int32("currentScalarIndexVersion", req.GetCurrentScalarIndexVersion()),
+		zap.String("indexFilePrefix", req.GetIndexFilePrefix()),
+		zap.Int64("storageVersion", req.GetStorageVersion()),
+		zap.Int64("taskSlot", req.GetTaskSlot()),
+	)
+
+	if req.GetTaskSlot() <= 0 {
+		log.Ctx(ctx).Warn("receive nested index task with invalid slot, set to 64", zap.Int64("taskSlot", req.GetTaskSlot()))
+		req.TaskSlot = 64
+	}
+
+	taskCtx, taskCancel := context.WithCancel(node.ctx)
+	if oldInfo := node.taskManager.LoadOrStoreIndexTask(req.GetClusterID(), req.GetBuildID(), &index.IndexTaskInfo{
+		Cancel: taskCancel,
+		State:  commonpb.IndexState_InProgress,
+	}); oldInfo != nil {
+		err := merr.WrapErrTaskDuplicate(indexpb.JobType_JobTypeIndexJob.String(),
+			fmt.Sprintf("building nested index task existed with %s-%d", req.GetClusterID(), req.GetBuildID()))
+		log.Warn("duplicated nested index build task", zap.Error(err))
+		metrics.DataNodeBuildIndexTaskCounter.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+	cm, err := node.storageFactory.NewChunkManager(node.ctx, req.GetStorageConfig())
+	if err != nil {
+		log.Error("create chunk manager failed", zap.String("bucket", req.GetStorageConfig().GetBucketName()),
+			zap.String("accessKey", req.GetStorageConfig().GetAccessKeyID()),
+			zap.Error(err),
+		)
+		node.taskManager.DeleteIndexTaskInfos(ctx, []index.Key{{ClusterID: req.GetClusterID(), TaskID: req.GetBuildID()}})
+		metrics.DataNodeBuildIndexTaskCounter.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+
+	pluginContext, err := ParseCPluginContext(req.GetPluginContext(), req.GetCollectionID())
+	if err != nil {
+		return merr.Status(err), nil
+	}
+
+	task := index.NewNestedIndexBuildTask(taskCtx, taskCancel, req, cm, node.taskManager, pluginContext)
+	ret := merr.Success()
+	if err := node.taskScheduler.TaskQueue.Enqueue(task); err != nil {
+		log.Warn("DataNode failed to schedule nested index task",
+			zap.Error(err))
+		ret = merr.Status(err)
+		metrics.DataNodeBuildIndexTaskCounter.WithLabelValues(strconv.FormatInt(paramtable.GetNodeID(), 10), metrics.FailLabel).Inc()
+		return ret, nil
+	}
+	metrics.DataNodeBuildIndexTaskCounter.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.SuccessLabel).Inc()
+	log.Info("DataNode nested index job enqueued successfully",
+		zap.String("indexName", req.GetIndexName()))
+	return ret, nil
+}
+
 func (node *DataNode) createAnalyzeTask(ctx context.Context, req *workerpb.AnalyzeRequest) (*commonpb.Status, error) {
 	log.Ctx(ctx).Info("receive analyze job", zap.Int64("collectionID", req.GetCollectionID()),
 		zap.Int64("partitionID", req.GetPartitionID()),

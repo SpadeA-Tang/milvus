@@ -58,6 +58,7 @@ enum MessageType {
     CreateIndex          = 34;
     AlterIndex           = 35;
     DropIndex            = 36;
+    CreateNestedIndex    = 37;
 
     // AlterReplicateConfig is used to alter the replicate configuration to the current cluster.
     // When the AlterReplicateConfig message is received, the replication topology is changed.
@@ -529,6 +530,21 @@ message CreateIndexMessageHeader {
 // CreateIndexMessageBody is the body of create index message.
 message CreateIndexMessageBody {
     index.FieldIndex field_index = 1;
+}
+
+// CreateNestedIndexMessageHeader is the header of create nested index message.
+message CreateNestedIndexMessageHeader {
+    int64 db_id = 1;
+    int64 collection_id = 2;
+    int64 struct_field_id = 3;
+    repeated int64 sub_field_ids = 4;
+    int64 index_id = 5;
+    string index_name = 6;
+}
+
+// CreateNestedIndexMessageBody is the body of create nested index message.
+message CreateNestedIndexMessageBody {
+    index.NestedIndex nested_index = 1;
 }
 
 // AlterIndexMessageHeader is the header of alter index message.

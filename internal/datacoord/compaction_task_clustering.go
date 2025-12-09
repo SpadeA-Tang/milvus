@@ -498,7 +498,8 @@ func (t *clusteringCompactionTask) processIndexing() error {
 	log := log.Ctx(context.TODO()).With(zap.Int64("planID", t.GetTaskProto().GetPlanID()))
 	// wait for segment indexed
 	collectionIndexes := t.meta.GetIndexMeta().GetIndexesForCollection(t.GetTaskProto().GetCollectionID(), "")
-	if len(collectionIndexes) == 0 {
+	nestedIndexes := t.meta.GetIndexMeta().GetNestedIndexesForCollection(t.GetTaskProto().GetCollectionID(), "")
+	if len(collectionIndexes) == 0 && len(nestedIndexes) == 0 {
 		log.Debug("the collection has no index, no need to do indexing")
 		return t.completeTask()
 	}
@@ -507,6 +508,15 @@ func (t *clusteringCompactionTask) processIndexing() error {
 			for _, segmentID := range t.GetTaskProto().GetResultSegments() {
 				segmentIndexState := t.meta.GetIndexMeta().GetSegmentIndexState(t.GetTaskProto().GetCollectionID(), segmentID, collectionIndex.IndexID)
 				log.Debug("segment index state", zap.String("segment", segmentIndexState.String()))
+				if segmentIndexState.GetState() != commonpb.IndexState_Finished {
+					return false
+				}
+			}
+		}
+		for _, nestedIndex := range nestedIndexes {
+			for _, segmentID := range t.GetTaskProto().GetResultSegments() {
+				segmentIndexState := t.meta.GetIndexMeta().GetSegmentIndexState(t.GetTaskProto().GetCollectionID(), segmentID, nestedIndex.IndexID)
+				log.Debug("nested segment index state", zap.String("segment", segmentIndexState.String()))
 				if segmentIndexState.GetState() != commonpb.IndexState_Finished {
 					return false
 				}

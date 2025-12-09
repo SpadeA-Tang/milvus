@@ -41,6 +41,7 @@ func (c *DDLCallbacks) registerIndexCallbacks() {
 	registry.RegisterCreateIndexV2AckCallback(c.createIndexV2AckCallback)
 	registry.RegisterAlterIndexV2AckCallback(c.alterIndexV2AckCallback)
 	registry.RegisterDropIndexV2AckCallback(c.dropIndexV2Callback)
+	registry.RegisterCreateNestedIndexV2AckCallback(c.createNestedIndexV2AckCallback)
 }
 
 // startBroadcastWithCollectionID starts a broadcast with collection name.

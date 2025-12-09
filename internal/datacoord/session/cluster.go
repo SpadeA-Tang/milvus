@@ -65,6 +65,8 @@ type Cluster interface {
 
 	// CreateIndex creates an index building task
 	CreateIndex(nodeID int64, in *workerpb.CreateJobRequest) error
+	// CreateNestedIndex creates a nested index building task
+	CreateNestedIndex(nodeID int64, in *workerpb.CreateNestedIndexJobRequest) error
 	// QueryIndex queries the status of index building tasks
 	QueryIndex(nodeID int64, in *workerpb.QueryJobsRequest) (*workerpb.IndexJobResults, error)
 	// DropIndex drops an index building task
@@ -394,6 +396,17 @@ func (c *cluster) CreateIndex(nodeID int64, in *workerpb.CreateJobRequest) error
 	properties.AppendClusterID(paramtable.Get().CommonCfg.ClusterPrefix.GetValue())
 	properties.AppendTaskID(in.GetBuildID())
 	properties.AppendType(taskcommon.Index)
+	properties.AppendTaskSlot(in.GetTaskSlot())
+	properties.AppendNumRows(in.GetNumRows())
+	properties.AppendTaskVersion(in.GetIndexVersion())
+	return c.createTask(nodeID, in, properties)
+}
+
+func (c *cluster) CreateNestedIndex(nodeID int64, in *workerpb.CreateNestedIndexJobRequest) error {
+	properties := taskcommon.NewProperties(nil)
+	properties.AppendClusterID(paramtable.Get().CommonCfg.ClusterPrefix.GetValue())
+	properties.AppendTaskID(in.GetBuildID())
+	properties.AppendType(taskcommon.NestedIndex)
 	properties.AppendTaskSlot(in.GetTaskSlot())
 	properties.AppendNumRows(in.GetNumRows())
 	properties.AppendTaskVersion(in.GetIndexVersion())

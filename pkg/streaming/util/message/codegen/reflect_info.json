@@ -434,6 +434,16 @@
                 "MessageType": "MessageTypeDropIndex",
                 "Version": 2
             }
+        },
+        {
+            "MessageSpecializedType": {
+                "HeaderType": "messagespb.CreateNestedIndexMessageHeader",
+                "BodyType": "messagespb.CreateNestedIndexMessageBody"
+            },
+            "MessageTypeWithVersion": {
+                "MessageType": "MessageTypeCreateNestedIndex",
+                "Version": 2
+            }
         }
     ]
 }

@@ -407,3 +407,101 @@ func (s *indexTaskSuite) TestSetJobInfo() {
 		s.Equal(indexpb.JobState_JobStateFinished, indexpb.JobState(it.IndexState))
 	})
 }
+
+func (s *indexTaskSuite) TestCreateNestedIndexOnWorker() {
+	// Create a nested index meta
+	nestedIndexID := int64(1000)
+	nestedTaskID := int64(1001)
+	structFieldID := int64(300)
+
+	catalog := catalogmocks.NewDataCoordCatalog(s.T())
+	catalog.EXPECT().AlterSegmentIndexes(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	nestedMeta := &indexMeta{
+		catalog: catalog,
+		indexes: map[UniqueID]map[UniqueID]*model.Index{
+			s.collID: {
+				nestedIndexID: {
+					IndexID:   nestedIndexID,
+					FieldID:   structFieldID,
+					IndexName: "nested_index",
+					IndexParams: []*commonpb.KeyValuePair{
+						{Key: "index_type", Value: "NESTED"},
+					},
+				},
+			},
+		},
+		segmentIndexes:   s.mt.indexMeta.segmentIndexes,
+		segmentBuildInfo: newSegmentIndexBuildInfo(),
+	}
+
+	t := &model.SegmentIndex{
+		CollectionID: s.collID,
+		PartitionID:  s.partID,
+		SegmentID:    s.segID,
+		IndexID:      nestedIndexID,
+		BuildID:      nestedTaskID,
+		IndexState:   commonpb.IndexState_Unissued,
+		NumRows:      65535,
+	}
+	nestedMeta.segmentBuildInfo.Add(t)
+
+	mt := &meta{
+		segments:  s.mt.segments,
+		indexMeta: nestedMeta,
+	}
+
+	handler := NewNMockHandler(s.T())
+	handler.EXPECT().GetCollection(mock.Anything, mock.Anything).Return(&collectionInfo{
+		ID: s.collID,
+		Schema: &schemapb.CollectionSchema{
+			Fields: []*schemapb.FieldSchema{
+				{
+					Name:     "structField",
+					FieldID:  structFieldID,
+					DataType: schemapb.DataType_Array,
+				},
+			},
+		},
+		Partitions: []int64{s.partID},
+	}, nil).Maybe()
+	cm := mocks.NewChunkManager(s.T())
+	cm.EXPECT().RootPath().Return("root").Maybe()
+
+	it := newIndexBuildTask(t, 1, mt, handler, cm, newIndexEngineVersionManager())
+
+	s.Run("nested index - segment not healthy", func() {
+		mt.segments.segments[s.segID].State = commonpb.SegmentState_Dropped
+		cluster := session.NewMockCluster(s.T())
+		it.CreateTaskOnWorker(1, cluster)
+		s.Equal(indexpb.JobState_JobStateNone, indexpb.JobState(it.IndexState))
+		mt.segments.segments[s.segID].State = commonpb.SegmentState_Flushed
+	})
+
+	s.Run("nested index - create on worker success", func() {
+		catalogMock := catalogmocks.NewDataCoordCatalog(s.T())
+		catalogMock.EXPECT().AlterSegmentIndexes(mock.Anything, mock.Anything).Return(nil)
+		mt.indexMeta.catalog = catalogMock
+
+		cluster := session.NewMockCluster(s.T())
+		cluster.EXPECT().CreateNestedIndex(mock.Anything, mock.Anything).Return(nil)
+
+		it.SetState(indexpb.JobState_JobStateInit, "")
+		it.CreateTaskOnWorker(1, cluster)
+		s.Equal(indexpb.JobState_JobStateInProgress, indexpb.JobState(it.IndexState))
+	})
+
+	s.Run("nested index - create on worker failed", func() {
+		catalogMock := catalogmocks.NewDataCoordCatalog(s.T())
+		catalogMock.EXPECT().AlterSegmentIndexes(mock.Anything, mock.Anything).Return(nil)
+		mt.indexMeta.catalog = catalogMock
+
+		cluster := session.NewMockCluster(s.T())
+		cluster.EXPECT().CreateNestedIndex(mock.Anything, mock.Anything).Return(fmt.Errorf("mock error"))
+		cluster.EXPECT().DropIndex(mock.Anything, mock.Anything).Return(nil)
+
+		it.SetState(indexpb.JobState_JobStateInit, "")
+		it.CreateTaskOnWorker(1, cluster)
+		s.Equal(indexpb.JobState_JobStateInit, indexpb.JobState(it.IndexState))
+	})
+}

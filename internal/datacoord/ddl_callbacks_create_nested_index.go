@@ -14,27 +14,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package taskcommon
+package datacoord
 
-type Type = string
+import (
+	"context"
 
-const (
-	TypeNone    Type = "None"
-	PreImport   Type = "PreImport"
-	Import      Type = "Import"
-	Compaction  Type = "Compaction"
-	Index       Type = "Index"
-	NestedIndex Type = "NestedIndex"
-	Stats       Type = "Stats"
-	Analyze     Type = "Analyze"
+	"github.com/milvus-io/milvus/internal/metastore/model"
+	"github.com/milvus-io/milvus/pkg/v2/streaming/util/message"
 )
 
-var TypeList = []Type{
-	PreImport,
-	Import,
-	Compaction,
-	Index,
-	NestedIndex,
-	Stats,
-	Analyze,
+func (s *DDLCallbacks) createNestedIndexV2AckCallback(ctx context.Context, result message.BroadcastResultCreateNestedIndexMessageV2) error {
+	nestedIndex := result.Message.MustBody().NestedIndex
+	if err := s.meta.indexMeta.CreateNestedIndex(ctx, model.UnmarshalNestedIndexModel(nestedIndex)); err != nil {
+		return err
+	}
+	select {
+	case s.notifyIndexChan <- nestedIndex.IndexInfo.CollectionID:
+	default:
+	}
+	return nil
 }

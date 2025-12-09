@@ -48,9 +48,10 @@ var (
 	RegisterDropAliasV2AckCallback  = registerMessageAckCallback[*message.DropAliasMessageHeader, *message.DropAliasMessageBody]
 
 	// Index
-	RegisterCreateIndexV2AckCallback = registerMessageAckCallback[*message.CreateIndexMessageHeader, *message.CreateIndexMessageBody]
-	RegisterAlterIndexV2AckCallback  = registerMessageAckCallback[*message.AlterIndexMessageHeader, *message.AlterIndexMessageBody]
-	RegisterDropIndexV2AckCallback   = registerMessageAckCallback[*message.DropIndexMessageHeader, *message.DropIndexMessageBody]
+	RegisterCreateIndexV2AckCallback       = registerMessageAckCallback[*message.CreateIndexMessageHeader, *message.CreateIndexMessageBody]
+	RegisterAlterIndexV2AckCallback        = registerMessageAckCallback[*message.AlterIndexMessageHeader, *message.AlterIndexMessageBody]
+	RegisterDropIndexV2AckCallback         = registerMessageAckCallback[*message.DropIndexMessageHeader, *message.DropIndexMessageBody]
+	RegisterCreateNestedIndexV2AckCallback = registerMessageAckCallback[*message.CreateNestedIndexMessageHeader, *message.CreateNestedIndexMessageBody]
 
 	// RBAC
 	RegisterAlterUserV2AckCallback           = registerMessageAckCallback[*message.AlterUserMessageHeader, *message.AlterUserMessageBody]
@@ -99,9 +100,10 @@ func resetMessageAckCallbacks() {
 		message.MessageTypeDropAliasV2:  syncutil.NewFuture[messageInnerAckCallback](),
 
 		// Index
-		message.MessageTypeCreateIndexV2: syncutil.NewFuture[messageInnerAckCallback](),
-		message.MessageTypeAlterIndexV2:  syncutil.NewFuture[messageInnerAckCallback](),
-		message.MessageTypeDropIndexV2:   syncutil.NewFuture[messageInnerAckCallback](),
+		message.MessageTypeCreateIndexV2:       syncutil.NewFuture[messageInnerAckCallback](),
+		message.MessageTypeAlterIndexV2:        syncutil.NewFuture[messageInnerAckCallback](),
+		message.MessageTypeDropIndexV2:         syncutil.NewFuture[messageInnerAckCallback](),
+		message.MessageTypeCreateNestedIndexV2: syncutil.NewFuture[messageInnerAckCallback](),
 
 		// RBAC
 		message.MessageTypeAlterUserV2:           syncutil.NewFuture[messageInnerAckCallback](),

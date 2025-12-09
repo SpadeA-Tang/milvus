@@ -43,6 +43,26 @@ func MarshalNestedIndexModel(index *NestedIndex) *indexpb.NestedIndex {
 	}
 }
 
+func UnmarshalNestedIndexModel(indexInfo *indexpb.NestedIndex) *NestedIndex {
+	if indexInfo == nil {
+		return nil
+	}
+
+	return &NestedIndex{
+		CollectionID:  indexInfo.GetIndexInfo().GetCollectionID(),
+		StructFieldID: indexInfo.GetIndexInfo().GetStructFieldID(),
+		SubFieldIDs:   indexInfo.GetIndexInfo().GetSubFieldIDs(),
+		IndexName:     indexInfo.GetIndexInfo().GetIndexName(),
+		IndexID:       indexInfo.GetIndexInfo().GetIndexID(),
+		IndexedRows:   indexInfo.GetIndexInfo().GetIndexedRows(),
+		TotalRows:     indexInfo.GetIndexInfo().GetTotalRows(),
+		State:         indexInfo.GetIndexInfo().GetState(),
+		FailReason:    indexInfo.GetIndexInfo().GetFailReason(),
+		IsDeleted:     indexInfo.GetDeleted(),
+		CreateTime:    indexInfo.GetCreateTime(),
+	}
+}
+
 func CloneNestedIndex(index *NestedIndex) *NestedIndex {
 	if index == nil {
 		return nil

@@ -724,6 +724,7 @@ func (gc *garbageCollector) recycleUnusedIndexes(ctx context.Context) {
 	log.Info("start recycleUnusedIndexes...")
 	defer func() { log.Info("recycleUnusedIndexes done", zap.Duration("timeCost", time.Since(start))) }()
 
+	// Recycle deleted field indexes
 	deletedIndexes := gc.meta.indexMeta.GetDeletedIndexes()
 	for _, index := range deletedIndexes {
 		if ctx.Err() != nil {
@@ -737,6 +738,22 @@ func (gc *garbageCollector) recycleUnusedIndexes(ctx context.Context) {
 			continue
 		}
 		log.Info("remove index on collection done")
+	}
+
+	// Recycle deleted nested indexes
+	deletedNestedIndexes := gc.meta.indexMeta.GetDeletedNestedIndexes()
+	for _, index := range deletedNestedIndexes {
+		if ctx.Err() != nil {
+			// process canceled.
+			return
+		}
+
+		log := log.With(zap.Int64("collectionID", index.CollectionID), zap.Int64("structFieldID", index.StructFieldID), zap.Int64("indexID", index.IndexID))
+		if err := gc.meta.indexMeta.RemoveNestedIndex(ctx, index.CollectionID, index.IndexID); err != nil {
+			log.Warn("remove nested index on collection fail", zap.Error(err))
+			continue
+		}
+		log.Info("remove nested index on collection done")
 	}
 }
 

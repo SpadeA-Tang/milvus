@@ -129,6 +129,32 @@ func CreateIndex(ctx context.Context, buildIndexInfo *indexcgopb.BuildIndexInfo)
 	return index, nil
 }
 
+func CreateNestedIndex(ctx context.Context, buildNestedIndexInfo *indexcgopb.BuildNestedIndexInfo) (CodecIndex, error) {
+	buildNestedIndexInfoBlob, err := proto.Marshal(buildNestedIndexInfo)
+	if err != nil {
+		log.Ctx(ctx).Warn("marshal buildNestedIndexInfo failed",
+			zap.String("clusterID", buildNestedIndexInfo.GetClusterID()),
+			zap.Int64("buildID", buildNestedIndexInfo.GetBuildID()),
+			zap.Error(err))
+		return nil, err
+	}
+	var indexPtr C.CIndex
+	status := C.CreateNestedIndex(&indexPtr, (*C.uint8_t)(unsafe.Pointer(&buildNestedIndexInfoBlob[0])), (C.uint64_t)(len(buildNestedIndexInfoBlob)))
+	if err := HandleCStatus(&status, "failed to create nested index"); err != nil {
+		return nil, err
+	}
+	index := &CgoIndex{
+		indexPtr: indexPtr,
+		close:    false,
+	}
+	runtime.SetFinalizer(index, func(index *CgoIndex) {
+		if index != nil && !index.close {
+			log.Error("there is leakage in nested index object, please check.")
+		}
+	})
+	return index, nil
+}
+
 func CreateTextIndex(ctx context.Context, buildIndexInfo *indexcgopb.BuildIndexInfo) (map[string]int64, error) {
 	buildIndexInfoBlob, err := proto.Marshal(buildIndexInfo)
 	if err != nil {

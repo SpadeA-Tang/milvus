@@ -155,8 +155,9 @@ func (i *indexInspector) createIndexesForSegment(ctx context.Context, segment *S
 		return nil
 	}
 
-	indexes := i.meta.indexMeta.GetIndexesForCollection(segment.CollectionID, "")
 	indexIDToSegIndexes := i.meta.indexMeta.GetSegmentIndexes(segment.CollectionID, segment.ID)
+
+	indexes := i.meta.indexMeta.GetIndexesForCollection(segment.CollectionID, "")
 	for _, index := range indexes {
 		if _, ok := indexIDToSegIndexes[index.IndexID]; !ok {
 			if err := i.createIndexForSegment(ctx, segment, index.IndexID); err != nil {
@@ -166,6 +167,18 @@ func (i *indexInspector) createIndexesForSegment(ctx context.Context, segment *S
 			}
 		}
 	}
+
+	nestedIndexes := i.meta.indexMeta.GetNestedIndexesForCollection(segment.CollectionID, "")
+	for _, nestedIndex := range nestedIndexes {
+		if _, ok := indexIDToSegIndexes[nestedIndex.IndexID]; !ok {
+			if err := i.createIndexForSegment(ctx, segment, nestedIndex.IndexID); err != nil {
+				log.Ctx(ctx).Warn("create nested index for segment fail", zap.Int64("segmentID", segment.ID),
+					zap.Int64("indexID", nestedIndex.IndexID))
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 

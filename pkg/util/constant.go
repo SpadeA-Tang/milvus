@@ -43,6 +43,7 @@ const (
 
 	SegmentIndexPrefix = "segment-index"
 	FieldIndexPrefix   = "field-index"
+	NestedIndexPrefix  = "nested-index"
 
 	HeaderAuthorize     = "authorization"
 	HeaderToken         = "token"

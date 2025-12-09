@@ -321,6 +321,10 @@ func BuildIndexKey(collectionID, indexID int64) string {
 	return fmt.Sprintf("%s/%d/%d", util.FieldIndexPrefix, collectionID, indexID)
 }
 
+func BuildNestedIndexKey(collectionID, indexID int64) string {
+	return fmt.Sprintf("%s/%d/%d", util.NestedIndexPrefix, collectionID, indexID)
+}
+
 func BuildSegmentIndexKey(collectionID, partitionID, segmentID, buildID int64) string {
 	return fmt.Sprintf("%s/%d/%d/%d/%d", util.SegmentIndexPrefix, collectionID, partitionID, segmentID, buildID)
 }

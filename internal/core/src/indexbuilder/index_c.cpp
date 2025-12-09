@@ -302,6 +302,36 @@ CreateIndex(CIndex* res_index,
 }
 
 CStatus
+CreateNestedIndex(CIndex* res_index,
+                  const uint8_t* serialized_build_nested_index_info,
+                  const uint64_t len) {
+    SCOPE_CGO_CALL_METRIC();
+
+    try {
+        auto build_index_info =
+            std::make_unique<milvus::proto::indexcgo::BuildNestedIndexInfo>();
+        auto res = build_index_info->ParseFromArray(
+            serialized_build_nested_index_info, len);
+        AssertInfo(res, "Unmarshal build nested index info failed");
+
+        auto storage_config =
+            get_storage_config(build_index_info->storage_config());
+        auto config = get_config(build_index_info);
+
+    } catch (SegcoreError& e) {
+        auto status = CStatus();
+        status.error_code = e.get_error_code();
+        status.error_msg = strdup(e.what());
+        return status;
+    } catch (std::exception& e) {
+        auto status = CStatus();
+        status.error_code = UnexpectedError;
+        status.error_msg = strdup(e.what());
+        return status;
+    }
+}
+
+CStatus
 BuildJsonKeyIndex(ProtoLayoutInterface result,
                   const uint8_t* serialized_build_index_info,
                   const uint64_t len) {

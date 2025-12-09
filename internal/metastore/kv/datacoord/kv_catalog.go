@@ -605,18 +605,60 @@ func (kc *Catalog) DropIndex(ctx context.Context, collID typeutil.UniqueID, drop
 }
 
 func (kc *Catalog) CreateNestedIndex(ctx context.Context, index *model.NestedIndex) error {
+	key := BuildNestedIndexKey(index.CollectionID, index.IndexID)
+	value, err := proto.Marshal(model.MarshalNestedIndexModel(index))
+	if err != nil {
+		return err
+	}
+	err = kc.MetaKv.Save(ctx, key, string(value))
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 func (kc *Catalog) ListNestedIndexes(ctx context.Context) ([]*model.NestedIndex, error) {
-	return nil, nil
+	indexes := make([]*model.NestedIndex, 0)
+	applyFn := func(key []byte, value []byte) error {
+		meta := &indexpb.NestedIndex{}
+		err := proto.Unmarshal(value, meta)
+		if err != nil {
+			log.Ctx(ctx).Warn("unmarshal nested index info failed", zap.Error(err))
+			return err
+		}
+		indexes = append(indexes, model.UnmarshalNestedIndexModel(meta))
+		return nil
+	}
+	err := kc.MetaKv.WalkWithPrefix(ctx, util.NestedIndexPrefix, kc.paginationSize, applyFn)
+	if err != nil {
+		return nil, err
+	}
+	return indexes, nil
 }
 
-func (kc *Catalog) AlterNestedIndexes(ctx context.Context, newIndexes []*model.NestedIndex) error {
-	return nil
+func (kc *Catalog) AlterNestedIndexes(ctx context.Context, indexes []*model.NestedIndex) error {
+	kvs := make(map[string]string)
+	for _, index := range indexes {
+		key := BuildNestedIndexKey(index.CollectionID, index.IndexID)
+		value, err := proto.Marshal(model.MarshalNestedIndexModel(index))
+		if err != nil {
+			return err
+		}
+		kvs[key] = string(value)
+	}
+	return kc.MetaKv.MultiSave(ctx, kvs)
 }
 
 func (kc *Catalog) DropNestedIndex(ctx context.Context, collID, dropIdxID typeutil.UniqueID) error {
+	key := BuildNestedIndexKey(collID, dropIdxID)
+
+	err := kc.MetaKv.Remove(ctx, key)
+	if err != nil {
+		log.Ctx(ctx).Error("drop nested index meta fail", zap.Int64("collectionID", collID),
+			zap.Int64("indexID", dropIdxID), zap.Error(err))
+		return err
+	}
+
 	return nil
 }
 

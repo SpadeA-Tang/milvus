@@ -1611,6 +1611,24 @@ func GetAllFieldSchemas(schema *schemapb.CollectionSchema) []*schemapb.FieldSche
 	return all
 }
 
+func GetAllFieldSchemasByStructFieldID(schema *schemapb.CollectionSchema, structFieldID int64) []*schemapb.FieldSchema {
+	for _, structField := range schema.GetStructArrayFields() {
+		if structField.FieldID == structFieldID {
+			return structField.Fields
+		}
+	}
+	return nil
+}
+
+func GetStructFieldNameByStructFieldID(schema *schemapb.CollectionSchema, structFieldID int64) string {
+	for _, structField := range schema.GetStructArrayFields() {
+		if structField.FieldID == structFieldID {
+			return structField.Name
+		}
+	}
+	return ""
+}
+
 // GetVectorFieldSchemas get vector fields schema from collection schema.
 func GetVectorFieldSchemas(schema *schemapb.CollectionSchema) []*schemapb.FieldSchema {
 	ret := make([]*schemapb.FieldSchema, 0)

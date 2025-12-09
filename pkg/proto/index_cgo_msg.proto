@@ -104,6 +104,32 @@ message BuildIndexInfo {
   string manifest = 30;
 }
 
+message ChildFieldInfo {
+  repeated string insert_files = 1;
+  schema.FieldSchema field_schema = 2;
+}
+
+message BuildNestedIndexInfo {
+  string clusterID = 1;
+  int64 buildID = 2;
+  int64 collectionID = 3;
+  int64 partitionID = 4;
+  int64 segmentID = 5;
+  int64 index_version = 6;
+  int64 num_rows = 7;
+  int64 struct_field_id = 8;
+  string struct_field_name = 9;
+  repeated ChildFieldInfo child_fields = 10;
+  string index_file_prefix = 11;
+  StorageConfig storage_config = 12;
+  int32 current_scalar_index_version = 13;
+  int64 lack_binlog_rows = 14;
+  int64 storage_version = 15;
+  SegmentInsertFiles segment_insert_files = 16;
+  StoragePluginContext storage_plugin_context = 17;
+  string manifest = 18;
+}
+
 message StoragePluginContext {
   int64 encryption_zone_id = 1;
   int64 collection_id = 2;

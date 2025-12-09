@@ -20,6 +20,7 @@ package datacoord
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -63,6 +64,7 @@ type indexMeta struct {
 	// collID -> indexID -> index
 	fieldIndexLock sync.RWMutex
 	indexes        map[UniqueID]map[UniqueID]*model.Index
+	nestedIndexes  map[UniqueID]map[UniqueID]*model.NestedIndex
 
 	// buildID2Meta records building index meta information of the segment
 	segmentBuildInfo *segmentBuildInfo
@@ -134,6 +136,7 @@ func newIndexMeta(ctx context.Context, catalog metastore.DataCoordCatalog) (*ind
 		ctx:              ctx,
 		catalog:          catalog,
 		indexes:          make(map[UniqueID]map[UniqueID]*model.Index),
+		nestedIndexes:    make(map[UniqueID]map[UniqueID]*model.NestedIndex),
 		keyLock:          lock.NewKeyLock[UniqueID](),
 		segmentBuildInfo: newSegmentIndexBuildInfo(),
 		segmentIndexes:   typeutil.NewConcurrentMap[UniqueID, *typeutil.ConcurrentMap[UniqueID, *model.SegmentIndex]](),
@@ -157,6 +160,17 @@ func (m *indexMeta) reloadFromKV() error {
 	for _, fieldIndex := range fieldIndexes {
 		m.updateCollectionIndex(fieldIndex)
 	}
+
+	// load nested indexes
+	nestedIndexes, err := m.catalog.ListNestedIndexes(m.ctx)
+	if err != nil {
+		log.Error("indexMeta reloadFromKV load nested indexes fail", zap.Error(err))
+		return err
+	}
+	for _, nestedIndex := range nestedIndexes {
+		m.updateNestedIndex(nestedIndex)
+	}
+
 	segmentIndexes, err := m.catalog.ListSegmentIndexes(m.ctx)
 	if err != nil {
 		log.Error("indexMeta reloadFromKV load segment indexes fail", zap.Error(err))
@@ -407,6 +421,37 @@ func (m *indexMeta) canCreateIndex(req *indexpb.CreateIndexRequest, isJson bool)
 	return 0, nil
 }
 
+func (m *indexMeta) CanCreateNestedIndex(req *indexpb.CreateNestedIndexRequest) (UniqueID, error) {
+	indexes, ok := m.nestedIndexes[req.CollectionID]
+	if !ok {
+		return 0, nil
+	}
+	for _, index := range indexes {
+		if index.IsDeleted {
+			continue
+		}
+		if req.IndexName == index.IndexName {
+			if req.StructFieldId == index.StructFieldID && slices.Equal(req.SubFieldIds, index.SubFieldIDs) {
+				return index.IndexID, errIndexOperationIgnored
+			}
+			errMsg := "at most one distinct nested index is allowed per struct field"
+			log.Warn(errMsg,
+				zap.String("source index", fmt.Sprintf("{index_name: %s, struct_field_id: %d, sub_field_ids: %v}",
+					index.IndexName, index.StructFieldID, index.SubFieldIDs)),
+				zap.String("current index", fmt.Sprintf("{index_name: %s, struct_field_id: %d, sub_field_ids: %v}",
+					req.GetIndexName(), req.GetStructFieldId(), req.GetSubFieldIds())))
+			return 0, fmt.Errorf("CreateNestedIndex failed: %s", errMsg)
+		}
+		if req.StructFieldId == index.StructFieldID {
+			errMsg := "creating multiple nested indexes on same struct field is not supported"
+			log.Warn(errMsg)
+			return 0, errors.New(errMsg)
+		}
+
+	}
+	return 0, nil
+}
+
 // HasSameReq determine whether there are same indexing tasks.
 func (m *indexMeta) HasSameReq(req *indexpb.CreateIndexRequest) (bool, UniqueID) {
 	m.fieldIndexLock.RLock()
@@ -449,6 +494,33 @@ func (m *indexMeta) CreateIndex(ctx context.Context, index *model.Index) error {
 	log.Ctx(ctx).Info("meta update: CreateIndex success", zap.Int64("collectionID", index.CollectionID),
 		zap.Int64("fieldID", index.FieldID), zap.Int64("indexID", index.IndexID), zap.String("indexName", index.IndexName))
 	return nil
+}
+
+func (m *indexMeta) CreateNestedIndex(ctx context.Context, index *model.NestedIndex) error {
+	m.fieldIndexLock.Lock()
+	defer m.fieldIndexLock.Unlock()
+
+	log.Ctx(ctx).Info("meta update: CreateNestedIndex", zap.Int64("collectionID", index.CollectionID),
+		zap.Int64("structFieldID", index.StructFieldID), zap.Int64("indexID", index.IndexID), zap.String("indexName", index.IndexName))
+
+	if err := m.catalog.CreateNestedIndex(ctx, index); err != nil {
+		log.Ctx(ctx).Error("meta update: CreateNestedIndex save meta fail", zap.Int64("collectionID", index.CollectionID),
+			zap.Int64("structFieldID", index.StructFieldID), zap.Int64("indexID", index.IndexID),
+			zap.String("indexName", index.IndexName), zap.Error(err))
+		return err
+	}
+
+	m.updateNestedIndex(index)
+	log.Ctx(ctx).Info("meta update: CreateNestedIndex success", zap.Int64("collectionID", index.CollectionID),
+		zap.Int64("structFieldID", index.StructFieldID), zap.Int64("indexID", index.IndexID), zap.String("indexName", index.IndexName))
+	return nil
+}
+
+func (m *indexMeta) updateNestedIndex(index *model.NestedIndex) {
+	if _, ok := m.nestedIndexes[index.CollectionID]; !ok {
+		m.nestedIndexes[index.CollectionID] = make(map[UniqueID]*model.NestedIndex)
+	}
+	m.nestedIndexes[index.CollectionID][index.IndexID] = index
 }
 
 func (m *indexMeta) AlterIndex(ctx context.Context, indexes ...*model.Index) error {
@@ -498,16 +570,20 @@ func (m *indexMeta) GetIndexIDByName(collID int64, indexName string) map[int64]u
 
 	indexID2CreateTs := make(map[int64]uint64)
 
-	fieldIndexes, ok := m.indexes[collID]
-	if !ok {
-		return indexID2CreateTs
-	}
-
+	fieldIndexes := m.indexes[collID]
 	for _, index := range fieldIndexes {
 		if !index.IsDeleted && (indexName == "" || index.IndexName == indexName) {
 			indexID2CreateTs[index.IndexID] = index.CreateTime
 		}
 	}
+
+	nestedIndexes := m.nestedIndexes[collID]
+	for _, index := range nestedIndexes {
+		if !index.IsDeleted && (indexName == "" || index.IndexName == indexName) {
+			indexID2CreateTs[index.IndexID] = index.CreateTime
+		}
+	}
+
 	return indexID2CreateTs
 }
 
@@ -519,13 +595,14 @@ func (m *indexMeta) GetSegmentIndexState(collID, segmentID UniqueID, indexID Uni
 	}
 
 	m.fieldIndexLock.RLock()
-	fieldIndexes, ok := m.indexes[collID]
-	if !ok {
+	fieldIndexes := m.indexes[collID]
+	nestedIndexes := m.nestedIndexes[collID]
+	m.fieldIndexLock.RUnlock()
+
+	if len(fieldIndexes) == 0 && len(nestedIndexes) == 0 {
 		state.FailReason = fmt.Sprintf("collection not exist with ID: %d", collID)
-		m.fieldIndexLock.RUnlock()
 		return state
 	}
-	m.fieldIndexLock.RUnlock()
 
 	indexes, ok := m.segmentIndexes.Get(segmentID)
 	if !ok {
@@ -537,6 +614,17 @@ func (m *indexMeta) GetSegmentIndexState(collID, segmentID UniqueID, indexID Uni
 	if index, ok := fieldIndexes[indexID]; ok && !index.IsDeleted {
 		if segIdx, ok := indexes.Get(indexID); ok {
 			state.IndexName = index.IndexName
+			state.State = segIdx.IndexState
+			state.FailReason = segIdx.FailReason
+			return state
+		}
+		state.State = commonpb.IndexState_Unissued
+		return state
+	}
+
+	if nestedIndex, ok := nestedIndexes[indexID]; ok && !nestedIndex.IsDeleted {
+		if segIdx, ok := indexes.Get(indexID); ok {
+			state.IndexName = nestedIndex.IndexName
 			state.State = segIdx.IndexState
 			state.FailReason = segIdx.FailReason
 			return state
@@ -617,6 +705,22 @@ func (m *indexMeta) GetIndexesForCollection(collID UniqueID, indexName string) [
 	return indexInfos
 }
 
+func (m *indexMeta) GetNestedIndexesForCollection(collID UniqueID, indexName string) []*model.NestedIndex {
+	m.fieldIndexLock.RLock()
+	defer m.fieldIndexLock.RUnlock()
+
+	indexInfos := make([]*model.NestedIndex, 0)
+	for _, index := range m.nestedIndexes[collID] {
+		if index.IsDeleted {
+			continue
+		}
+		if indexName == "" || indexName == index.IndexName {
+			indexInfos = append(indexInfos, model.CloneNestedIndex(index))
+		}
+	}
+	return indexInfos
+}
+
 func (m *indexMeta) GetFieldIndexes(collID, fieldID UniqueID, indexName string) []*model.Index {
 	m.fieldIndexLock.RLock()
 	defer m.fieldIndexLock.RUnlock()
@@ -631,6 +735,34 @@ func (m *indexMeta) GetFieldIndexes(collID, fieldID UniqueID, indexName string) 
 		}
 	}
 	return indexInfos
+}
+
+func (m *indexMeta) GetNestedIndexes(collID, structFieldID UniqueID, indexName string) []*model.NestedIndex {
+	m.fieldIndexLock.RLock()
+	defer m.fieldIndexLock.RUnlock()
+
+	indexInfos := make([]*model.NestedIndex, 0)
+	for _, index := range m.nestedIndexes[collID] {
+		if index.IsDeleted || index.StructFieldID != structFieldID {
+			continue
+		}
+		if indexName == "" || indexName == index.IndexName {
+			indexInfos = append(indexInfos, model.CloneNestedIndex(index))
+		}
+	}
+	return indexInfos
+}
+
+func (m *indexMeta) GetNestedIndexByIndexID(collID, indexID UniqueID) *model.NestedIndex {
+	m.fieldIndexLock.RLock()
+	defer m.fieldIndexLock.RUnlock()
+
+	if nestedIndexes, ok := m.nestedIndexes[collID]; ok {
+		if index, ok := nestedIndexes[indexID]; ok {
+			return model.CloneNestedIndex(index)
+		}
+	}
+	return nil
 }
 
 // MarkIndexAsDeleted will mark the corresponding index as deleted, and recycleUnusedIndexFiles will recycle these tasks.
@@ -682,16 +814,67 @@ func (m *indexMeta) MarkIndexAsDeleted(ctx context.Context, collID UniqueID, ind
 	return nil
 }
 
+// MarkNestedIndexAsDeleted marks the corresponding nested index as deleted.
+func (m *indexMeta) MarkNestedIndexAsDeleted(ctx context.Context, collID UniqueID, indexIDs []UniqueID) error {
+	log.Ctx(ctx).Info("IndexCoord metaTable MarkNestedIndexAsDeleted", zap.Int64("collectionID", collID),
+		zap.Int64s("indexIDs", indexIDs))
+
+	m.fieldIndexLock.Lock()
+	defer m.fieldIndexLock.Unlock()
+
+	if len(indexIDs) == 0 {
+		// drop all nested indexes if indexIDs is empty.
+		indexIDs = make([]UniqueID, 0, len(m.nestedIndexes[collID]))
+		for indexID, index := range m.nestedIndexes[collID] {
+			if index.IsDeleted {
+				continue
+			}
+			indexIDs = append(indexIDs, indexID)
+		}
+	}
+
+	nestedIndexes, ok := m.nestedIndexes[collID]
+	if !ok {
+		return nil
+	}
+	indexes := make([]*model.NestedIndex, 0)
+	for _, indexID := range indexIDs {
+		index, ok := nestedIndexes[indexID]
+		if !ok || index.IsDeleted {
+			continue
+		}
+		clonedIndex := model.CloneNestedIndex(index)
+		clonedIndex.IsDeleted = true
+		indexes = append(indexes, clonedIndex)
+	}
+	if len(indexes) == 0 {
+		return nil
+	}
+	err := m.catalog.AlterNestedIndexes(ctx, indexes)
+	if err != nil {
+		log.Ctx(ctx).Error("failed to alter nested index meta in meta store", zap.Int("indexes num", len(indexes)), zap.Error(err))
+		return err
+	}
+	for _, index := range indexes {
+		m.nestedIndexes[index.CollectionID][index.IndexID] = index
+	}
+
+	log.Ctx(ctx).Info("IndexCoord metaTable MarkNestedIndexAsDeleted success", zap.Int64("collectionID", collID), zap.Int64s("indexIDs", indexIDs))
+	return nil
+}
+
 func (m *indexMeta) IsUnIndexedSegment(collectionID UniqueID, segID UniqueID) bool {
 	m.fieldIndexLock.RLock()
-	fieldIndexes, ok := m.indexes[collectionID]
-	if !ok {
-		m.fieldIndexLock.RUnlock()
-		return false
-	}
+	fieldIndexes := m.indexes[collectionID]
+	nestedIndexes := m.nestedIndexes[collectionID]
 	m.fieldIndexLock.RUnlock()
 
-	// the segment should be unindexed status if the fieldIndexes is not nil
+	// no indexes defined for this collection
+	if len(fieldIndexes) == 0 && len(nestedIndexes) == 0 {
+		return false
+	}
+
+	// the segment should be unindexed status if segment indexes not found
 	segIndexInfos, ok := m.segmentIndexes.Get(segID)
 	if !ok || segIndexInfos.Len() == 0 {
 		return true
@@ -701,6 +884,15 @@ func (m *indexMeta) IsUnIndexedSegment(collectionID UniqueID, segID UniqueID) bo
 		if !index.IsDeleted {
 			if _, ok := segIndexInfos.Get(index.IndexID); !ok {
 				// the segment should be unindexed status if the segment index is not found within field indexes
+				return true
+			}
+		}
+	}
+
+	for _, index := range nestedIndexes {
+		if !index.IsDeleted {
+			if _, ok := segIndexInfos.Get(index.IndexID); !ok {
+				// the segment should be unindexed status if the segment index is not found within nested indexes
 				return true
 			}
 		}
@@ -734,7 +926,8 @@ func (m *indexMeta) getSegmentIndexes(collectionID UniqueID, segID UniqueID) map
 	}
 
 	fieldIndexes, ok := m.indexes[collectionID]
-	if !ok {
+	nestedIndexes, nestedIndexesOk := m.nestedIndexes[collectionID]
+	if !ok && !nestedIndexesOk {
 		return ret
 	}
 
@@ -742,7 +935,14 @@ func (m *indexMeta) getSegmentIndexes(collectionID UniqueID, segID UniqueID) map
 		if index, ok := fieldIndexes[segIdx.IndexID]; ok && !index.IsDeleted {
 			ret[segIdx.IndexID] = model.CloneSegmentIndex(segIdx)
 		}
+
+		if nestedIndexesOk {
+			if nestedIndex, ok := nestedIndexes[segIdx.IndexID]; ok && !nestedIndex.IsDeleted {
+				ret[segIdx.IndexID] = model.CloneSegmentIndex(segIdx)
+			}
+		}
 	}
+
 	return ret
 }
 
@@ -753,6 +953,13 @@ func (m *indexMeta) GetFieldIDByIndexID(collID, indexID UniqueID) UniqueID {
 	if fieldIndexes, ok := m.indexes[collID]; ok {
 		if index, ok := fieldIndexes[indexID]; ok {
 			return index.FieldID
+		}
+	}
+
+	// For NestedIndex, return StructFieldID
+	if nestedIndexes, ok := m.nestedIndexes[collID]; ok {
+		if index, ok := nestedIndexes[indexID]; ok {
+			return index.StructFieldID
 		}
 	}
 	return 0
@@ -767,12 +974,29 @@ func (m *indexMeta) GetIndexNameByID(collID, indexID UniqueID) string {
 			return index.IndexName
 		}
 	}
+
+	if nestedIndexes, ok := m.nestedIndexes[collID]; ok {
+		if index, ok := nestedIndexes[indexID]; ok {
+			return index.IndexName
+		}
+	}
 	return ""
 }
 
 func (m *indexMeta) GetIndexParams(collID, indexID UniqueID) []*commonpb.KeyValuePair {
 	m.fieldIndexLock.RLock()
 	defer m.fieldIndexLock.RUnlock()
+
+	if nestedIndexes, ok := m.nestedIndexes[collID]; ok {
+		if _, ok := nestedIndexes[indexID]; ok {
+			indexParams := make([]*commonpb.KeyValuePair, 0, 1)
+			indexParams = append(indexParams, &commonpb.KeyValuePair{
+				Key:   "index_type",
+				Value: indexparamcheck.IndexNested,
+			})
+			return indexParams
+		}
+	}
 
 	fieldIndexes, ok := m.indexes[collID]
 	if !ok {
@@ -825,15 +1049,19 @@ func (m *indexMeta) IsIndexExist(collID, indexID UniqueID) bool {
 	m.fieldIndexLock.RLock()
 	defer m.fieldIndexLock.RUnlock()
 
-	fieldIndexes, ok := m.indexes[collID]
-	if !ok {
-		return false
-	}
-	if index, ok := fieldIndexes[indexID]; !ok || index.IsDeleted {
-		return false
+	if fieldIndexes, ok := m.indexes[collID]; ok {
+		if index, ok := fieldIndexes[indexID]; ok && !index.IsDeleted {
+			return true
+		}
 	}
 
-	return true
+	if nestedIndexes, ok := m.nestedIndexes[collID]; ok {
+		if index, ok := nestedIndexes[indexID]; ok && !index.IsDeleted {
+			return true
+		}
+	}
+
+	return false
 }
 
 // UpdateVersion updates the version and nodeID of the index meta, whenever the task is built once, the version will be updated once.
@@ -1026,6 +1254,21 @@ func (m *indexMeta) GetDeletedIndexes() []*model.Index {
 	return deletedIndexes
 }
 
+func (m *indexMeta) GetDeletedNestedIndexes() []*model.NestedIndex {
+	m.fieldIndexLock.RLock()
+	defer m.fieldIndexLock.RUnlock()
+
+	deletedIndexes := make([]*model.NestedIndex, 0)
+	for _, nestedIndexes := range m.nestedIndexes {
+		for _, index := range nestedIndexes {
+			if index.IsDeleted {
+				deletedIndexes = append(deletedIndexes, index)
+			}
+		}
+	}
+	return deletedIndexes
+}
+
 func (m *indexMeta) RemoveIndex(ctx context.Context, collID, indexID UniqueID) error {
 	m.fieldIndexLock.Lock()
 	defer m.fieldIndexLock.Unlock()
@@ -1049,6 +1292,25 @@ func (m *indexMeta) RemoveIndex(ctx context.Context, collID, indexID UniqueID) e
 	return nil
 }
 
+func (m *indexMeta) RemoveNestedIndex(ctx context.Context, collID, indexID UniqueID) error {
+	m.fieldIndexLock.Lock()
+	defer m.fieldIndexLock.Unlock()
+	log.Ctx(ctx).Info("IndexCoord meta table remove nested index", zap.Int64("collectionID", collID), zap.Int64("indexID", indexID))
+	err := m.catalog.DropNestedIndex(ctx, collID, indexID)
+	if err != nil {
+		log.Ctx(ctx).Info("IndexCoord meta table remove nested index fail", zap.Int64("collectionID", collID),
+			zap.Int64("indexID", indexID), zap.Error(err))
+		return err
+	}
+
+	delete(m.nestedIndexes[collID], indexID)
+	if len(m.nestedIndexes[collID]) == 0 {
+		delete(m.nestedIndexes, collID)
+	}
+	log.Ctx(ctx).Info("IndexCoord meta table remove nested index success", zap.Int64("collectionID", collID), zap.Int64("indexID", indexID))
+	return nil
+}
+
 func (m *indexMeta) CheckCleanSegmentIndex(buildID UniqueID) (bool, *model.SegmentIndex) {
 	if segIndex, ok := m.segmentBuildInfo.Get(buildID); ok {
 		if segIndex.IndexState == commonpb.IndexState_Finished {
@@ -1062,16 +1324,22 @@ func (m *indexMeta) CheckCleanSegmentIndex(buildID UniqueID) (bool, *model.Segme
 func (m *indexMeta) getSegmentsIndexStates(collectionID UniqueID, segmentIDs []UniqueID) map[int64]map[int64]*indexpb.SegmentIndexState {
 	ret := make(map[int64]map[int64]*indexpb.SegmentIndexState, 0)
 	m.fieldIndexLock.RLock()
-	fieldIndexesMap, ok := m.indexes[collectionID]
-	if !ok {
-		m.fieldIndexLock.RUnlock()
-		return ret
-	}
+	fieldIndexesMap := m.indexes[collectionID]
+	nestedIndexesMap := m.nestedIndexes[collectionID]
+
 	fieldIndexes := make(map[UniqueID]*model.Index, len(fieldIndexesMap))
 	for id, index := range fieldIndexesMap {
 		fieldIndexes[id] = index
 	}
+	nestedIndexes := make(map[UniqueID]*model.NestedIndex, len(nestedIndexesMap))
+	for id, index := range nestedIndexesMap {
+		nestedIndexes[id] = index
+	}
 	m.fieldIndexLock.RUnlock()
+
+	if len(fieldIndexes) == 0 && len(nestedIndexes) == 0 {
+		return ret
+	}
 
 	for _, segID := range segmentIDs {
 		ret[segID] = make(map[int64]*indexpb.SegmentIndexState)
@@ -1090,6 +1358,16 @@ func (m *indexMeta) getSegmentsIndexStates(collectionID UniqueID, segmentIDs []U
 					IndexVersion: segIdx.CurrentIndexVersion,
 				}
 			}
+
+			if nestedIndex, ok := nestedIndexes[segIdx.IndexID]; ok && !nestedIndex.IsDeleted {
+				ret[segID][segIdx.IndexID] = &indexpb.SegmentIndexState{
+					SegmentID:    segID,
+					State:        segIdx.IndexState,
+					FailReason:   segIdx.FailReason,
+					IndexName:    nestedIndex.IndexName,
+					IndexVersion: segIdx.CurrentIndexVersion,
+				}
+			}
 		}
 	}
 
@@ -1098,7 +1376,9 @@ func (m *indexMeta) getSegmentsIndexStates(collectionID UniqueID, segmentIDs []U
 
 func (m *indexMeta) GetUnindexedSegments(collectionID int64, segmentIDs []int64) []int64 {
 	indexes := m.GetIndexesForCollection(collectionID, "")
-	if len(indexes) == 0 {
+	nestedIndexes := m.GetNestedIndexesForCollection(collectionID, "")
+	totalIndexCount := len(indexes) + len(nestedIndexes)
+	if totalIndexCount == 0 {
 		// doesn't have index
 		return nil
 	}
@@ -1108,7 +1388,7 @@ func (m *indexMeta) GetUnindexedSegments(collectionID int64, segmentIDs []int64)
 		indexStates := lo.Filter(lo.Values(states), func(state *indexpb.SegmentIndexState, _ int) bool {
 			return state.GetState() == commonpb.IndexState_Finished
 		})
-		if len(indexStates) == len(indexes) {
+		if len(indexStates) == totalIndexCount {
 			indexed = append(indexed, segmentID)
 		}
 	}
@@ -1139,6 +1419,15 @@ func (m *indexMeta) HasIndex(collectionID int64) bool {
 	indexes, ok := m.indexes[collectionID]
 	if ok {
 		for _, index := range indexes {
+			if !index.IsDeleted {
+				return true
+			}
+		}
+	}
+
+	nestedIndexes, ok := m.nestedIndexes[collectionID]
+	if ok {
+		for _, index := range nestedIndexes {
 			if !index.IsDeleted {
 				return true
 			}
@@ -1189,13 +1478,14 @@ func (m *indexMeta) GetIndexJSON(collectionID int64) string {
 
 func (m *indexMeta) GetSegmentIndexedFields(collectionID UniqueID, segmentID UniqueID) (bool, []*metricsinfo.IndexedField) {
 	m.fieldIndexLock.RLock()
-	fieldIndexes, ok := m.indexes[collectionID]
-	if !ok {
+	fieldIndexes := m.indexes[collectionID]
+	nestedIndexes := m.nestedIndexes[collectionID]
+	m.fieldIndexLock.RUnlock()
+
+	if len(fieldIndexes) == 0 && len(nestedIndexes) == 0 {
 		// the segment should be unindexed status if the collection has no indexes
-		m.fieldIndexLock.RUnlock()
 		return false, []*metricsinfo.IndexedField{}
 	}
-	m.fieldIndexLock.RUnlock()
 
 	// the segment should be unindexed status if the segment indexes is not found
 	segIndexInfos, ok := m.segmentIndexes.Get(segmentID)
@@ -1220,6 +1510,27 @@ func (m *indexMeta) GetSegmentIndexedFields(collectionID UniqueID, segmentID Uni
 			segmentIndexes = append(segmentIndexes, &metricsinfo.IndexedField{
 				IndexFieldID: index.FieldID,
 				IndexID:      index.IndexID,
+				BuildID:      buildID,
+				IndexSize:    serializedSize,
+			})
+		}
+	}
+
+	for _, nestedIndex := range nestedIndexes {
+		if si, ok := segIndexInfos.Get(nestedIndex.IndexID); !nestedIndex.IsDeleted {
+			buildID := int64(-1)
+			serializedSize := int64(0)
+			if !ok || si == nil {
+				// the segment should be unindexed status if the segment index is not found within nested indexes
+				isIndexed = false
+			} else {
+				buildID = si.BuildID
+				serializedSize = int64(si.IndexSerializedSize)
+			}
+
+			segmentIndexes = append(segmentIndexes, &metricsinfo.IndexedField{
+				IndexFieldID: nestedIndex.StructFieldID,
+				IndexID:      nestedIndex.IndexID,
 				BuildID:      buildID,
 				IndexSize:    serializedSize,
 			})

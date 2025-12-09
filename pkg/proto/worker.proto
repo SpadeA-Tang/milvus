@@ -113,6 +113,40 @@ message CreateJobRequest {
   string manifest = 33;
 }
 
+// ChildFieldInfo contains the binlog information for a child field in a nested index
+message ChildFieldInfo {
+  int64 field_id = 1;
+  string field_name = 2;
+  schema.DataType field_type = 3;
+  repeated int64 data_ids = 4;
+  schema.FieldSchema field = 5;
+  repeated string data_paths = 6;
+}
+
+message CreateNestedIndexJobRequest {
+  string clusterID = 1;
+  int64 buildID = 2;
+  int64 indexID = 3;
+  string index_name = 4;
+  int64 collectionID = 5;
+  int64 partitionID = 6;
+  int64 segmentID = 7;
+  int64 struct_field_id = 8;
+  string struct_field_name = 9;
+  repeated ChildFieldInfo child_fields = 10;
+  int64 index_version = 11;
+  int64 num_rows = 12;
+  int32 current_scalar_index_version = 13;
+  index.StorageConfig storage_config = 14;
+  string index_file_prefix = 15;
+  int64 storage_version = 16;
+  repeated data.FieldBinlog insert_logs = 17;
+  string manifest = 18;
+  int64 task_slot = 19;
+  repeated common.KeyValuePair plugin_context = 20;
+  int64 lack_binlog_rows = 21;
+}
+
 message QueryJobsRequest {
   string clusterID = 1;
   repeated int64 taskIDs = 2;

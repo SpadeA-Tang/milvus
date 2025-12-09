@@ -63,6 +63,9 @@ func (s *Server) defaultIndexNameByID(schema *schemapb.CollectionSchema, fieldID
 		}
 	}
 	for _, structField := range schema.GetStructArrayFields() {
+		if structField.FieldID == fieldID {
+			return structField.Name, nil
+		}
 		for _, subField := range structField.GetFields() {
 			if subField.FieldID == fieldID {
 				return subField.Name, nil
@@ -327,15 +330,77 @@ func (s *Server) CreateNestedIndex(ctx context.Context, req *indexpb.CreateNeste
 	}
 
 	if req.GetIndexName() == "" {
-
+		indexes := s.meta.indexMeta.GetNestedIndexes(req.GetCollectionID(), req.GetStructFieldId(), req.GetIndexName())
+		fieldName, err := s.defaultIndexNameByID(schema, req.GetStructFieldId())
+		if err != nil {
+			log.Warn("get field name from schema failed", zap.Int64("structFieldID", req.GetStructFieldId()))
+			return merr.Status(err), nil
+		}
+		defaultIndexName := fieldName
+		if len(indexes) == 0 {
+			req.IndexName = defaultIndexName
+		} else if len(indexes) == 1 {
+			req.IndexName = indexes[0].IndexName
+		}
 	}
 
-	// TODO: Implement nested index creation
-	// 1. Validate struct field exists
-	// 2. Validate sub fields exist in struct
-	// 3. Create nested index meta
-	// 4. Trigger index building on segments
+	indexID, err := s.meta.indexMeta.CanCreateNestedIndex(req)
+	if err != nil {
+		if errors.Is(err, errIndexOperationIgnored) {
+			log.Info("nested index already exists",
+				zap.Int64("collectionID", req.GetCollectionID()),
+				zap.Int64("structFieldID", req.GetStructFieldId()),
+				zap.Strings("subFieldNames", req.GetSubFieldNames()),
+				zap.String("indexName", req.GetIndexName()))
+		}
+		log.Error("Check CanCreateNestedIndex fail", zap.Error(err))
+		metrics.IndexRequestCounter.WithLabelValues(metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+	if indexID == 0 {
+		if indexID, err = s.allocator.AllocID(ctx); err != nil {
+			log.Warn("failed to alloc indexID", zap.Error(err))
+			metrics.IndexRequestCounter.WithLabelValues(metrics.FailLabel).Inc()
+			return merr.Status(err), nil
+		}
+	}
 
+	// Now, the nested index does not need params check
+	nestedIndex := &model.NestedIndex{
+		CollectionID:  req.GetCollectionID(),
+		StructFieldID: req.GetStructFieldId(),
+		SubFieldIDs:   req.GetSubFieldIds(),
+		IndexName:     req.GetIndexName(),
+		IndexID:       indexID,
+		CreateTime:    req.GetTimestamp(),
+	}
+
+	if _, err = broadcaster.Broadcast(ctx, message.NewCreateNestedIndexMessageBuilderV2().
+		WithHeader(&message.CreateNestedIndexMessageHeader{
+			DbId:          coll.GetDbId(),
+			CollectionId:  req.GetCollectionID(),
+			StructFieldId: req.GetStructFieldId(),
+			SubFieldIds:   req.GetSubFieldIds(),
+			IndexId:       indexID,
+			IndexName:     req.GetIndexName(),
+		}).
+		WithBody(&message.CreateNestedIndexMessageBody{
+			NestedIndex: model.MarshalNestedIndexModel(nestedIndex),
+		}).
+		WithBroadcast([]string{streaming.WAL().ControlChannel()}).
+		MustBuildBroadcast(),
+	); err != nil {
+		log.Error("CreateNestedIndex fail", zap.Error(err))
+		metrics.IndexRequestCounter.WithLabelValues(metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+
+	log.Info("CreateNestedIndex successfully",
+		zap.String("IndexName", nestedIndex.IndexName),
+		zap.Int64("structFieldID", nestedIndex.StructFieldID),
+		zap.Int64s("subFieldIDs", nestedIndex.SubFieldIDs),
+		zap.Int64("IndexID", nestedIndex.IndexID))
+	metrics.IndexRequestCounter.WithLabelValues(metrics.SuccessLabel).Inc()
 	return merr.Success(), nil
 }
 
@@ -556,20 +621,23 @@ func (s *Server) GetIndexState(ctx context.Context, req *indexpb.GetIndexStateRe
 	}
 
 	indexes := s.meta.indexMeta.GetIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
-	if len(indexes) == 0 {
+	nestedIndexes := s.meta.indexMeta.GetNestedIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
+
+	if len(indexes) == 0 && len(nestedIndexes) == 0 {
 		err := merr.WrapErrIndexNotFound(req.GetIndexName())
 		log.Warn("GetIndexState fail", zap.Error(err))
 		return &indexpb.GetIndexStateResponse{
 			Status: merr.Status(err),
 		}, nil
 	}
-	if len(indexes) > 1 {
+	if len(indexes)+len(nestedIndexes) > 1 {
 		log.Warn(msgAmbiguousIndexName())
 		err := merr.WrapErrIndexDuplicate(req.GetIndexName())
 		return &indexpb.GetIndexStateResponse{
 			Status: merr.Status(err),
 		}, nil
 	}
+
 	ret := &indexpb.GetIndexStateResponse{
 		Status: merr.Success(),
 		State:  commonpb.IndexState_Finished,
@@ -581,7 +649,11 @@ func (s *Server) GetIndexState(ctx context.Context, req *indexpb.GetIndexStateRe
 		return info.GetLevel() != datapb.SegmentLevel_L0 && (isFlush(info) || info.GetState() == commonpb.SegmentState_Dropped)
 	}))
 
-	s.completeIndexInfo(indexInfo, indexes[0], segments, false, indexes[0].CreateTime)
+	if len(indexes) == 1 {
+		s.completeIndexInfo(indexInfo, indexes[0], segments, false, indexes[0].CreateTime)
+	} else {
+		s.completeNestedIndexInfo(indexInfo, nestedIndexes[0], segments, false, nestedIndexes[0].CreateTime)
+	}
 	ret.State = indexInfo.State
 	ret.FailReason = indexInfo.IndexStateFailReason
 
@@ -799,6 +871,92 @@ func (s *Server) completeIndexInfo(indexInfo *indexpb.IndexInfo, index *model.In
 		zap.Int32("minIndexVersion", indexInfo.MinIndexVersion), zap.Int32("maxIndexVersion", indexInfo.MaxIndexVersion))
 }
 
+// completeNestedIndexInfo get the nested index row count and index task state
+func (s *Server) completeNestedIndexInfo(indexInfo *indexpb.IndexInfo, index *model.NestedIndex, segments map[int64]*indexStats, realTime bool, ts Timestamp) {
+	var (
+		cntNone          = 0
+		cntUnissued      = 0
+		cntInProgress    = 0
+		cntFinished      = 0
+		cntFailed        = 0
+		failReason       string
+		totalRows        = int64(0)
+		indexedRows      = int64(0)
+		pendingIndexRows = int64(0)
+	)
+
+	minIndexVersion := int32(math.MaxInt32)
+	maxIndexVersion := int32(math.MinInt32)
+
+	for segID, seg := range segments {
+		if seg.state != commonpb.SegmentState_Flushed && seg.state != commonpb.SegmentState_Flushing {
+			continue
+		}
+		totalRows += seg.numRows
+		segIdx, ok := seg.indexStates[index.IndexID]
+
+		if !ok {
+			if seg.lastExpireTime <= ts {
+				cntUnissued++
+			}
+			pendingIndexRows += seg.numRows
+			continue
+		}
+		if segIdx.GetState() != commonpb.IndexState_Finished {
+			pendingIndexRows += seg.numRows
+		}
+
+		if !realTime && seg.lastExpireTime > ts {
+			continue
+		}
+
+		switch segIdx.GetState() {
+		case commonpb.IndexState_IndexStateNone:
+			log.Warn("receive unexpected index state: IndexStateNone", zap.Int64("segmentID", segID))
+			cntNone++
+		case commonpb.IndexState_Unissued:
+			cntUnissued++
+		case commonpb.IndexState_InProgress:
+			cntInProgress++
+		case commonpb.IndexState_Finished:
+			cntFinished++
+			indexedRows += seg.numRows
+			if segIdx.IndexVersion < minIndexVersion {
+				minIndexVersion = segIdx.IndexVersion
+			}
+			if segIdx.IndexVersion > maxIndexVersion {
+				maxIndexVersion = segIdx.IndexVersion
+			}
+		case commonpb.IndexState_Failed:
+			cntFailed++
+			failReason += fmt.Sprintf("%d: %s;", segID, segIdx.FailReason)
+		}
+	}
+
+	indexInfo.IndexedRows = indexedRows
+	indexInfo.TotalRows = totalRows
+	indexInfo.PendingIndexRows = pendingIndexRows
+	indexInfo.MinIndexVersion = minIndexVersion
+	indexInfo.MaxIndexVersion = maxIndexVersion
+	switch {
+	case cntFailed > 0:
+		indexInfo.State = commonpb.IndexState_Failed
+		indexInfo.IndexStateFailReason = failReason
+	case cntInProgress > 0 || cntUnissued > 0:
+		indexInfo.State = commonpb.IndexState_InProgress
+	case cntNone > 0:
+		indexInfo.State = commonpb.IndexState_IndexStateNone
+	default:
+		indexInfo.State = commonpb.IndexState_Finished
+	}
+
+	log.RatedInfo(60, "completeNestedIndexInfo success", zap.Int64("collectionID", index.CollectionID), zap.Int64("indexID", index.IndexID),
+		zap.Int64("totalRows", indexInfo.TotalRows), zap.Int64("indexRows", indexInfo.IndexedRows),
+		zap.Int64("pendingIndexRows", indexInfo.PendingIndexRows),
+		zap.String("state", indexInfo.State.String()), zap.String("failReason", indexInfo.IndexStateFailReason),
+		zap.Int32("minIndexVersion", indexInfo.MinIndexVersion), zap.Int32("maxIndexVersion", indexInfo.MaxIndexVersion))
+}
+
 // GetIndexBuildProgress get the index building progress by num rows.
 // Deprecated
 func (s *Server) GetIndexBuildProgress(ctx context.Context, req *indexpb.GetIndexBuildProgressRequest) (*indexpb.GetIndexBuildProgressResponse, error) {
@@ -815,7 +973,9 @@ func (s *Server) GetIndexBuildProgress(ctx context.Context, req *indexpb.GetInde
 	}
 
 	indexes := s.meta.indexMeta.GetIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
-	if len(indexes) == 0 {
+	nestedIndexes := s.meta.indexMeta.GetNestedIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
+
+	if len(indexes) == 0 && len(nestedIndexes) == 0 {
 		err := merr.WrapErrIndexNotFound(req.GetIndexName())
 		log.Warn("GetIndexBuildProgress fail", zap.String("indexName", req.IndexName), zap.Error(err))
 		return &indexpb.GetIndexBuildProgressResponse{
@@ -823,16 +983,27 @@ func (s *Server) GetIndexBuildProgress(ctx context.Context, req *indexpb.GetInde
 		}, nil
 	}
 
-	if len(indexes) > 1 {
+	if len(indexes)+len(nestedIndexes) > 1 {
 		log.Warn(msgAmbiguousIndexName())
 		err := merr.WrapErrIndexDuplicate(req.GetIndexName())
 		return &indexpb.GetIndexBuildProgressResponse{
 			Status: merr.Status(err),
 		}, nil
 	}
+
+	var indexID int64
+	var createTime uint64
+	if len(indexes) == 1 {
+		indexID = indexes[0].IndexID
+		createTime = indexes[0].CreateTime
+	} else {
+		indexID = nestedIndexes[0].IndexID
+		createTime = nestedIndexes[0].CreateTime
+	}
+
 	indexInfo := &indexpb.IndexInfo{
 		CollectionID:     req.GetCollectionID(),
-		IndexID:          indexes[0].IndexID,
+		IndexID:          indexID,
 		IndexedRows:      0,
 		TotalRows:        0,
 		PendingIndexRows: 0,
@@ -844,7 +1015,11 @@ func (s *Server) GetIndexBuildProgress(ctx context.Context, req *indexpb.GetInde
 		return info.GetLevel() != datapb.SegmentLevel_L0 && (isFlush(info) || info.GetState() == commonpb.SegmentState_Dropped)
 	}))
 
-	s.completeIndexInfo(indexInfo, indexes[0], segments, false, indexes[0].CreateTime)
+	if len(indexes) == 1 {
+		s.completeIndexInfo(indexInfo, indexes[0], segments, false, createTime)
+	} else {
+		s.completeNestedIndexInfo(indexInfo, nestedIndexes[0], segments, false, createTime)
+	}
 	log.Info("GetIndexBuildProgress success", zap.Int64("collectionID", req.GetCollectionID()),
 		zap.String("indexName", req.GetIndexName()))
 	return &indexpb.GetIndexBuildProgressResponse{
@@ -881,7 +1056,9 @@ func (s *Server) DescribeIndex(ctx context.Context, req *indexpb.DescribeIndexRe
 	}
 
 	indexes := s.meta.indexMeta.GetIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
-	if len(indexes) == 0 {
+	nestedIndexes := s.meta.indexMeta.GetNestedIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
+
+	if len(indexes) == 0 && len(nestedIndexes) == 0 {
 		err := merr.WrapErrIndexNotFound(req.GetIndexName())
 		log.RatedWarn(60, "DescribeIndex fail", zap.Error(err))
 		return &indexpb.DescribeIndexResponse{
@@ -917,6 +1094,24 @@ func (s *Server) DescribeIndex(ctx context.Context, req *indexpb.DescribeIndexRe
 		s.completeIndexInfo(indexInfo, index, segments, false, createTs)
 		indexInfos = append(indexInfos, indexInfo)
 	}
+	for _, nestedIndex := range nestedIndexes {
+		indexInfo := &indexpb.IndexInfo{
+			CollectionID:         nestedIndex.CollectionID,
+			FieldID:              nestedIndex.StructFieldID,
+			IndexName:            nestedIndex.IndexName,
+			IndexID:              nestedIndex.IndexID,
+			IndexedRows:          0,
+			TotalRows:            0,
+			State:                0,
+			IndexStateFailReason: "",
+		}
+		createTs := nestedIndex.CreateTime
+		if req.GetTimestamp() != 0 {
+			createTs = req.GetTimestamp()
+		}
+		s.completeNestedIndexInfo(indexInfo, nestedIndex, segments, false, createTs)
+		indexInfos = append(indexInfos, indexInfo)
+	}
 	return &indexpb.DescribeIndexResponse{
 		Status:     merr.Success(),
 		IndexInfos: indexInfos,
@@ -937,7 +1132,9 @@ func (s *Server) GetIndexStatistics(ctx context.Context, req *indexpb.GetIndexSt
 	}
 
 	indexes := s.meta.indexMeta.GetIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
-	if len(indexes) == 0 {
+	nestedIndexes := s.meta.indexMeta.GetNestedIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
+
+	if len(indexes) == 0 && len(nestedIndexes) == 0 {
 		err := merr.WrapErrIndexNotFound(req.GetIndexName())
 		log.Warn("GetIndexStatistics fail",
 			zap.String("indexName", req.GetIndexName()),
@@ -969,6 +1166,20 @@ func (s *Server) GetIndexStatistics(ctx context.Context, req *indexpb.GetIndexSt
 			UserIndexParams:      index.UserIndexParams,
 		}
 		s.completeIndexInfo(indexInfo, index, segments, true, index.CreateTime)
+		indexInfos = append(indexInfos, indexInfo)
+	}
+	for _, nestedIndex := range nestedIndexes {
+		indexInfo := &indexpb.IndexInfo{
+			CollectionID:         nestedIndex.CollectionID,
+			FieldID:              nestedIndex.StructFieldID,
+			IndexName:            nestedIndex.IndexName,
+			IndexID:              nestedIndex.IndexID,
+			IndexedRows:          0,
+			TotalRows:            0,
+			State:                0,
+			IndexStateFailReason: "",
+		}
+		s.completeNestedIndexInfo(indexInfo, nestedIndex, segments, true, nestedIndex.CreateTime)
 		indexInfos = append(indexInfos, indexInfo)
 	}
 	log.Debug("GetIndexStatisticsResponse success",
@@ -1028,60 +1239,81 @@ func (s *Server) DropIndex(ctx context.Context, req *indexpb.DropIndexRequest) (
 	defer broadcaster.Close()
 
 	indexes := s.meta.indexMeta.GetIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
-	if len(indexes) == 0 {
+	nestedIndexes := s.meta.indexMeta.GetNestedIndexesForCollection(req.GetCollectionID(), req.GetIndexName())
+
+	if len(indexes) == 0 && len(nestedIndexes) == 0 {
 		log.Info(fmt.Sprintf("there is no index on collection: %d with the index name: %s", req.CollectionID, req.IndexName))
 		return merr.Success(), nil
 	}
+
 	// we do not support drop vector index on loaded collection
-	loaded, err := isCollectionLoaded(ctx, s.mixCoord, req.GetCollectionID())
-	if err != nil {
-		log.Warn("fail to check if collection is loaded", zap.String("indexName", req.IndexName), zap.Int64("collectionID", req.GetCollectionID()), zap.Error(err))
-		return merr.Status(err), nil
-	}
-	if loaded {
-		schema, err := s.getSchema(ctx, req.GetCollectionID())
+	if len(indexes) > 0 {
+		loaded, err := isCollectionLoaded(ctx, s.mixCoord, req.GetCollectionID())
 		if err != nil {
+			log.Warn("fail to check if collection is loaded", zap.String("indexName", req.IndexName), zap.Int64("collectionID", req.GetCollectionID()), zap.Error(err))
 			return merr.Status(err), nil
 		}
-		// check if there is any vector index to drop
-		for _, index := range indexes {
-			field := typeutil.GetField(schema, index.FieldID)
-			if field == nil {
-				log.Warn("field not found", zap.String("indexName", req.IndexName), zap.Int64("collectionID", req.GetCollectionID()), zap.Int64("fieldID", index.FieldID))
-				return merr.Status(merr.WrapErrFieldNotFound(index.FieldID)), nil
+		if loaded {
+			schema, err := s.getSchema(ctx, req.GetCollectionID())
+			if err != nil {
+				return merr.Status(err), nil
 			}
-			if typeutil.IsVectorType(field.GetDataType()) {
-				log.Warn("vector index cannot be dropped on loaded collection", zap.String("indexName", req.IndexName), zap.Int64("collectionID", req.GetCollectionID()), zap.Int64("fieldID", index.FieldID))
-				return merr.Status(merr.WrapErrParameterInvalidMsg(fmt.Sprintf("vector index cannot be dropped on loaded collection: %d", req.GetCollectionID()))), nil
+			// check if there is any vector index to drop
+			for _, index := range indexes {
+				field := typeutil.GetField(schema, index.FieldID)
+				if field == nil {
+					log.Warn("field not found", zap.String("indexName", req.IndexName), zap.Int64("collectionID", req.GetCollectionID()), zap.Int64("fieldID", index.FieldID))
+					return merr.Status(merr.WrapErrFieldNotFound(index.FieldID)), nil
+				}
+				if typeutil.IsVectorType(field.GetDataType()) {
+					log.Warn("vector index cannot be dropped on loaded collection", zap.String("indexName", req.IndexName), zap.Int64("collectionID", req.GetCollectionID()), zap.Int64("fieldID", index.FieldID))
+					return merr.Status(merr.WrapErrParameterInvalidMsg(fmt.Sprintf("vector index cannot be dropped on loaded collection: %d", req.GetCollectionID()))), nil
+				}
 			}
 		}
 	}
 
-	if !req.GetDropAll() && len(indexes) > 1 {
+	totalIndexCount := len(indexes) + len(nestedIndexes)
+	if !req.GetDropAll() && totalIndexCount > 1 {
 		log.Warn(msgAmbiguousIndexName())
 		err := merr.WrapErrIndexDuplicate(req.GetIndexName())
 		return merr.Status(err), nil
 	}
+
 	indexIDs := make([]UniqueID, 0)
 	for _, index := range indexes {
 		indexIDs = append(indexIDs, index.IndexID)
 	}
-
-	msg := message.NewDropIndexMessageBuilderV2().
-		WithHeader(&message.DropIndexMessageHeader{
-			CollectionId: req.GetCollectionID(),
-			IndexIds:     indexIDs,
-		}).
-		WithBody(&message.DropIndexMessageBody{}).
-		WithBroadcast([]string{streaming.WAL().ControlChannel()}).
-		MustBuildBroadcast()
-
-	if _, err := broadcaster.Broadcast(ctx, msg); err != nil {
-		log.Warn("failed to broadcast drop index message", zap.Error(err))
-		return merr.Status(err), nil
+	nestedIndexIDs := make([]UniqueID, 0)
+	for _, nestedIndex := range nestedIndexes {
+		nestedIndexIDs = append(nestedIndexIDs, nestedIndex.IndexID)
 	}
+
+	// Drop field indexes
+	if len(indexIDs) > 0 {
+		msg := message.NewDropIndexMessageBuilderV2().
+			WithHeader(&message.DropIndexMessageHeader{
+				CollectionId: req.GetCollectionID(),
+				IndexIds:     indexIDs,
+			}).
+			WithBody(&message.DropIndexMessageBody{}).
+			WithBroadcast([]string{streaming.WAL().ControlChannel()}).
+			MustBuildBroadcast()
+
+		if _, err := broadcaster.Broadcast(ctx, msg); err != nil {
+			log.Warn("failed to broadcast drop index message", zap.Error(err))
+			return merr.Status(err), nil
+		}
+	}
+
+	// TODO: Drop nested indexes - need to implement DropNestedIndex message
+	// For now, just log if there are nested indexes to drop
+	if len(nestedIndexIDs) > 0 {
+		log.Info("DropNestedIndex not yet implemented", zap.Int64s("nestedIndexIDs", nestedIndexIDs))
+	}
+
 	log.Info("DropIndex success", zap.Int64s("partitionIDs", req.GetPartitionIDs()),
-		zap.String("indexName", req.GetIndexName()), zap.Int64s("indexIDs", indexIDs))
+		zap.String("indexName", req.GetIndexName()), zap.Int64s("indexIDs", indexIDs), zap.Int64s("nestedIndexIDs", nestedIndexIDs))
 	return merr.Success(), nil
 }
 
@@ -1169,6 +1401,7 @@ func (s *Server) ListIndexes(ctx context.Context, req *indexpb.ListIndexesReques
 	}
 
 	indexes := s.meta.indexMeta.GetIndexesForCollection(req.GetCollectionID(), "")
+	nestedIndexes := s.meta.indexMeta.GetNestedIndexesForCollection(req.GetCollectionID(), "")
 
 	indexInfos := lo.Map(indexes, func(index *model.Index, _ int) *indexpb.IndexInfo {
 		return &indexpb.IndexInfo{
@@ -1182,6 +1415,14 @@ func (s *Server) ListIndexes(ctx context.Context, req *indexpb.ListIndexesReques
 			UserIndexParams: index.UserIndexParams,
 		}
 	})
+	for _, nestedIndex := range nestedIndexes {
+		indexInfos = append(indexInfos, &indexpb.IndexInfo{
+			CollectionID: nestedIndex.CollectionID,
+			FieldID:      nestedIndex.StructFieldID,
+			IndexName:    nestedIndex.IndexName,
+			IndexID:      nestedIndex.IndexID,
+		})
+	}
 	log.Debug("List index success")
 	return &indexpb.ListIndexesResponse{
 		Status:     merr.Success(),

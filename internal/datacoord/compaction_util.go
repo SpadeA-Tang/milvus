@@ -75,6 +75,9 @@ func WrapPluginContext(collectionID int64, properties []*commonpb.KeyValuePair, 
 	case *datapb.PreImportRequest:
 		job := msg.(*datapb.PreImportRequest)
 		job.PluginContext = append(job.PluginContext, pluginContext...)
+	case *workerpb.CreateNestedIndexJobRequest:
+		job := msg.(*workerpb.CreateNestedIndexJobRequest)
+		job.PluginContext = append(job.PluginContext, pluginContext...)
 	default:
 		return
 	}
