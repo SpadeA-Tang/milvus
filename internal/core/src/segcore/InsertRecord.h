@@ -867,6 +867,7 @@ class InsertRecordGrowing {
             } else if (field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
                 this->append_data<VectorArray>(field_id,
                                                field_meta.get_dim(),
+                                               field_meta.get_element_type(),
                                                size_per_chunk,
                                                dense_vec_mmap_descriptor);
                 return;
@@ -1030,12 +1031,13 @@ class InsertRecordGrowing {
     void
     append_data(FieldId field_id,
                 int64_t dim,
+                DataType element_type,
                 int64_t size_per_chunk,
                 const storage::MmapChunkDescriptorPtr mmap_descriptor) {
         static_assert(std::is_base_of_v<VectorTrait, VectorType>);
         data_.emplace(field_id,
-                      std::make_unique<ConcurrentVector<VectorType>>(
-                          dim, size_per_chunk, mmap_descriptor));
+                      std::make_unique<ConcurrentVectorArray>(
+                          dim, size_per_chunk, element_type, mmap_descriptor));
     }
 
     // append a column of scalar or sparse float vector type

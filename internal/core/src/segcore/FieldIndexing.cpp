@@ -43,11 +43,14 @@ VectorFieldIndexing::VectorFieldIndexing(const FieldMeta& field_meta,
           segcore_config,
           SegmentType::Growing,
           IsSparseFloatVectorDataType(field_meta.get_data_type()))) {
-    recreate_index(field_meta.get_data_type(), field_raw_data);
+    recreate_index(field_meta.get_data_type(),
+                   field_meta.get_element_type(),
+                   field_raw_data);
 }
 
 void
 VectorFieldIndexing::recreate_index(DataType data_type,
+                                    DataType element_type,
                                     const VectorBase* field_raw_data) {
     if (IsSparseFloatVectorDataType(data_type)) {
         index_ = std::make_unique<index::VectorMemIndex<sparse_u32_f32>>(
@@ -77,7 +80,7 @@ VectorFieldIndexing::recreate_index(DataType data_type,
             reinterpret_cast<const ConcurrentVector<Float16Vector>*>(
                 field_raw_data);
         AssertInfo(concurrent_fp16_vec != nullptr,
-                   "Fail to generate a cocurrent vector when    recreate_index "
+                   "Fail to generate a cocurrent vector when recreate_index "
                    "in growing segment.");
         knowhere::ViewDataOp view_data = [field_raw_data_ptr =
                                               concurrent_fp16_vec](size_t id) {
@@ -94,7 +97,7 @@ VectorFieldIndexing::recreate_index(DataType data_type,
             reinterpret_cast<const ConcurrentVector<BFloat16Vector>*>(
                 field_raw_data);
         AssertInfo(concurrent_bf16_vec != nullptr,
-                   "Fail to generate a cocurrent vector when    recreate_index "
+                   "Fail to generate a cocurrent vector when recreate_index "
                    "in growing segment.");
         knowhere::ViewDataOp view_data = [field_raw_data_ptr =
                                               concurrent_bf16_vec](size_t id) {
@@ -106,6 +109,27 @@ VectorFieldIndexing::recreate_index(DataType data_type,
             config_->GetMetricType(),
             knowhere::Version::GetCurrentVersion().VersionNumber(),
             view_data);
+    } else if (data_type == DataType::VECTOR_ARRAY) {
+        if (element_type == DataType::VECTOR_FLOAT) {
+            auto concurrent_float_vec_array =
+                reinterpret_cast<const ConcurrentVector<VectorArray>*>(
+                    field_raw_data);
+            AssertInfo(
+                concurrent_float_vec_array != nullptr,
+                "Fail to generate a cocurrent vector when recreate_index "
+                "in growing segment.");
+            knowhere::ViewDataOp view_data = [field_raw_data_ptr =
+                                                  concurrent_float_vec_array](
+                                                 size_t id) {
+                return (const VectorArray*)field_raw_data_ptr->get_element(id);
+            };
+            index_ = std::make_unique<index::VectorMemIndex<float>>(
+                DataType::NONE,
+                config_->GetIndexType(),
+                config_->GetMetricType(),
+                knowhere::Version::GetCurrentVersion().VersionNumber(),
+                view_data);
+        }
     }
 }
 
@@ -168,7 +192,7 @@ VectorFieldIndexing::AppendSegmentIndexSparse(int64_t reserved_offset,
                 }
             } catch (SegcoreError& error) {
                 LOG_ERROR("growing sparse index build error: {}", error.what());
-                recreate_index(get_data_type(), nullptr);
+                recreate_index(get_data_type(), get_element_type(), nullptr);
                 index_cur_ = 0;
                 return;
             }
@@ -257,7 +281,7 @@ VectorFieldIndexing::AppendSegmentIndexDense(int64_t reserved_offset,
             index_->BuildWithDataset(dataset, conf);
         } catch (SegcoreError& error) {
             LOG_ERROR("growing index build error: {}", error.what());
-            recreate_index(get_data_type(), field_raw_data);
+            recreate_index(get_data_type(), get_element_type(), field_raw_data);
             return;
         }
         index_cur_.fetch_add(vec_num);
@@ -564,7 +588,8 @@ CreateIndex(const FieldMeta& field_meta,
             field_meta.get_data_type() == DataType::VECTOR_FLOAT16 ||
             field_meta.get_data_type() == DataType::VECTOR_BFLOAT16 ||
             field_meta.get_data_type() == DataType::VECTOR_INT8 ||
-            field_meta.get_data_type() == DataType::VECTOR_SPARSE_U32_F32) {
+            field_meta.get_data_type() == DataType::VECTOR_SPARSE_U32_F32 ||
+            field_meta.get_data_type() == DataType::VECTOR_ARRAY) {
             return std::make_unique<VectorFieldIndexing>(field_meta,
                                                          field_index_meta,
                                                          segment_max_row_count,
