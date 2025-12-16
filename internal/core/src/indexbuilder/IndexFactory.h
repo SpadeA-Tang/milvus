@@ -75,6 +75,9 @@ class IndexFactory {
             case DataType::VECTOR_ARRAY:
                 return std::make_unique<VecIndexCreator>(type, config, context);
 
+            case DataType::ARRAY_OF_STRUCT:
+                return CreateNestedIndexCreator(config, context);
+
             default:
                 ThrowInfo(DataTypeInvalid,
                           fmt::format("invalid type is {}", invalid_dtype_msg));

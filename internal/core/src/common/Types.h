@@ -96,6 +96,9 @@ enum class DataType {
     VECTOR_SPARSE_U32_F32 = 104,
     VECTOR_INT8 = 105,
     VECTOR_ARRAY = 106,
+
+    ARRAY_OF_STRUCT = 200,  // internal types, not used in user interface
+    STRUCT = 201, // external types, used in user interface
 };
 
 using Timestamp = uint64_t;  // TODO: use TiKV-like timestamp

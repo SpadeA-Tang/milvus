@@ -318,6 +318,68 @@ CreateNestedIndex(CIndex* res_index,
             get_storage_config(build_index_info->storage_config());
         auto config = get_config(build_index_info);
 
+        // init field meta using struct field id
+        milvus::storage::FieldDataMeta field_meta{
+            build_index_info->collectionid(),
+            build_index_info->partitionid(),
+            build_index_info->segmentid(),
+            build_index_info->struct_field_id(),
+            {}};
+
+        milvus::storage::IndexMeta index_meta{
+            build_index_info->segmentid(),
+            build_index_info->struct_field_id(),
+            build_index_info->buildid(),
+            build_index_info->index_version(),
+            "",
+            build_index_info->struct_field_name(),
+            milvus::DataType::ARRAY_OF_STRUCT,
+        };
+
+        auto chunk_manager =
+            milvus::storage::CreateChunkManager(storage_config);
+        LOG_INFO("create chunk manager success, build_id: {}",
+                 build_index_info->buildid());
+        auto fs = milvus::storage::InitArrowFileSystem(storage_config);
+        LOG_INFO("init arrow file system success, build_id: {}",
+                 build_index_info->buildid());
+        milvus::storage::FileManagerContext fileManagerContext(
+            field_meta, index_meta, chunk_manager, fs);
+        if (build_index_info->manifest() != "") {
+            auto loon_properties = MakeInternalPropertiesFromStorageConfig(
+                ToCStorageConfig(storage_config));
+            fileManagerContext.set_loon_ffi_properties(loon_properties);
+        }
+
+        if (build_index_info->has_storage_plugin_context()) {
+            auto cipherPlugin =
+                milvus::storage::PluginLoader::GetInstance().getCipherPlugin();
+            AssertInfo(cipherPlugin != nullptr, "failed to get cipher plugin");
+            cipherPlugin->Update(
+                build_index_info->storage_plugin_context().encryption_zone_id(),
+                build_index_info->storage_plugin_context().collection_id(),
+                build_index_info->storage_plugin_context().encryption_key());
+
+            auto plugin_context = std::make_shared<CPluginContext>();
+            plugin_context->ez_id =
+                build_index_info->storage_plugin_context().encryption_zone_id();
+            plugin_context->collection_id =
+                build_index_info->storage_plugin_context().collection_id();
+            fileManagerContext.set_plugin_context(plugin_context);
+        }
+
+        auto index =
+            milvus::indexbuilder::IndexFactory::GetInstance().CreateIndex(
+                milvus::DataType::ARRAY_OF_STRUCT, config, fileManagerContext);
+        LOG_INFO("create nested index instance success, build_id: {}",
+                 build_index_info->buildid());
+        index->Build();
+        LOG_INFO("build nested index done, build_id: {}", build_index_info->buildid());
+        *res_index = index.release();
+        auto status = CStatus();
+        status.error_code = Success;
+        status.error_msg = "";
+        return status;
     } catch (SegcoreError& e) {
         auto status = CStatus();
         status.error_code = e.get_error_code();
