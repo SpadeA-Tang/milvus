@@ -118,6 +118,13 @@ class Expr {
         return false;
     }
 
+    // Check if this expression can use nested index for evaluation.
+    // Default returns false; SegmentExpr overrides this to check actual index.
+    virtual bool
+    CanUseNestedIndex() const {
+        return false;
+    }
+
     virtual std::optional<milvus::expr::ColumnInfo>
     GetColumnInfo() const {
         ThrowInfo(ErrorCode::NotImplemented, "not implemented");
@@ -361,9 +368,26 @@ class SegmentExpr : public Expr {
                    "ArrayOffsets not found for field {}",
                    field_id_.get());
 
-        int64_t current_rows =
-            segment_->num_rows_until_chunk(field_id_, current_data_chunk_) +
-            current_data_chunk_pos_;
+        // Use index path or data path based on whether index is being used
+        auto current_chunk = SegmentExpr::CanUseIndex() && use_index_
+                                 ? current_index_chunk_
+                                 : current_data_chunk_;
+        auto current_chunk_pos = SegmentExpr::CanUseIndex() && use_index_
+                                     ? current_index_chunk_pos_
+                                     : current_data_chunk_pos_;
+
+        int64_t current_rows = 0;
+        if (SegmentExpr::CanUseIndex() && use_index_ &&
+            segment_->type() == SegmentType::Sealed) {
+            // For sealed segment with index, position is already global
+            current_rows = current_chunk_pos;
+        } else if (segment_->is_chunked()) {
+            current_rows =
+                segment_->num_rows_until_chunk(field_id_, current_chunk) +
+                current_chunk_pos;
+        } else {
+            current_rows = current_chunk * size_per_chunk_ + current_chunk_pos;
+        }
 
         auto batch_rows = current_rows + batch_size_ >= active_count_
                               ? active_count_ - current_rows
@@ -1845,6 +1869,17 @@ class SegmentExpr : public Expr {
         }
 
         return true;
+    }
+
+    // Override: Check if this expression can use nested index.
+    // Returns true if index exists, is usable, and is a nested index.
+    bool
+    CanUseNestedIndex() const override {
+        if (!CanUseIndex() || pinned_index_.empty()) {
+            return false;
+        }
+        auto* index_ptr = pinned_index_[0].get();
+        return index_ptr != nullptr && index_ptr->IsNestedIndex();
     }
 
     template <typename T>

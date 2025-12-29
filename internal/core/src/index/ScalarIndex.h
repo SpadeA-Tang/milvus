@@ -147,8 +147,8 @@ class ScalarIndex : public IndexBase {
                index_type_ == milvus::index::MARISA_TRIE_UPPER;
     }
 
-    virtual bool
-    IsNestedIndex() const {
+    bool
+    IsNestedIndex() const override {
         return false;
     }
 

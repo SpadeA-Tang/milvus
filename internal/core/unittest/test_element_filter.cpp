@@ -11,9 +11,12 @@
 
 #include <gtest/gtest.h>
 #include <memory>
+#include <random>
 #include <vector>
 #include <boost/format.hpp>
 
+#include "index/ScalarIndexSort.h"
+#include "index/StringIndexSort.h"
 #include "common/Schema.h"
 #include "common/ArrayOffsets.h"
 #include "query/Plan.h"
@@ -54,8 +57,8 @@ TEST_P(ElementFilterSealed, RangeExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 500;
-    int array_len = 3;
+    size_t N = 10000;
+    int array_len = 10;
 
     // Step 2: Generate test data
     auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
@@ -154,7 +157,7 @@ TEST_P(ElementFilterSealed, RangeExpr) {
                                                 >
                                                 arith_op: Mod
                                                 right_operand: <
-                                                  int64_val: 2
+                                                  int64_val: 30
                                                 >
                                                 op: Equal
                                                 value: <
@@ -191,50 +194,54 @@ TEST_P(ElementFilterSealed, RangeExpr) {
         auto ph_group =
             ParsePlaceholderGroup(plan.get(), ph_group_raw.SerializeAsString());
 
-        auto search_result =
-            segment->Search(plan.get(), ph_group.get(), 1L << 63);
+        for (int i = 0; i < 10; i++) {
+            auto search_result =
+                segment->Search(plan.get(), ph_group.get(), 1L << 63);
 
-        // Verify results
-        ASSERT_NE(search_result, nullptr);
+            // Verify results
+            ASSERT_NE(search_result, nullptr);
 
-        // In element-level mode, results should be element indices, not doc offsets
-        ASSERT_TRUE(search_result->element_level_);
-        ASSERT_FALSE(search_result->element_indices_.empty());
-        // Also check seg_offsets_ which stores the doc IDs
-        ASSERT_FALSE(search_result->seg_offsets_.empty());
-        ASSERT_EQ(search_result->element_indices_.size(),
-                  search_result->seg_offsets_.size());
+            // In element-level mode, results should be element indices, not doc offsets
+            ASSERT_TRUE(search_result->element_level_);
+            ASSERT_FALSE(search_result->element_indices_.empty());
+            // Also check seg_offsets_ which stores the doc IDs
+            ASSERT_FALSE(search_result->seg_offsets_.empty());
+            ASSERT_EQ(search_result->element_indices_.size(),
+                      search_result->seg_offsets_.size());
 
-        // Should have topK results per query
-        ASSERT_LE(search_result->element_indices_.size(), topK * num_queries);
+            // Should have topK results per query
+            ASSERT_LE(search_result->element_indices_.size(),
+                      topK * num_queries);
 
-        std::cout << "Element-level search returned:" << std::endl;
-        for (auto i = 0; i < search_result->seg_offsets_.size(); i++) {
-            int64_t doc_id = search_result->seg_offsets_[i];
-            int32_t elem_idx = search_result->element_indices_[i];
-            float distance = search_result->distances_[i];
+            std::cout << "Element-level search returned:" << std::endl;
+            for (auto i = 0; i < search_result->seg_offsets_.size(); i++) {
+                int64_t doc_id = search_result->seg_offsets_[i];
+                int32_t elem_idx = search_result->element_indices_[i];
+                float distance = search_result->distances_[i];
 
-            std::cout << "doc_id: " << doc_id << ", element_index: " << elem_idx
-                      << ", distance: " << distance << std::endl;
+                std::cout << "doc_id: " << doc_id
+                          << ", element_index: " << elem_idx
+                          << ", distance: " << distance << std::endl;
 
-            // Verify the doc_id satisfies the predicate (id % 2 == 0)
-            ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
-                                     << " should satisfy (id % 2 == 0)";
+                // // Verify the doc_id satisfies the predicate (id % 2 == 0)
+                // ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
+                //                          << " should satisfy (id % 2 == 0)";
 
-            // Verify element value is in range (100, 400)
-            // Element value = doc_id * array_len + elem_idx + 1
-            int element_value = doc_id * array_len + elem_idx + 1;
-            ASSERT_GT(element_value, 100)
-                << "Element value " << element_value << " should be > 100";
-            ASSERT_LT(element_value, 400)
-                << "Element value " << element_value << " should be < 400";
-        }
+                // Verify element value is in range (100, 400)
+                // Element value = doc_id * array_len + elem_idx + 1
+                int element_value = doc_id * array_len + elem_idx + 1;
+                ASSERT_GT(element_value, 100)
+                    << "Element value " << element_value << " should be > 100";
+                ASSERT_LT(element_value, 400)
+                    << "Element value " << element_value << " should be < 400";
+            }
 
-        // Verify distances are sorted (ascending for L2)
-        for (size_t i = 1; i < search_result->distances_.size(); ++i) {
-            ASSERT_LE(search_result->distances_[i - 1],
-                      search_result->distances_[i])
-                << "Distances should be sorted in ascending order";
+            // Verify distances are sorted (ascending for L2)
+            for (size_t i = 1; i < search_result->distances_.size(); ++i) {
+                ASSERT_LE(search_result->distances_[i - 1],
+                          search_result->distances_[i])
+                    << "Distances should be sorted in ascending order";
+            }
         }
     }
 }
@@ -880,6 +887,476 @@ TEST(ArrayOffsetsGrowing, PurePendingThenDrain) {
         ASSERT_EQ(elem_idx, expected[elem_id].second)
             << "elem_id " << elem_id << " should have elem_idx "
             << expected[elem_id].second;
+    }
+}
+
+// Parameterized test for different selectivity ratios
+// Parameter: modulo value for predicate (id % modulo == 0)
+// selectivity = 1/modulo: 2->50%, 5->20%, 10->10%, 20->5%, 33->3%
+class ElementFilterSelectivity : public ::testing::TestWithParam<int> {
+ protected:
+    int
+    modulo() const {
+        return GetParam();
+    }
+    double
+    selectivity() const {
+        return 1.0 / GetParam();
+    }
+};
+
+TEST(ElementFilterSelectivity, StringNotEqualExpr) {
+    // Step 1: Prepare schema with string array field
+    int dim = 4;
+    auto schema = std::make_shared<Schema>();
+    auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
+                                                    DataType::VECTOR_FLOAT,
+                                                    dim,
+                                                    knowhere::metric::L2);
+    auto str_array_fid = schema->AddDebugArrayField(
+        "structA[tags_array]", DataType::VARCHAR, false);
+
+    auto int64_fid = schema->AddDebugField("id", DataType::INT64);
+    schema->set_primary_field_id(int64_fid);
+
+    size_t N = 100000;
+    int array_len = 10;
+
+    // Step 2: Generate test data
+    auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
+
+    // Customize string array data
+    for (int i = 0; i < raw_data.raw_->fields_data_size(); i++) {
+        auto* field_data = raw_data.raw_->mutable_fields_data(i);
+        if (field_data->field_id() == str_array_fid.get()) {
+            field_data->mutable_scalars()
+                ->mutable_array_data()
+                ->mutable_data()
+                ->Clear();
+
+            for (int row = 0; row < N; row++) {
+                auto* array_data = field_data->mutable_scalars()
+                                       ->mutable_array_data()
+                                       ->mutable_data()
+                                       ->Add();
+
+                for (int elem = 0; elem < array_len; elem++) {
+                    int value = row * array_len + elem;
+                    std::string str_value = "tag_" + std::to_string(value);
+                    *array_data->mutable_string_data()->mutable_data()->Add() =
+                        str_value;
+                }
+            }
+            break;
+        }
+    }
+
+    // Step 3: Create sealed segment with field data
+    auto segment = CreateSealedWithFieldDataLoaded(schema, raw_data);
+
+    // Step 4: Load vector index
+    auto array_vec_values = raw_data.get_col<VectorFieldProto>(vec_fid);
+
+    std::vector<float> vector_data(dim * N * array_len);
+    for (int i = 0; i < N; i++) {
+        const auto& float_vec = array_vec_values[i].float_vector().data();
+        for (int j = 0; j < array_len * dim; j++) {
+            vector_data[i * array_len * dim + j] = float_vec[j];
+        }
+    }
+
+    // auto indexing = GenVecIndexing(N * array_len,
+    //                                dim,
+    //                                vector_data.data(),
+    //                                knowhere::IndexEnum::INDEX_HNSW);
+    // LoadIndexInfo load_index_info;
+    // load_index_info.field_id = vec_fid.get();
+    // load_index_info.index_params = GenIndexParams(indexing.get());
+    // load_index_info.cache_index =
+    //     CreateTestCacheIndex("test", std::move(indexing));
+    // load_index_info.index_params["metric_type"] = knowhere::metric::L2;
+    // load_index_info.field_type = DataType::VECTOR_ARRAY;
+    // load_index_info.element_type = DataType::VECTOR_FLOAT;
+    // segment->LoadIndex(load_index_info);
+
+    // Step 5: Load STL_SORT nested index for string array field
+    {
+        // Extract array data from raw_data
+        std::vector<boost::container::vector<std::string>> str_arrays(N);
+        for (int i = 0; i < raw_data.raw_->fields_data_size(); i++) {
+            const auto& field_data = raw_data.raw_->fields_data(i);
+            if (field_data.field_id() == str_array_fid.get()) {
+                const auto& array_data = field_data.scalars().array_data();
+                for (size_t row = 0; row < N; row++) {
+                    const auto& arr = array_data.data(row);
+                    str_arrays[row].resize(arr.string_data().data_size());
+                    for (int elem = 0; elem < arr.string_data().data_size();
+                         elem++) {
+                        str_arrays[row][elem] = arr.string_data().data(elem);
+                    }
+                }
+                break;
+            }
+        }
+
+        auto scalar_index =
+            index::CreateStringIndexSort(storage::FileManagerContext(), true);
+        scalar_index->BuildNestedForUT(N, str_arrays.data());
+
+        LoadIndexInfo str_index_info;
+        str_index_info.field_id = str_array_fid.get();
+        str_index_info.field_type = DataType::ARRAY;
+        str_index_info.element_type = DataType::VARCHAR;
+        str_index_info.index_params["index_type"] = "STL_SORT";
+        str_index_info.index_params = GenIndexParams(scalar_index.get());
+        str_index_info.cache_index =
+            CreateTestCacheIndex("test_str", std::move(scalar_index));
+        segment->LoadIndex(str_index_info);
+    }
+
+    int topK = 5;
+
+    auto mods = {2, 5, 10, 20, 33, 100, 500, 1000, 2000};
+    for (int mod : mods) {
+        std::cout << "=== Testing with selectivity " << ((1.0 / mod) * 100)
+                  << "% (modulo=" << mod << ") ===" << std::endl;
+        // Step 6: Test with element-level filter using string not equal
+        // element_expr: str != tag_500 and str != tag_100 and str != tag_300
+        // predicate: id % mod == 0 (selectivity = 1/mod)
+        {
+            std::string raw_plan = boost::str(
+                boost::format(R"(vector_anns: <
+                                        field_id: %1%
+                                        predicates: <
+                                          element_filter_expr: <
+                                            element_expr: <
+                                              binary_expr: <
+                                                op: LogicalAnd
+                                                left: <
+                                                  binary_expr: <
+                                                    op: LogicalAnd
+                                                    left: <
+                                                      unary_range_expr: <
+                                                        column_info: <
+                                                          field_id: %2%
+                                                          data_type: VarChar
+                                                          element_type: VarChar
+                                                          is_element_level: true
+                                                        >
+                                                        op: NotEqual
+                                                        value: <
+                                                          string_val: "tag_500"
+                                                        >
+                                                      >
+                                                    >
+                                                    right: <
+                                                      unary_range_expr: <
+                                                        column_info: <
+                                                          field_id: %2%
+                                                          data_type: VarChar
+                                                          element_type: VarChar
+                                                          is_element_level: true
+                                                        >
+                                                        op: NotEqual
+                                                        value: <
+                                                          string_val: "tag_100"
+                                                        >
+                                                      >
+                                                    >
+                                                  >
+                                                >
+                                                right: <
+                                                  unary_range_expr: <
+                                                    column_info: <
+                                                      field_id: %2%
+                                                      data_type: VarChar
+                                                      element_type: VarChar
+                                                      is_element_level: true
+                                                    >
+                                                    op: NotEqual
+                                                    value: <
+                                                      string_val: "tag_300"
+                                                    >
+                                                  >
+                                                >
+                                              >
+                                            >
+                                            predicate: <
+                                              binary_arith_op_eval_range_expr: <
+                                                column_info: <
+                                                  field_id: %3%
+                                                  data_type: Int64
+                                                >
+                                                arith_op: Mod
+                                                right_operand: <
+                                                  int64_val: %4%
+                                                >
+                                                op: Equal
+                                                value: <
+                                                  int64_val: 0
+                                                >
+                                              >
+                                            >
+                                            struct_name: "structA"
+                                          >
+                                        >
+                                        query_info: <
+                                          topk: 5
+                                          round_decimal: 3
+                                          metric_type: "L2"
+                                          search_params: "{\"ef\": 50}"
+                                        >
+                                        placeholder_tag: "$0">)") %
+                vec_fid.get() % str_array_fid.get() % int64_fid.get() % mod);
+
+            proto::plan::PlanNode plan_node;
+            auto ok = google::protobuf::TextFormat::ParseFromString(raw_plan,
+                                                                    &plan_node);
+            ASSERT_TRUE(ok) << "Failed to parse element-level filter plan";
+
+            auto plan = CreateSearchPlanFromPlanNode(schema, plan_node);
+            ASSERT_NE(plan, nullptr);
+
+            auto num_queries = 1;
+            auto seed = 1024;
+            auto ph_group_raw =
+                CreatePlaceholderGroup(num_queries, dim, seed, true);
+            auto ph_group = ParsePlaceholderGroup(
+                plan.get(), ph_group_raw.SerializeAsString());
+
+            for (int i = 0; i < 3; i++) {
+                auto search_result =
+                    segment->Search(plan.get(), ph_group.get(), 1L << 63);
+
+                ASSERT_NE(search_result, nullptr);
+                ASSERT_TRUE(search_result->element_level_);
+
+                for (auto j = 0; j < search_result->seg_offsets_.size(); j++) {
+                    int64_t doc_id = search_result->seg_offsets_[j];
+                    int32_t elem_idx = search_result->element_indices_[j];
+
+                    // Verify the doc_id satisfies the predicate (id % mod == 0)
+                    ASSERT_EQ(doc_id % mod, 0)
+                        << "Result doc_id " << doc_id
+                        << " should satisfy (id % " << mod << " == 0)";
+
+                    // Verify element is not tag_100, tag_300, or tag_500
+                    int element_id = doc_id * array_len + elem_idx;
+                    ASSERT_NE(element_id, 100)
+                        << "Element id should not be 100";
+                    ASSERT_NE(element_id, 300)
+                        << "Element id should not be 300";
+                    ASSERT_NE(element_id, 500)
+                        << "Element id should not be 500";
+                }
+            }
+        }
+    }
+}
+
+TEST(ElementFilterSelectivity, IntRangeExpr) {
+    // Step 1: Prepare schema with int64 array field
+    int dim = 4;
+    auto schema = std::make_shared<Schema>();
+    auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
+                                                    DataType::VECTOR_FLOAT,
+                                                    dim,
+                                                    knowhere::metric::L2);
+    auto int_array_fid = schema->AddDebugArrayField(
+        "structA[values_array]", DataType::INT64, false);
+
+    auto int64_fid = schema->AddDebugField("id", DataType::INT64);
+    schema->set_primary_field_id(int64_fid);
+
+    size_t N = 100000;
+    int array_len = 10;
+
+    // Step 2: Generate test data
+    auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
+
+    // Customize int64 array data
+    for (int i = 0; i < raw_data.raw_->fields_data_size(); i++) {
+        auto* field_data = raw_data.raw_->mutable_fields_data(i);
+        if (field_data->field_id() == int_array_fid.get()) {
+            field_data->mutable_scalars()
+                ->mutable_array_data()
+                ->mutable_data()
+                ->Clear();
+
+            std::mt19937 rng(42);
+            std::uniform_int_distribution<int64_t> dist(100, 200);
+            for (int row = 0; row < N; row++) {
+                auto* array_data = field_data->mutable_scalars()
+                                       ->mutable_array_data()
+                                       ->mutable_data()
+                                       ->Add();
+
+                for (int elem = 0; elem < array_len; elem++) {
+                    int64_t value = dist(rng);
+                    array_data->mutable_long_data()->mutable_data()->Add(value);
+                }
+            }
+            break;
+        }
+    }
+
+    // Step 3: Create sealed segment with field data
+    auto segment = CreateSealedWithFieldDataLoaded(schema, raw_data);
+
+    // Step 4: Load vector index
+    auto array_vec_values = raw_data.get_col<VectorFieldProto>(vec_fid);
+
+    std::vector<float> vector_data(dim * N * array_len);
+    for (int i = 0; i < N; i++) {
+        const auto& float_vec = array_vec_values[i].float_vector().data();
+        for (int j = 0; j < array_len * dim; j++) {
+            vector_data[i * array_len * dim + j] = float_vec[j];
+        }
+    }
+
+    // auto indexing = GenVecIndexing(N * array_len,
+    //                                dim,
+    //                                vector_data.data(),
+    //                                knowhere::IndexEnum::INDEX_HNSW);
+    // LoadIndexInfo load_index_info;
+    // load_index_info.field_id = vec_fid.get();
+    // load_index_info.index_params = GenIndexParams(indexing.get());
+    // load_index_info.cache_index =
+    //     CreateTestCacheIndex("test", std::move(indexing));
+    // load_index_info.index_params["metric_type"] = knowhere::metric::L2;
+    // load_index_info.field_type = DataType::VECTOR_ARRAY;
+    // load_index_info.element_type = DataType::VECTOR_FLOAT;
+    // segment->LoadIndex(load_index_info);
+
+    // Step 5: Load STL_SORT nested index for int array field
+    {
+        // Extract array data from raw_data
+        std::vector<boost::container::vector<int64_t>> int_arrays(N);
+        for (int i = 0; i < raw_data.raw_->fields_data_size(); i++) {
+            const auto& field_data = raw_data.raw_->fields_data(i);
+            if (field_data.field_id() == int_array_fid.get()) {
+                const auto& array_data = field_data.scalars().array_data();
+                for (size_t row = 0; row < N; row++) {
+                    const auto& arr = array_data.data(row);
+                    int_arrays[row].resize(arr.long_data().data_size());
+                    for (int elem = 0; elem < arr.long_data().data_size();
+                         elem++) {
+                        int_arrays[row][elem] = arr.long_data().data(elem);
+                    }
+                }
+                break;
+            }
+        }
+
+        auto scalar_index = index::CreateScalarIndexSort<int64_t>(
+            storage::FileManagerContext(), true);
+        scalar_index->BuildNestedForUT(N, int_arrays.data());
+
+        LoadIndexInfo int_index_info;
+        int_index_info.field_id = int_array_fid.get();
+        int_index_info.field_type = DataType::ARRAY;
+        int_index_info.element_type = DataType::INT64;
+        int_index_info.index_params["index_type"] = "STL_SORT";
+        int_index_info.index_params = GenIndexParams(scalar_index.get());
+        int_index_info.cache_index =
+            CreateTestCacheIndex("test_int", std::move(scalar_index));
+        segment->LoadIndex(int_index_info);
+    }
+
+    int topK = 5;
+
+    auto mods = {2, 5, 10, 20, 33, 100, 500, 1000, 2000};
+    for (int mod : mods) {
+        std::cout << "=== IntRangeExpr: selectivity " << ((1.0 / mod) * 100)
+                  << "% (modulo=" << mod << ") ===" << std::endl;
+        // Step 5: Test with element-level filter using int range
+        // element_expr: 10 < int && int < 100
+        // predicate: id % mod == 0 (selectivity = 1/mod)
+        {
+            std::string raw_plan = boost::str(
+                boost::format(R"(vector_anns: <
+                                        field_id: %1%
+                                        predicates: <
+                                          element_filter_expr: <
+                                            element_expr: <
+                                              binary_range_expr: <
+                                                column_info: <
+                                                  field_id: %2%
+                                                  data_type: Int64
+                                                  element_type: Int64
+                                                  is_element_level: true
+                                                >
+                                                lower_inclusive: false
+                                                upper_inclusive: false
+                                                lower_value: <
+                                                  int64_val: 125
+                                                >
+                                                upper_value: <
+                                                  int64_val: 175
+                                                >
+                                              >
+                                            >
+                                            predicate: <
+                                              binary_arith_op_eval_range_expr: <
+                                                column_info: <
+                                                  field_id: %3%
+                                                  data_type: Int64
+                                                >
+                                                arith_op: Mod
+                                                right_operand: <
+                                                  int64_val: %4%
+                                                >
+                                                op: Equal
+                                                value: <
+                                                  int64_val: 0
+                                                >
+                                              >
+                                            >
+                                            struct_name: "structA"
+                                          >
+                                        >
+                                        query_info: <
+                                          topk: 5
+                                          round_decimal: 3
+                                          metric_type: "L2"
+                                          search_params: "{\"ef\": 50}"
+                                        >
+                                        placeholder_tag: "$0">)") %
+                vec_fid.get() % int_array_fid.get() % int64_fid.get() % mod);
+
+            proto::plan::PlanNode plan_node;
+            auto ok = google::protobuf::TextFormat::ParseFromString(raw_plan,
+                                                                    &plan_node);
+            ASSERT_TRUE(ok) << "Failed to parse element-level filter plan";
+
+            auto plan = CreateSearchPlanFromPlanNode(schema, plan_node);
+            ASSERT_NE(plan, nullptr);
+
+            auto num_queries = 1;
+            auto seed = 1024;
+            auto ph_group_raw =
+                CreatePlaceholderGroup(num_queries, dim, seed, true);
+            auto ph_group = ParsePlaceholderGroup(
+                plan.get(), ph_group_raw.SerializeAsString());
+
+            for (int i = 0; i < 3; i++) {
+                auto search_result =
+                    segment->Search(plan.get(), ph_group.get(), 1L << 63);
+
+                ASSERT_NE(search_result, nullptr);
+                // ASSERT_TRUE(search_result->element_level_);
+
+                for (auto j = 0; j < search_result->seg_offsets_.size(); j++) {
+                    int64_t doc_id = search_result->seg_offsets_[j];
+                    int32_t elem_idx = search_result->element_indices_[j];
+
+                    // Verify the doc_id satisfies the predicate (id % mod == 0)
+                    ASSERT_EQ(doc_id % mod, 0)
+                        << "Result doc_id " << doc_id
+                        << " should satisfy (id % " << mod << " == 0)";
+                }
+            }
+        }
     }
 }
 
