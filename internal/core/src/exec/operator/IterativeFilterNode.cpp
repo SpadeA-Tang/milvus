@@ -19,6 +19,7 @@
 #include "fmt/format.h"
 
 #include "exec/Driver.h"
+#include "exec/operator/Utils.h"
 #include "monitor/Monitor.h"
 namespace milvus {
 namespace exec {
@@ -53,31 +54,6 @@ PhyIterativeFilterNode::AddInput(RowVectorPtr& input) {
 bool
 PhyIterativeFilterNode::IsFinished() {
     return is_finished_;
-}
-
-template <bool large_is_better>
-inline size_t
-find_binsert_position(const std::vector<float>& distances,
-                      size_t lo,
-                      size_t hi,
-                      float dist) {
-    while (lo < hi) {
-        size_t mid = lo + ((hi - lo) >> 1);
-        if constexpr (large_is_better) {
-            if (distances[mid] < dist) {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        } else {
-            if (distances[mid] > dist) {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        }
-    }
-    return lo;
 }
 
 inline void

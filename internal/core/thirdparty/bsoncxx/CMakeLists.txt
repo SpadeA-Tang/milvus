@@ -18,7 +18,7 @@ set(ENABLE_TESTS OFF CACHE INTERNAL "")
 set(BUILD_TESTING OFF CACHE INTERNAL "")
 set(ENABLE_EXAMPLES OFF CACHE INTERNAL "")
 set(BUILD_MONGOCXX OFF CACHE INTERNAL "")
-set(BUILD_SHARED_LIBS ON CACHE INTERNAL "")
+set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
 set(BUILD_VERSION "0.0.0" CACHE INTERNAL "")
 
 # Disable optional features in mongo-c-driver to avoid linking issues on macOS
@@ -26,6 +26,9 @@ set(ENABLE_SASL OFF CACHE INTERNAL "")
 set(ENABLE_SNAPPY OFF CACHE INTERNAL "")
 set(ENABLE_ZSTD OFF CACHE INTERNAL "")
 set(ENABLE_SSL OFF CACHE INTERNAL "")
+
+# Use static libbson from conan (conan only builds static library)
+set(BSONCXX_LINK_WITH_STATIC_MONGOC ON CACHE INTERNAL "")
 
 # Use FetchContent to download and build mongo-cxx-driver at configure time
 FetchContent_Declare(
@@ -35,13 +38,45 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# Create bson_static target from conan's libbson before FetchContent
+# This allows bsoncxx to find libbson without needing cmake config files
+# First, include the conan-generated mongoc finder to get the paths
+find_package(mongoc-1.0 QUIET)
+
+if(NOT TARGET bson_static)
+    # Use paths from conan's Findmongoc-1.0.cmake
+    find_library(BSON_STATIC_LIBRARY
+        NAMES bson-static-1.0
+        PATHS ${mongo_LIB_DIRS}
+        NO_DEFAULT_PATH
+    )
+    find_path(BSON_INCLUDE_DIR
+        NAMES bson/bson.h
+        PATHS ${mongo_INCLUDE_DIR}
+        NO_DEFAULT_PATH
+    )
+    if(BSON_STATIC_LIBRARY AND BSON_INCLUDE_DIR)
+        add_library(bson_static STATIC IMPORTED GLOBAL)
+        set_target_properties(bson_static PROPERTIES
+            IMPORTED_LOCATION "${BSON_STATIC_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${BSON_INCLUDE_DIR}"
+            INTERFACE_COMPILE_DEFINITIONS "BSON_STATIC"
+        )
+        message(STATUS "Created bson_static target from conan: ${BSON_STATIC_LIBRARY}")
+        # Set libbson_include_directories for mongo-cxx-driver's BsoncxxUtil.cmake
+        # which uses this variable in target_include_directories()
+        set(libbson_include_directories "${BSON_INCLUDE_DIR}" CACHE INTERNAL "")
+        set(libbson_definitions "BSON_STATIC" CACHE INTERNAL "")
+    endif()
+endif()
+
 FetchContent_MakeAvailable(mongo-cxx-driver)
 
-# The targets are now available: bsoncxx_shared
+# The targets are now available: bsoncxx_static
 # Create aliases for easier use
-if(TARGET bsoncxx_shared)
-    add_library(bsoncxx ALIAS bsoncxx_shared)
-    message(STATUS "bsoncxx target created as alias to bsoncxx_shared")
+if(TARGET bsoncxx_static)
+    add_library(bsoncxx ALIAS bsoncxx_static)
+    message(STATUS "bsoncxx target created as alias to bsoncxx_static")
 endif()
 
 # Get source directories from FetchContent

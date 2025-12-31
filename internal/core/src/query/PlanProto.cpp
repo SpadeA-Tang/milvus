@@ -201,11 +201,13 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
 
             // Add element-level filter if needed
             if (is_element_level) {
+                bool has_doc_pred = (doc_expr != nullptr);
                 plannode = std::make_shared<plan::ElementFilterNode>(
                     milvus::plan::GetNextPlanNodeId(),
                     element_expr,
                     struct_name,
-                    sources);
+                    sources,
+                    has_doc_pred);
                 sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
             }
 
@@ -307,83 +309,108 @@ ProtoParser::RetrievePlanNodeFromProto(
 
     milvus::plan::PlanNodePtr plannode;
     std::vector<milvus::plan::PlanNodePtr> sources;
+    auto plan_node = std::make_unique<RetrievePlanNode>();
 
-    auto plan_node = [&]() -> std::unique_ptr<RetrievePlanNode> {
-        auto node = std::make_unique<RetrievePlanNode>();
-        if (plan_node_proto.has_predicates()) {  // version before 2023.03.30.
-            node->is_count_ = false;
-            auto& predicate_proto = plan_node_proto.predicates();
-            auto expr_parser = [&]() -> plan::PlanNodePtr {
-                auto expr = ParseExprs(predicate_proto);
-                if (plan_node_proto.has_namespace_()) {
-                    expr = MergeExprWithNamespace(
-                        schema, expr, plan_node_proto.namespace_());
+    if (plan_node_proto.has_predicates()) {  // version before 2023.03.30.
+        plan_node->is_count_ = false;
+        auto& predicate_proto = plan_node_proto.predicates();
+        auto expr = ParseExprs(predicate_proto);
+        if (plan_node_proto.has_namespace_()) {
+            expr = MergeExprWithNamespace(
+                schema, expr, plan_node_proto.namespace_());
+        }
+        plannode = std::make_shared<plan::FilterBitsNode>(
+            milvus::plan::GetNextPlanNodeId(), expr);
+        sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
+        plannode = std::make_shared<milvus::plan::MvccNode>(
+            milvus::plan::GetNextPlanNodeId(), sources);
+        plan_node->plannodes_ = std::move(plannode);
+    } else {
+        auto& query = plan_node_proto.query();
+
+        expr::TypedExprPtr element_expr = nullptr;
+        std::string struct_name;
+        bool is_element_level = false;
+
+        if (query.has_predicates()) {
+            auto* predicate_proto = &query.predicates();
+            is_element_level = predicate_proto->expr_case() ==
+                               proto::plan::Expr::kElementFilterExpr;
+
+            if (is_element_level) {
+                // Element-level query: extract element_expr and optional doc-level predicate
+                auto& element_filter_expr =
+                    predicate_proto->element_filter_expr();
+                element_expr = ParseExprs(element_filter_expr.element_expr());
+                struct_name = element_filter_expr.struct_name();
+
+                if (element_filter_expr.has_predicate()) {
+                    auto doc_expr = ParseExprs(element_filter_expr.predicate());
+                    if (plan_node_proto.has_namespace_()) {
+                        doc_expr = MergeExprWithNamespace(
+                            schema, doc_expr, plan_node_proto.namespace_());
+                    }
+                    plannode = std::make_shared<plan::FilterBitsNode>(
+                        milvus::plan::GetNextPlanNodeId(), doc_expr, sources);
+                    sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
                 }
-                return std::make_shared<plan::FilterBitsNode>(
-                    milvus::plan::GetNextPlanNodeId(), expr);
-            }();
-            plannode = std::move(expr_parser);
-            sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
-            plannode = std::make_shared<milvus::plan::MvccNode>(
-                milvus::plan::GetNextPlanNodeId(), sources);
-            node->plannodes_ = std::move(plannode);
-        } else {
-            auto& query = plan_node_proto.query();
-            if (query.has_predicates()) {
-                auto parse_expr_to_filter_node =
-                    [&](const proto::plan::Expr& predicate_proto)
-                    -> plan::PlanNodePtr {
-                    auto expr = ParseExprs(predicate_proto);
+            } else if (predicate_proto->expr_case() ==
+                       proto::plan::Expr::kRandomSampleExpr) {
+                // Predicate exists in random_sample_expr means we encounter expression
+                // like "`predicate expression` && random_sample(...)". Extract it to construct
+                // FilterBitsNode and make it be executed before RandomSampleNode.
+                auto& sample_expr = predicate_proto->random_sample_expr();
+                if (sample_expr.has_predicate()) {
+                    auto expr = ParseExprs(sample_expr.predicate());
                     if (plan_node_proto.has_namespace_()) {
                         expr = MergeExprWithNamespace(
                             schema, expr, plan_node_proto.namespace_());
                     }
-                    return std::make_shared<plan::FilterBitsNode>(
+                    plannode = std::make_shared<plan::FilterBitsNode>(
                         milvus::plan::GetNextPlanNodeId(), expr, sources);
-                };
-
-                auto* predicate_proto = &query.predicates();
-                if (predicate_proto->expr_case() ==
-                    proto::plan::Expr::kRandomSampleExpr) {
-                    // Predicate exists in random_sample_expr means we encounter expression
-                    // like "`predicate expression` && random_sample(...)". Extract it to construct
-                    // FilterBitsNode and make it be executed before RandomSampleNode.
-                    auto& sample_expr = predicate_proto->random_sample_expr();
-                    if (sample_expr.has_predicate()) {
-                        auto expr_parser =
-                            parse_expr_to_filter_node(sample_expr.predicate());
-                        plannode = std::move(expr_parser);
-                        sources =
-                            std::vector<milvus::plan::PlanNodePtr>{plannode};
-                    }
-
-                    plannode = std::move(
-                        std::make_shared<milvus::plan::RandomSampleNode>(
-                            milvus::plan::GetNextPlanNodeId(),
-                            sample_expr.sample_factor(),
-                            sources));
-                    sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
-                } else {
-                    plannode = parse_expr_to_filter_node(query.predicates());
                     sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
                 }
-            }
 
-            plannode = std::make_shared<milvus::plan::MvccNode>(
-                milvus::plan::GetNextPlanNodeId(), sources);
-            sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
-
-            node->is_count_ = query.is_count();
-            node->limit_ = query.limit();
-            if (node->is_count_) {
-                plannode = std::make_shared<milvus::plan::CountNode>(
-                    milvus::plan::GetNextPlanNodeId(), sources);
+                plannode = std::make_shared<milvus::plan::RandomSampleNode>(
+                    milvus::plan::GetNextPlanNodeId(),
+                    sample_expr.sample_factor(),
+                    sources);
+                sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
+            } else {
+                // Document-level query
+                auto expr = ParseExprs(query.predicates());
+                if (plan_node_proto.has_namespace_()) {
+                    expr = MergeExprWithNamespace(
+                        schema, expr, plan_node_proto.namespace_());
+                }
+                plannode = std::make_shared<plan::FilterBitsNode>(
+                    milvus::plan::GetNextPlanNodeId(), expr, sources);
                 sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
             }
-            node->plannodes_ = plannode;
         }
-        return node;
-    }();
+
+        plannode = std::make_shared<milvus::plan::MvccNode>(
+            milvus::plan::GetNextPlanNodeId(), sources);
+        sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
+
+        if (is_element_level) {
+            plannode = std::make_shared<plan::ElementFilterBitsNode>(
+                milvus::plan::GetNextPlanNodeId(),
+                element_expr,
+                struct_name,
+                sources);
+            sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
+        }
+
+        plan_node->is_count_ = query.is_count();
+        plan_node->limit_ = query.limit();
+        if (plan_node->is_count_) {
+            plannode = std::make_shared<milvus::plan::CountNode>(
+                milvus::plan::GetNextPlanNodeId(), sources);
+            sources = std::vector<milvus::plan::PlanNodePtr>{plannode};
+        }
+        plan_node->plannodes_ = plannode;
+    }
 
     PlanOptionsFromProto(plan_node_proto.plan_options(),
                          plan_node->plan_options_);

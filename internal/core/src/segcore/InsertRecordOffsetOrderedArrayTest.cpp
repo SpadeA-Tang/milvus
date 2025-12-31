@@ -64,9 +64,9 @@ class TypedOffsetOrderedArrayTest : public testing::Test {
 using TypeOfPks = testing::Types<int64_t, std::string>;
 TYPED_TEST_SUITE_P(TypedOffsetOrderedArrayTest);
 
-TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first) {
+TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first_n) {
     // not sealed.
-    ASSERT_ANY_THROW(this->map_.find_first(Unlimited, {}));
+    ASSERT_ANY_THROW(this->map_.find_first_n(Unlimited, {}));
 
     // insert 10 entities.
     int num = 10;
@@ -82,7 +82,7 @@ TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first) {
     {
         BitsetType all(num);
         {
-            auto [offsets, has_more_res] = this->map_.find_first(num / 2, all);
+            auto [offsets, has_more_res] = this->map_.find_first_n(num / 2, all);
             ASSERT_EQ(num / 2, offsets.size());
             ASSERT_TRUE(has_more_res);
             for (int i = 1; i < offsets.size(); i++) {
@@ -91,7 +91,7 @@ TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first) {
         }
         {
             auto [offsets, has_more_res] =
-                this->map_.find_first(Unlimited, all);
+                this->map_.find_first_n(Unlimited, all);
             ASSERT_EQ(num, offsets.size());
             ASSERT_FALSE(has_more_res);
             for (int i = 1; i < offsets.size(); i++) {
@@ -104,7 +104,7 @@ TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first) {
         BitsetType all_minus_1(num - 1);
         {
             auto [offsets, has_more_res] =
-                this->map_.find_first(num / 2, all_minus_1);
+                this->map_.find_first_n(num / 2, all_minus_1);
             ASSERT_EQ(num / 2, offsets.size());
             ASSERT_TRUE(has_more_res);
             for (int i = 1; i < offsets.size(); i++) {
@@ -113,7 +113,7 @@ TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first) {
         }
         {
             auto [offsets, has_more_res] =
-                this->map_.find_first(Unlimited, all_minus_1);
+                this->map_.find_first_n(Unlimited, all_minus_1);
             ASSERT_EQ(all_minus_1.size(), offsets.size());
             ASSERT_FALSE(has_more_res);
             for (int i = 1; i < offsets.size(); i++) {
@@ -125,14 +125,14 @@ TYPED_TEST_P(TypedOffsetOrderedArrayTest, find_first) {
         // none is satisfied.
         BitsetType none(num);
         none.set();
-        auto result_pair = this->map_.find_first(num / 2, none);
+        auto result_pair = this->map_.find_first_n(num / 2, none);
         ASSERT_EQ(0, result_pair.first.size());
         ASSERT_FALSE(result_pair.second);
-        result_pair = this->map_.find_first(NoLimit, none);
+        result_pair = this->map_.find_first_n(NoLimit, none);
         ASSERT_EQ(0, result_pair.first.size());
         ASSERT_FALSE(result_pair.second);
     }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TypedOffsetOrderedArrayTest, find_first);
+REGISTER_TYPED_TEST_SUITE_P(TypedOffsetOrderedArrayTest, find_first_n);
 INSTANTIATE_TYPED_TEST_SUITE_P(Prefix, TypedOffsetOrderedArrayTest, TypeOfPks);

@@ -1,32 +1,35 @@
 // Copyright (C) 2019-2020 Zilliz. All rights reserved.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance
-// with the License. You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software distributed under the License
-// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
-// or implied. See the License for the specific language governing permissions and limitations under the License
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License
 
 #include <gtest/gtest.h>
+#include <boost/format.hpp>
 #include <memory>
 #include <vector>
-#include <boost/format.hpp>
 
 #include "common/Schema.h"
-#include "common/ArrayOffsets.h"
 #include "query/Plan.h"
+#include "query/PlanProto.h"
 #include "test_utils/DataGen.h"
-#include "test_utils/storage_test_utils.h"
 #include "test_utils/cachinglayer_test_utils.h"
+#include "test_utils/storage_test_utils.h"
 
 using namespace milvus;
 using namespace milvus::query;
 using namespace milvus::segcore;
 
 class ElementFilterSealed
-    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
+    : public ::testing::TestWithParam<std::tuple<bool, bool, bool>> {
  protected:
     bool
     use_hints() const {
@@ -36,11 +39,16 @@ class ElementFilterSealed
     load_index() const {
         return std::get<1>(GetParam());
     }
+    bool
+    use_predicate() const {
+        return std::get<2>(GetParam());
+    }
 };
 
 TEST_P(ElementFilterSealed, RangeExpr) {
     bool with_hints = use_hints();
     bool with_load_index = load_index();
+    bool with_predicate = use_predicate();
     // Step 1: Prepare schema with array field
     int dim = 4;
     auto schema = std::make_shared<Schema>();
@@ -54,7 +62,7 @@ TEST_P(ElementFilterSealed, RangeExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 500;
+    size_t N = 10000;
     int array_len = 3;
 
     // Step 2: Generate test data
@@ -120,10 +128,29 @@ TEST_P(ElementFilterSealed, RangeExpr) {
     int topK = 5;
 
     // Step 5: Test with element-level filter
-    // Query: Search array elements, filter by element_value in (100, 400)
+    // Query: Search array elements, filter by element_value in (1250, 2555)
     {
         std::string hints_line =
             with_hints ? R"(hints: "iterative_filter")" : "";
+        std::string predicate_line =
+            with_predicate ? boost::str(boost::format(R"(predicate: <
+                                              binary_arith_op_eval_range_expr: <
+                                                column_info: <
+                                                  field_id: %1%
+                                                  data_type: Int64
+                                                >
+                                                arith_op: Mod
+                                                right_operand: <
+                                                  int64_val: 2
+                                                >
+                                                op: Equal
+                                                value: <
+                                                  int64_val: 0
+                                                >
+                                              >
+                                            >)") %
+                                        int64_fid.get())
+                           : "";
         std::string raw_plan = boost::str(boost::format(R"(vector_anns: <
                                         field_id: %1%
                                         predicates: <
@@ -139,29 +166,14 @@ TEST_P(ElementFilterSealed, RangeExpr) {
                                                 lower_inclusive: false
                                                 upper_inclusive: false
                                                 lower_value: <
-                                                  int64_val: 100
+                                                  int64_val: 1250
                                                 >
                                                 upper_value: <
-                                                  int64_val: 400
+                                                  int64_val: 2555
                                                 >
                                               >
                                             >
-                                            predicate: <
-                                              binary_arith_op_eval_range_expr: <
-                                                column_info: <
-                                                  field_id: %3%
-                                                  data_type: Int64
-                                                >
-                                                arith_op: Mod
-                                                right_operand: <
-                                                  int64_val: 2
-                                                >
-                                                op: Equal
-                                                value: <
-                                                  int64_val: 0
-                                                >
-                                              >
-                                            >
+                                            %4%
                                             struct_name: "structA"
                                           >
                                         >
@@ -169,12 +181,12 @@ TEST_P(ElementFilterSealed, RangeExpr) {
                                           topk: 5
                                           round_decimal: 3
                                           metric_type: "L2"
-                                          %4%
+                                          %3%
                                           search_params: "{\"ef\": 50}"
                                         >
                                         placeholder_tag: "$0">)") %
                                           vec_fid.get() % int_array_fid.get() %
-                                          int64_fid.get() % hints_line);
+                                          hints_line % predicate_line);
 
         proto::plan::PlanNode plan_node;
         auto ok =
@@ -197,7 +209,8 @@ TEST_P(ElementFilterSealed, RangeExpr) {
         // Verify results
         ASSERT_NE(search_result, nullptr);
 
-        // In element-level mode, results should be element indices, not doc offsets
+        // In element-level mode, results should be element indices, not doc
+        // offsets
         ASSERT_TRUE(search_result->element_level_);
         ASSERT_FALSE(search_result->element_indices_.empty());
         // Also check seg_offsets_ which stores the doc IDs
@@ -217,17 +230,20 @@ TEST_P(ElementFilterSealed, RangeExpr) {
             std::cout << "doc_id: " << doc_id << ", element_index: " << elem_idx
                       << ", distance: " << distance << std::endl;
 
-            // Verify the doc_id satisfies the predicate (id % 2 == 0)
-            ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
-                                     << " should satisfy (id % 2 == 0)";
+            // Verify the doc_id satisfies the predicate (id % 2 == 0) only when
+            // predicate is enabled
+            if (with_predicate) {
+                ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
+                                         << " should satisfy (id % 2 == 0)";
+            }
 
-            // Verify element value is in range (100, 400)
+            // Verify element value is in range (1250, 2555)
             // Element value = doc_id * array_len + elem_idx + 1
             int element_value = doc_id * array_len + elem_idx + 1;
-            ASSERT_GT(element_value, 100)
-                << "Element value " << element_value << " should be > 100";
-            ASSERT_LT(element_value, 400)
-                << "Element value " << element_value << " should be < 400";
+            ASSERT_GT(element_value, 1250)
+                << "Element value " << element_value << " should be > 1250";
+            ASSERT_LT(element_value, 2555)
+                << "Element value " << element_value << " should be < 2555";
         }
 
         // Verify distances are sorted (ascending for L2)
@@ -242,6 +258,7 @@ TEST_P(ElementFilterSealed, RangeExpr) {
 TEST_P(ElementFilterSealed, UnaryExpr) {
     bool with_hints = use_hints();
     bool with_load_index = load_index();
+    bool with_predicate = use_predicate();
     // Step 1: Prepare schema with array field
     int dim = 4;
     auto schema = std::make_shared<Schema>();
@@ -255,7 +272,7 @@ TEST_P(ElementFilterSealed, UnaryExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 500;
+    size_t N = 10000;
     int array_len = 3;
 
     // Step 2: Generate test data
@@ -325,6 +342,25 @@ TEST_P(ElementFilterSealed, UnaryExpr) {
     {
         std::string hints_line =
             with_hints ? R"(hints: "iterative_filter")" : "";
+        std::string predicate_line =
+            with_predicate ? boost::str(boost::format(R"(predicate: <
+                                            binary_arith_op_eval_range_expr: <
+                                              column_info: <
+                                                field_id: %1%
+                                                data_type: Int64
+                                              >
+                                              arith_op: Mod
+                                              right_operand: <
+                                                int64_val: 2
+                                              >
+                                              op: Equal
+                                              value: <
+                                                int64_val: 0
+                                              >
+                                            >
+                                          >)") %
+                                        int64_fid.get())
+                           : "";
         std::string raw_plan = boost::str(boost::format(R"(vector_anns: <
                                       field_id: %1%
                                       predicates: <
@@ -343,22 +379,7 @@ TEST_P(ElementFilterSealed, UnaryExpr) {
                                               >
                                             >
                                           >
-                                          predicate: <
-                                            binary_arith_op_eval_range_expr: <
-                                              column_info: <
-                                                field_id: %3%
-                                                data_type: Int64
-                                              >
-                                              arith_op: Mod
-                                              right_operand: <
-                                                int64_val: 2
-                                              >
-                                              op: Equal
-                                              value: <
-                                                int64_val: 0
-                                              >
-                                            >
-                                          >
+                                          %4%
                                           struct_name: "structA"
                                         >
                                       >
@@ -366,12 +387,12 @@ TEST_P(ElementFilterSealed, UnaryExpr) {
                                         topk: 5
                                         round_decimal: 3
                                         metric_type: "L2"
-                                        %4%
+                                        %3%
                                         search_params: "{\"ef\": 50}"
                                       >
                                       placeholder_tag: "$0">)") %
                                           vec_fid.get() % int_array_fid.get() %
-                                          int64_fid.get() % hints_line);
+                                          hints_line % predicate_line);
 
         proto::plan::PlanNode plan_node;
         auto ok =
@@ -394,7 +415,8 @@ TEST_P(ElementFilterSealed, UnaryExpr) {
         // Verify results
         ASSERT_NE(search_result, nullptr);
 
-        // In element-level mode, results should be element indices, not doc offsets
+        // In element-level mode, results should be element indices, not doc
+        // offsets
         ASSERT_TRUE(search_result->element_level_);
         ASSERT_FALSE(search_result->element_indices_.empty());
         // Also check seg_offsets_ which stores the doc IDs
@@ -427,19 +449,23 @@ INSTANTIATE_TEST_SUITE_P(
     ElementFilter,
     ElementFilterSealed,
     ::testing::Combine(::testing::Bool(),  // with_hints: true/false
-                       ::testing::Bool()   // with_load_index: true/false
+                       ::testing::Bool(),  // with_load_index: true/false
+                       ::testing::Bool()   // with_predicate: true/false
                        ),
     [](const ::testing::TestParamInfo<ElementFilterSealed::ParamType>& info) {
         bool with_hints = std::get<0>(info.param);
         bool with_load_index = std::get<1>(info.param);
+        bool with_predicate = std::get<2>(info.param);
         std::string name = "";
         name += with_hints ? "WithHints" : "WithoutHints";
         name += "_";
         name += with_load_index ? "WithLoadIndex" : "WithoutLoadIndex";
+        name += "_";
+        name += with_predicate ? "WithPredicate" : "WithoutPredicate";
         return name;
     });
 
-TEST(ElementFilter, GrowingSegmentArrayOffsetsGrowing) {
+TEST(ElementFilter, GrowingSegmentArrayOffsets) {
     int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
@@ -452,7 +478,7 @@ TEST(ElementFilter, GrowingSegmentArrayOffsetsGrowing) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 500;
+    size_t N = 10000;
     int array_len = 3;
 
     auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
@@ -492,7 +518,7 @@ TEST(ElementFilter, GrowingSegmentArrayOffsetsGrowing) {
     auto growing_impl = dynamic_cast<SegmentGrowingImpl*>(segment.get());
     ASSERT_NE(growing_impl, nullptr);
 
-    // Both fields should share the same ArrayOffsetsGrowing
+    // Both fields should share the same ArrayOffsets
     auto offsets_vec = growing_impl->GetArrayOffsets(vec_fid);
     auto offsets_int = growing_impl->GetArrayOffsets(int_array_fid);
     ASSERT_NE(offsets_vec, nullptr);
@@ -500,7 +526,7 @@ TEST(ElementFilter, GrowingSegmentArrayOffsetsGrowing) {
 
     // Should point to the same object (shared)
     ASSERT_EQ(offsets_vec, offsets_int)
-        << "Fields in same struct should share ArrayOffsetsGrowing";
+        << "Fields in same struct should share ArrayOffsets";
 
     // Verify counts
     ASSERT_EQ(offsets_vec->GetRowCount(), N)
@@ -523,7 +549,7 @@ TEST(ElementFilter, GrowingSegmentArrayOffsetsGrowing) {
 }
 
 TEST(ElementFilter, GrowingSegmentOutOfOrderInsert) {
-    // Test out-of-order Insert handling in ArrayOffsetsGrowing
+    // Test out-of-order Insert handling in GrowingArrayOffsets
     int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
@@ -593,14 +619,15 @@ TEST(ElementFilter, GrowingSegmentOutOfOrderInsert) {
     segment->Insert(
         25, 10, batch3.row_ids_.data(), batch3.timestamps_.data(), batch3.raw_);
 
-    // Verify ArrayOffsetsGrowing
+    // Verify ArrayOffsets
     auto growing_impl = dynamic_cast<SegmentGrowingImpl*>(segment.get());
     ASSERT_NE(growing_impl, nullptr);
 
     auto offsets = growing_impl->GetArrayOffsets(vec_fid);
     ASSERT_NE(offsets, nullptr);
 
-    // After inserting docs [0-19] (batch3 cached due to gap), committed count should be 20
+    // After inserting docs [0-19] (batch3 cached due to gap), committed count
+    // should be 20
     ASSERT_EQ(offsets->GetRowCount(), 20)
         << "Should have committed docs 0-19, batch3 cached";
     ASSERT_EQ(offsets->GetTotalElementCount(), 20 * array_len)
@@ -620,16 +647,22 @@ TEST(ElementFilter, GrowingSegmentOutOfOrderInsert) {
 }
 
 // Parameterized test fixture for GrowingIterativeRangeExpr
-class ElementFilterGrowing : public ::testing::TestWithParam<bool> {
+class ElementFilterGrowing
+    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
  protected:
     bool
     use_hints() const {
-        return GetParam();
+        return std::get<0>(GetParam());
+    }
+    bool
+    use_predicate() const {
+        return std::get<1>(GetParam());
     }
 };
 
 TEST_P(ElementFilterGrowing, RangeExpr) {
     bool with_hints = use_hints();
+    bool with_predicate = use_predicate();
     int dim = 4;
     auto schema = std::make_shared<Schema>();
     auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
@@ -642,7 +675,7 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
     auto int64_fid = schema->AddDebugField("id", DataType::INT64);
     schema->set_primary_field_id(int64_fid);
 
-    size_t N = 500;
+    size_t N = 10000;
     int array_len = 3;
 
     // Generate test data
@@ -681,7 +714,7 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
                     raw_data.timestamps_.data(),
                     raw_data.raw_);
 
-    // Verify ArrayOffsetsGrowing was built
+    // Verify ArrayOffsets was built
     auto growing_impl = dynamic_cast<SegmentGrowingImpl*>(segment.get());
     ASSERT_NE(growing_impl, nullptr);
     auto offsets = growing_impl->GetArrayOffsets(vec_fid);
@@ -692,10 +725,30 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
     int topK = 5;
 
     // Execute element-level search with iterative filter
-    // Query: Search array elements where (id % 2 == 0) AND (price_array element in range (100, 400))
+    // Query: Search array elements where (id % 2 == 0) AND (price_array element
+    // in range (1250, 2555))
     {
         std::string hints_line =
             with_hints ? R"(hints: "iterative_filter")" : "";
+        std::string predicate_line =
+            with_predicate ? boost::str(boost::format(R"(predicate: <
+                                              binary_arith_op_eval_range_expr: <
+                                                column_info: <
+                                                  field_id: %1%
+                                                  data_type: Int64
+                                                >
+                                                arith_op: Mod
+                                                right_operand: <
+                                                  int64_val: 2
+                                                >
+                                                op: Equal
+                                                value: <
+                                                  int64_val: 0
+                                                >
+                                              >
+                                            >)") %
+                                        int64_fid.get())
+                           : "";
         std::string raw_plan = boost::str(boost::format(R"(vector_anns: <
                                         field_id: %1%
                                         predicates: <
@@ -711,29 +764,14 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
                                                 lower_inclusive: false
                                                 upper_inclusive: false
                                                 lower_value: <
-                                                  int64_val: 100
+                                                  int64_val: 1250
                                                 >
                                                 upper_value: <
-                                                  int64_val: 400
+                                                  int64_val: 2555
                                                 >
                                               >
                                             >
-                                            predicate: <
-                                              binary_arith_op_eval_range_expr: <
-                                                column_info: <
-                                                  field_id: %3%
-                                                  data_type: Int64
-                                                >
-                                                arith_op: Mod
-                                                right_operand: <
-                                                  int64_val: 2
-                                                >
-                                                op: Equal
-                                                value: <
-                                                  int64_val: 0
-                                                >
-                                              >
-                                            >
+                                            %4%
                                             struct_name: "structA"
                                           >
                                         >
@@ -741,12 +779,12 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
                                           topk: 5
                                           round_decimal: 3
                                           metric_type: "L2"
-                                          %4%
+                                          %3%
                                           search_params: "{\"ef\": 50}"
                                         >
                                         placeholder_tag: "$0">)") %
                                           vec_fid.get() % int_array_fid.get() %
-                                          int64_fid.get() % hints_line);
+                                          hints_line % predicate_line);
 
         proto::plan::PlanNode plan_node;
         auto ok =
@@ -795,22 +833,25 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
                       << ", element_index=" << elem_idx
                       << ", distance=" << distance << std::endl;
 
-            // Verify the doc_id satisfies the predicate (id % 2 == 0)
-            ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
-                                     << " should satisfy (id % 2 == 0)";
+            // Verify the doc_id satisfies the predicate (id % 2 == 0) only when
+            // predicate is enabled
+            if (with_predicate) {
+                ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
+                                         << " should satisfy (id % 2 == 0)";
+            }
 
             // Verify element_idx is valid
             ASSERT_GE(elem_idx, 0) << "Element index should be >= 0";
             ASSERT_LT(elem_idx, array_len)
                 << "Element index should be < array_len";
 
-            // Verify element value is in range (100, 400)
+            // Verify element value is in range (1250, 2555)
             // Element value = doc_id * array_len + elem_idx + 1
             int element_value = doc_id * array_len + elem_idx + 1;
-            ASSERT_GT(element_value, 100)
-                << "Element value " << element_value << " should be > 100";
-            ASSERT_LT(element_value, 400)
-                << "Element value " << element_value << " should be < 400";
+            ASSERT_GT(element_value, 1250)
+                << "Element value " << element_value << " should be > 1250";
+            ASSERT_LT(element_value, 2555)
+                << "Element value " << element_value << " should be < 2555";
         }
 
         // Verify distances are sorted (ascending for L2)
@@ -825,153 +866,421 @@ TEST_P(ElementFilterGrowing, RangeExpr) {
 INSTANTIATE_TEST_SUITE_P(
     ElementFilter,
     ElementFilterGrowing,
-    ::testing::Bool(),  // with_hints: true/false
+    ::testing::Combine(::testing::Bool(),  // with_hints: true/false
+                       ::testing::Bool()   // with_predicate: true/false
+                       ),
     [](const ::testing::TestParamInfo<ElementFilterGrowing::ParamType>& info) {
-        bool with_hints = info.param;
-        return with_hints ? "WithHints" : "WithoutHints";
+        bool with_hints = std::get<0>(info.param);
+        bool with_predicate = std::get<1>(info.param);
+        std::string name = "";
+        name += with_hints ? "WithHints" : "WithoutHints";
+        name += "_";
+        name += with_predicate ? "WithPredicate" : "WithoutPredicate";
+        return name;
     });
 
-// Unit tests for ArrayOffsetsGrowing
-TEST(ArrayOffsetsGrowing, PurePendingThenDrain) {
-    // Test: first insert goes entirely to pending, second insert triggers drain
-    ArrayOffsetsGrowing offsets;
+class ElementFilterRetrieve
+    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
+ protected:
+    bool
+    is_sealed() const {
+        return std::get<0>(GetParam());
+    }
+    bool
+    use_predicate() const {
+        return std::get<1>(GetParam());
+    }
+};
 
-    // First insert: rows 2-4, all go to pending (committed_row_count_ = 0)
-    std::vector<int32_t> lens1 = {
-        3, 2, 4};  // row 2: 3 elems, row 3: 2 elems, row 4: 4 elems
-    offsets.Insert(2, lens1.data(), 3);
+TEST_P(ElementFilterRetrieve, RangeExpr) {
+    bool with_sealed = is_sealed();
+    bool with_predicate = use_predicate();
 
-    ASSERT_EQ(offsets.GetRowCount(), 0) << "No rows should be committed yet";
-    ASSERT_EQ(offsets.GetTotalElementCount(), 0)
-        << "No elements should exist yet";
+    // Step 1: Prepare schema with array field
+    int dim = 4;
+    auto schema = std::make_shared<Schema>();
+    auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
+                                                    DataType::VECTOR_FLOAT,
+                                                    dim,
+                                                    knowhere::metric::L2);
+    auto int_array_fid = schema->AddDebugArrayField(
+        "structA[price_array]", DataType::INT32, false);
 
-    // Second insert: rows 0-1, triggers drain of pending rows 2-4
-    std::vector<int32_t> lens2 = {2, 3};  // row 0: 2 elems, row 1: 3 elems
-    offsets.Insert(0, lens2.data(), 2);
+    auto int64_fid = schema->AddDebugField("id", DataType::INT64);
+    schema->set_primary_field_id(int64_fid);
 
-    ASSERT_EQ(offsets.GetRowCount(), 5) << "All 5 rows should be committed";
-    // Total elements: 2 + 3 + 3 + 2 + 4 = 14
-    ASSERT_EQ(offsets.GetTotalElementCount(), 14);
+    size_t N = 10000;
+    int array_len = 3;
 
-    // Verify ElementIDToRowID mapping
-    // Row 0: elem 0-1, Row 1: elem 2-4, Row 2: elem 5-7, Row 3: elem 8-9, Row 4: elem 10-13
-    std::vector<std::pair<int32_t, int32_t>> expected = {
-        {0, 0},
-        {0, 1},  // row 0
-        {1, 0},
-        {1, 1},
-        {1, 2},  // row 1
-        {2, 0},
-        {2, 1},
-        {2, 2},  // row 2
-        {3, 0},
-        {3, 1},  // row 3
-        {4, 0},
-        {4, 1},
-        {4, 2},
-        {4, 3}  // row 4
-    };
+    // Step 2: Generate test data
+    auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
 
-    for (int32_t elem_id = 0; elem_id < 14; ++elem_id) {
-        auto [row_id, elem_idx] = offsets.ElementIDToRowID(elem_id);
-        ASSERT_EQ(row_id, expected[elem_id].first)
-            << "elem_id " << elem_id << " should map to row "
-            << expected[elem_id].first;
-        ASSERT_EQ(elem_idx, expected[elem_id].second)
-            << "elem_id " << elem_id << " should have elem_idx "
-            << expected[elem_id].second;
+    // Customize int_array data: doc i has elements [i*3+1, i*3+2, i*3+3]
+    for (int i = 0; i < raw_data.raw_->fields_data_size(); i++) {
+        auto* field_data = raw_data.raw_->mutable_fields_data(i);
+        if (field_data->field_id() == int_array_fid.get()) {
+            field_data->mutable_scalars()
+                ->mutable_array_data()
+                ->mutable_data()
+                ->Clear();
+
+            for (int row = 0; row < N; row++) {
+                auto* array_data = field_data->mutable_scalars()
+                                       ->mutable_array_data()
+                                       ->mutable_data()
+                                       ->Add();
+
+                for (int elem = 0; elem < array_len; elem++) {
+                    int value = row * array_len + elem + 1;
+                    array_data->mutable_int_data()->mutable_data()->Add(value);
+                }
+            }
+            break;
+        }
+    }
+
+    // Step 3: Create segment (sealed or growing)
+    std::shared_ptr<SegmentInterface> segment;
+    if (with_sealed) {
+        segment = CreateSealedWithFieldDataLoaded(schema, raw_data);
+    } else {
+        auto growing = CreateGrowingSegment(schema, empty_index_meta);
+        growing->PreInsert(N);
+        growing->Insert(0,
+                        N,
+                        raw_data.row_ids_.data(),
+                        raw_data.timestamps_.data(),
+                        raw_data.raw_);
+        segment = std::move(growing);
+    }
+
+    // Step 4: Build retrieve plan with element-level filter
+    // Query: Retrieve docs where price_array element % 3 == 2
+    // Data: element_value = doc_id * 3 + elem_idx + 1
+    // When elem_idx=1: value = doc_id*3 + 2, so value % 3 == 2
+    // This ensures only elem_idx=1 matches for each doc
+    {
+        proto::plan::PlanNode plan_node;
+
+        // Set up query (not predicates at top level!)
+        auto* query = plan_node.mutable_query();
+        query->set_is_count(false);
+        query->set_limit(100);
+
+        // Build element filter expression under query.predicates
+        auto* expr = query->mutable_predicates();
+        auto* element_filter = expr->mutable_element_filter_expr();
+        element_filter->set_struct_name("structA");
+
+        // Element expression: price_array element % 3 == 2
+        auto* element_expr = element_filter->mutable_element_expr();
+        auto* arith_expr =
+            element_expr->mutable_binary_arith_op_eval_range_expr();
+
+        auto* column_info = arith_expr->mutable_column_info();
+        column_info->set_field_id(int_array_fid.get());
+        column_info->set_data_type(proto::schema::DataType::Int32);
+        column_info->set_element_type(proto::schema::DataType::Int32);
+        column_info->set_is_element_level(true);
+
+        arith_expr->set_arith_op(proto::plan::ArithOpType::Mod);
+        arith_expr->mutable_right_operand()->set_int64_val(3);
+        arith_expr->set_op(proto::plan::OpType::Equal);
+        arith_expr->mutable_value()->set_int64_val(2);
+
+        // Add predicate if needed (doc-level filter: id % 2 == 0)
+        if (with_predicate) {
+            auto* predicate = element_filter->mutable_predicate();
+            auto* arith_expr =
+                predicate->mutable_binary_arith_op_eval_range_expr();
+
+            auto* pred_column = arith_expr->mutable_column_info();
+            pred_column->set_field_id(int64_fid.get());
+            pred_column->set_data_type(proto::schema::DataType::Int64);
+
+            arith_expr->set_arith_op(proto::plan::ArithOpType::Mod);
+            arith_expr->mutable_right_operand()->set_int64_val(2);
+            arith_expr->set_op(proto::plan::OpType::Equal);
+            arith_expr->mutable_value()->set_int64_val(0);
+        }
+
+        // Add output fields
+        plan_node.add_output_field_ids(int64_fid.get());
+        plan_node.add_output_field_ids(int_array_fid.get());
+
+        auto parser = ProtoParser(schema);
+        auto plan = parser.CreateRetrievePlan(plan_node);
+
+        // Step 5: Execute Retrieve
+        int64_t limit = 100;  // Retrieve top 100 element matches
+        auto retrieve_results = segment->Retrieve(nullptr,
+                                                  plan.get(),
+                                                  1L << 63,
+                                                  INT64_MAX,
+                                                  false,
+                                                  folly::CancellationToken(),
+                                                  0,
+                                                  0);
+
+        // Step 6: Verify results
+        ASSERT_NE(retrieve_results, nullptr);
+
+        // Verify element-level flag is set
+        ASSERT_TRUE(retrieve_results->element_level())
+            << "Retrieve should be in element-level mode";
+
+        // Verify element_indices are populated
+        ASSERT_GT(retrieve_results->element_indices_size(), 0)
+            << "Should have element indices in element-level retrieve";
+
+        // Verify element_indices match offset size (each doc has its own
+        // indices list)
+        ASSERT_EQ(retrieve_results->element_indices_size(),
+                  retrieve_results->offset_size())
+            << "Element indices and offsets should have same size";
+
+        std::cout << "Element-level Retrieve returned "
+                  << retrieve_results->offset_size() << " unique docs"
+                  << std::endl;
+
+        // Verify each result
+        int total_elements = 0;
+        for (int i = 0; i < retrieve_results->offset_size(); i++) {
+            int64_t doc_id = retrieve_results->offset(i);
+            const auto& elem_indices = retrieve_results->element_indices(i);
+
+            // Verify the doc_id satisfies the predicate (id % 2 == 0) only when
+            // predicate is enabled
+            if (with_predicate) {
+                ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
+                                         << " should satisfy (id % 2 == 0)";
+            }
+
+            // Verify each element_idx in this doc
+            // With filter "value % 3 == 2", only elem_idx=1 should match
+            // because value = doc_id*3 + elem_idx + 1
+            // elem_idx=0: value % 3 = (doc_id*3 + 1) % 3 = 1
+            // elem_idx=1: value % 3 = (doc_id*3 + 2) % 3 = 2  <-- matches
+            // elem_idx=2: value % 3 = (doc_id*3 + 3) % 3 = 0
+            ASSERT_EQ(elem_indices.indices_size(), 1)
+                << "Each doc should have exactly one matching element "
+                   "(elem_idx=1)";
+
+            int32_t elem_idx = elem_indices.indices(0);
+
+            // Verify element_idx is valid
+            ASSERT_EQ(elem_idx, 1)
+                << "Only elem_idx=1 should match the filter (value % 3 == 2)";
+
+            // Verify element value satisfies filter: value % 3 == 2
+            int element_value = doc_id * array_len + elem_idx + 1;
+            ASSERT_EQ(element_value % 3, 2) << "Element value " << element_value
+                                            << " should satisfy value % 3 == 2";
+
+            total_elements += elem_indices.indices_size();
+        }
+        std::cout << "Total matching elements: " << total_elements << std::endl;
+
+        // Verify that total_elements equals number of docs (1 element per doc)
+        ASSERT_EQ(total_elements, retrieve_results->offset_size())
+            << "Each doc should have exactly 1 matching element";
+
+        // Verify fields_data contains the output fields
+        ASSERT_EQ(retrieve_results->fields_data_size(), 2)
+            << "Should have 2 output fields (id, price_array)";
     }
 }
 
-TEST(ArrayOffsetsGrowing, ElementIDRangeOfRow) {
-    ArrayOffsetsGrowing offsets;
+TEST_P(ElementFilterRetrieve, UnaryExpr) {
+    bool with_sealed = is_sealed();
+    bool with_predicate = use_predicate();
 
-    // Insert 4 rows with varying element counts
-    std::vector<int32_t> lens = {3, 0, 2, 5};  // includes empty array
-    offsets.Insert(0, lens.data(), 4);
+    // Step 1: Prepare schema with array field
+    int dim = 4;
+    auto schema = std::make_shared<Schema>();
+    auto vec_fid = schema->AddDebugVectorArrayField("structA[array_float_vec]",
+                                                    DataType::VECTOR_FLOAT,
+                                                    dim,
+                                                    knowhere::metric::L2);
+    auto int_array_fid = schema->AddDebugArrayField(
+        "structA[price_array]", DataType::INT32, false);
 
-    ASSERT_EQ(offsets.GetRowCount(), 4);
-    ASSERT_EQ(offsets.GetTotalElementCount(), 10);  // 3 + 0 + 2 + 5
+    auto int64_fid = schema->AddDebugField("id", DataType::INT64);
+    schema->set_primary_field_id(int64_fid);
 
-    // Verify ElementIDRangeOfRow
-    auto [start0, end0] = offsets.ElementIDRangeOfRow(0);
-    ASSERT_EQ(start0, 0);
-    ASSERT_EQ(end0, 3);
+    size_t N = 10000;
+    int array_len = 3;
 
-    auto [start1, end1] = offsets.ElementIDRangeOfRow(1);
-    ASSERT_EQ(start1, 3);
-    ASSERT_EQ(end1, 3);  // empty array
+    // Step 2: Generate test data
+    auto raw_data = DataGen(schema, N, 42, 0, 1, array_len);
 
-    auto [start2, end2] = offsets.ElementIDRangeOfRow(2);
-    ASSERT_EQ(start2, 3);
-    ASSERT_EQ(end2, 5);
+    // Customize int_array data: doc i has elements [i*3+1, i*3+2, i*3+3]
+    for (int i = 0; i < raw_data.raw_->fields_data_size(); i++) {
+        auto* field_data = raw_data.raw_->mutable_fields_data(i);
+        if (field_data->field_id() == int_array_fid.get()) {
+            field_data->mutable_scalars()
+                ->mutable_array_data()
+                ->mutable_data()
+                ->Clear();
 
-    auto [start3, end3] = offsets.ElementIDRangeOfRow(3);
-    ASSERT_EQ(start3, 5);
-    ASSERT_EQ(end3, 10);
+            for (int row = 0; row < N; row++) {
+                auto* array_data = field_data->mutable_scalars()
+                                       ->mutable_array_data()
+                                       ->mutable_data()
+                                       ->Add();
 
-    // Boundary: row_id == row_count returns (total, total)
-    auto [start4, end4] = offsets.ElementIDRangeOfRow(4);
-    ASSERT_EQ(start4, 10);
-    ASSERT_EQ(end4, 10);
+                for (int elem = 0; elem < array_len; elem++) {
+                    int value = row * array_len + elem + 1;
+                    array_data->mutable_int_data()->mutable_data()->Add(value);
+                }
+            }
+            break;
+        }
+    }
+
+    // Step 3: Create segment (sealed or growing)
+    std::shared_ptr<SegmentInterface> segment;
+    if (with_sealed) {
+        segment = CreateSealedWithFieldDataLoaded(schema, raw_data);
+    } else {
+        auto growing = CreateGrowingSegment(schema, empty_index_meta);
+        growing->PreInsert(N);
+        growing->Insert(0,
+                        N,
+                        raw_data.row_ids_.data(),
+                        raw_data.timestamps_.data(),
+                        raw_data.raw_);
+        segment = std::move(growing);
+    }
+
+    // Step 4: Build retrieve plan with element-level filter
+    // Query: Retrieve docs where price_array elements > 100
+    {
+        proto::plan::PlanNode plan_node;
+
+        // Set up query (not predicates at top level!)
+        auto* query = plan_node.mutable_query();
+        query->set_is_count(false);
+        query->set_limit(100);
+
+        // Build element filter expression under query.predicates
+        auto* expr = query->mutable_predicates();
+        auto* element_filter = expr->mutable_element_filter_expr();
+        element_filter->set_struct_name("structA");
+
+        // Element expression: price_array element > 100
+        auto* element_expr = element_filter->mutable_element_expr();
+        auto* unary_range = element_expr->mutable_unary_range_expr();
+
+        auto* column_info = unary_range->mutable_column_info();
+        column_info->set_field_id(int_array_fid.get());
+        column_info->set_data_type(proto::schema::DataType::Int32);
+        column_info->set_element_type(proto::schema::DataType::Int32);
+        column_info->set_is_element_level(true);
+
+        unary_range->set_op(proto::plan::OpType::GreaterThan);
+        unary_range->mutable_value()->set_int64_val(100);
+
+        // Add predicate if needed (doc-level filter: id % 2 == 0)
+        if (with_predicate) {
+            auto* predicate = element_filter->mutable_predicate();
+            auto* arith_expr =
+                predicate->mutable_binary_arith_op_eval_range_expr();
+
+            auto* pred_column = arith_expr->mutable_column_info();
+            pred_column->set_field_id(int64_fid.get());
+            pred_column->set_data_type(proto::schema::DataType::Int64);
+
+            arith_expr->set_arith_op(proto::plan::ArithOpType::Mod);
+            arith_expr->mutable_right_operand()->set_int64_val(2);
+            arith_expr->set_op(proto::plan::OpType::Equal);
+            arith_expr->mutable_value()->set_int64_val(0);
+        }
+
+        // Add output fields
+        plan_node.add_output_field_ids(int64_fid.get());
+        plan_node.add_output_field_ids(int_array_fid.get());
+
+        auto parser = ProtoParser(schema);
+        auto plan = parser.CreateRetrievePlan(plan_node);
+
+        // Step 5: Execute Retrieve
+        int64_t limit = 100;  // Retrieve top 100 element matches
+        auto retrieve_results = segment->Retrieve(nullptr,
+                                                  plan.get(),
+                                                  1L << 63,
+                                                  INT64_MAX,
+                                                  false,
+                                                  folly::CancellationToken(),
+                                                  0,
+                                                  0);
+
+        // Step 6: Verify results
+        ASSERT_NE(retrieve_results, nullptr);
+
+        // Verify element-level flag is set
+        ASSERT_TRUE(retrieve_results->element_level())
+            << "Retrieve should be in element-level mode";
+
+        // Verify element_indices are populated
+        ASSERT_GT(retrieve_results->element_indices_size(), 0)
+            << "Should have element indices in element-level retrieve";
+
+        // Verify element_indices match offset size (each doc has its own
+        // indices list)
+        ASSERT_EQ(retrieve_results->element_indices_size(),
+                  retrieve_results->offset_size())
+            << "Element indices and offsets should have same size";
+
+        std::cout << "Element-level Retrieve (UnaryExpr) returned "
+                  << retrieve_results->offset_size() << " unique docs"
+                  << std::endl;
+
+        // Verify each result
+        for (int i = 0; i < retrieve_results->offset_size(); i++) {
+            int64_t doc_id = retrieve_results->offset(i);
+            const auto& elem_indices = retrieve_results->element_indices(i);
+
+            // Verify the doc_id satisfies the predicate (id % 2 == 0) only when
+            // predicate is enabled
+            if (with_predicate) {
+                ASSERT_EQ(doc_id % 2, 0) << "Result doc_id " << doc_id
+                                         << " should satisfy (id % 2 == 0)";
+            }
+
+            // Verify each element_idx in this doc
+            ASSERT_GT(elem_indices.indices_size(), 0)
+                << "Each doc should have at least one matching element";
+            for (int j = 0; j < elem_indices.indices_size(); j++) {
+                int32_t elem_idx = elem_indices.indices(j);
+
+                // Verify element_idx is valid
+                ASSERT_GE(elem_idx, 0) << "Element index should be >= 0";
+                ASSERT_LT(elem_idx, array_len)
+                    << "Element index should be < array_len";
+
+                // Verify element value > 100
+                // Element value = doc_id * array_len + elem_idx + 1
+                int element_value = doc_id * array_len + elem_idx + 1;
+                ASSERT_GT(element_value, 100)
+                    << "Element value " << element_value << " should be > 100";
+            }
+        }
+    }
 }
 
-TEST(ArrayOffsetsGrowing, MultiplePendingBatches) {
-    // Test multiple pending batches being drained in order
-    ArrayOffsetsGrowing offsets;
-
-    // Insert row 5 first
-    std::vector<int32_t> lens5 = {2};
-    offsets.Insert(5, lens5.data(), 1);
-    ASSERT_EQ(offsets.GetRowCount(), 0);
-
-    // Insert row 3
-    std::vector<int32_t> lens3 = {3};
-    offsets.Insert(3, lens3.data(), 1);
-    ASSERT_EQ(offsets.GetRowCount(), 0);
-
-    // Insert row 1
-    std::vector<int32_t> lens1 = {1};
-    offsets.Insert(1, lens1.data(), 1);
-    ASSERT_EQ(offsets.GetRowCount(), 0);
-
-    // Insert row 0 - should drain row 1, but not 3 or 5 (gap at 2)
-    std::vector<int32_t> lens0 = {2};
-    offsets.Insert(0, lens0.data(), 1);
-    ASSERT_EQ(offsets.GetRowCount(), 2) << "Should commit rows 0-1";
-    ASSERT_EQ(offsets.GetTotalElementCount(), 3);  // 2 + 1
-
-    // Insert row 2 - should drain rows 3, but not 5 (gap at 4)
-    std::vector<int32_t> lens2 = {1};
-    offsets.Insert(2, lens2.data(), 1);
-    ASSERT_EQ(offsets.GetRowCount(), 4) << "Should commit rows 0-3";
-    ASSERT_EQ(offsets.GetTotalElementCount(), 7);  // 2 + 1 + 1 + 3
-
-    // Insert row 4 - should drain row 5
-    std::vector<int32_t> lens4 = {2};
-    offsets.Insert(4, lens4.data(), 1);
-    ASSERT_EQ(offsets.GetRowCount(), 6) << "Should commit rows 0-5";
-    ASSERT_EQ(offsets.GetTotalElementCount(), 11);  // 2 + 1 + 1 + 3 + 2 + 2
-
-    // Verify final mapping
-    // Row 0: elem 0-1, Row 1: elem 2, Row 2: elem 3, Row 3: elem 4-6, Row 4: elem 7-8, Row 5: elem 9-10
-    auto [r0, i0] = offsets.ElementIDToRowID(0);
-    ASSERT_EQ(r0, 0);
-    ASSERT_EQ(i0, 0);
-
-    auto [r2, i2] = offsets.ElementIDToRowID(2);
-    ASSERT_EQ(r2, 1);
-    ASSERT_EQ(i2, 0);
-
-    auto [r4, i4] = offsets.ElementIDToRowID(4);
-    ASSERT_EQ(r4, 3);
-    ASSERT_EQ(i4, 0);
-
-    auto [r7, i7] = offsets.ElementIDToRowID(7);
-    ASSERT_EQ(r7, 4);
-    ASSERT_EQ(i7, 0);
-
-    auto [r10, i10] = offsets.ElementIDToRowID(10);
-    ASSERT_EQ(r10, 5);
-    ASSERT_EQ(i10, 1);
-}
+INSTANTIATE_TEST_SUITE_P(
+    ElementFilter,
+    ElementFilterRetrieve,
+    ::testing::Combine(::testing::Bool(),  // with_sealed: true/false
+                       ::testing::Bool()   // with_predicate: true/false
+                       ),
+    [](const ::testing::TestParamInfo<ElementFilterRetrieve::ParamType>& info) {
+        bool with_sealed = std::get<0>(info.param);
+        bool with_predicate = std::get<1>(info.param);
+        std::string name = "";
+        name += with_sealed ? "Sealed" : "Growing";
+        name += "_";
+        name += with_predicate ? "WithPredicate" : "WithoutPredicate";
+        return name;
+    });

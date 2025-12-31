@@ -144,10 +144,30 @@ ExecPlanNodeVisitor::visit(RetrievePlanNode& node) {
             op_context.storage_usage.scanned_cold_bytes.load();
         retrieve_result_opt_->retrieve_storage_cost_.scanned_total_bytes =
             op_context.storage_usage.scanned_total_bytes.load();
+    } else if (query_context->element_level_query()) {
+        // Element-level query: bitset is element-level, need to convert to (doc_id, element_index)
+        retrieve_result.element_level_ = true;
+        retrieve_result.total_data_cnt_ = bitset_holder.size();
+
+        tracer::AutoSpan _("Element Level Find", tracer::GetRootSpan(), true);
+        auto array_offsets = query_context->get_array_offsets();
+        auto [doc_offsets, element_indices, has_more] =
+            segment->find_first_element_n(
+                node.limit_, bitset_holder, array_offsets);
+
+        retrieve_result.result_offsets_ = std::move(doc_offsets);
+        retrieve_result.element_indices_ = std::move(element_indices);
+        retrieve_result.has_more_result = has_more;
+
+        retrieve_result_opt_ = std::move(retrieve_result);
+        retrieve_result_opt_->retrieve_storage_cost_.scanned_remote_bytes =
+            op_context.storage_usage.scanned_cold_bytes.load();
+        retrieve_result_opt_->retrieve_storage_cost_.scanned_total_bytes =
+            op_context.storage_usage.scanned_total_bytes.load();
     } else {
         retrieve_result.total_data_cnt_ = bitset_holder.size();
         tracer::AutoSpan _("Find Limit Pk", tracer::GetRootSpan(), true);
-        auto results_pair = segment->find_first(node.limit_, bitset_holder);
+        auto results_pair = segment->find_first_n(node.limit_, bitset_holder);
         retrieve_result.result_offsets_ = std::move(results_pair.first);
         retrieve_result.has_more_result = results_pair.second;
         retrieve_result_opt_ = std::move(retrieve_result);
