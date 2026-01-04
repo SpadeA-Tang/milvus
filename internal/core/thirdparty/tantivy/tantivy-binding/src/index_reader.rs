@@ -4,20 +4,16 @@ use std::sync::Arc;
 
 use libc::c_char;
 use tantivy::fastfield::FastValue;
-use tantivy::query::{
-    BooleanQuery, ExistsQuery, Query, RangeQuery, RegexQuery, TermQuery, TermSetQuery,
-};
+use tantivy::query::{ExistsQuery, Query, RangeQuery, RegexQuery, TermQuery, TermSetQuery};
 use tantivy::schema::{Field, IndexRecordOption};
 use tantivy::tokenizer::{NgramTokenizer, TokenStream, Tokenizer};
 use tantivy::{Directory, HasLen, Index, IndexReader, ReloadPolicy, Term};
 
 use crate::bitset_wrapper::BitsetWrapper;
-use crate::docid_collector::{DocIdCollector, DocIdCollectorI64};
+use crate::collectors::{DocIdCollector, DocIdCollectorI64, MilvusIdCollector, VecCollector};
 use crate::index_reader_c::SetBitsetFn;
 use crate::log::init_log;
-use crate::milvus_id_collector::MilvusIdCollector;
 use crate::util::{c_ptr_to_str, make_bounds};
-use crate::vec_collector::VecCollector;
 
 use crate::error::{Result, TantivyBindingError};
 
@@ -576,18 +572,31 @@ impl IndexReaderWrapper {
             return self.term_query_keyword(literal, bitset);
         }
 
-        let mut terms = vec![];
         // So, str length is larger than 'max_gram' parse 'str' by 'max_gram'-gram and search all of them with boolean intersection
-        // nivers
-        let mut term_queries: Vec<Box<dyn Query>> = vec![];
+        let mut terms: Vec<Term> = vec![];
         let mut tokenizer = NgramTokenizer::new(max_gram, max_gram, false).unwrap();
         let mut token_stream = tokenizer.token_stream(literal);
         token_stream.process(&mut |token| {
-            let term = Term::from_field_text(self.field, &token.text);
-            term_queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
-            terms.push(token.text.clone());
+            terms.push(Term::from_field_text(self.field, &token.text));
         });
-        let query = BooleanQuery::intersection(term_queries);
+
+        if terms.is_empty() {
+            return Ok(());
+        }
+
+        // Select the rarest term by doc_freq
+        let searcher = self.reader.searcher();
+        let rarest_term = terms
+            .into_iter()
+            .map(|term| {
+                let doc_freq = searcher.doc_freq(&term).unwrap_or(0);
+                (term, doc_freq)
+            })
+            .min_by_key(|(_, freq)| *freq)
+            .map(|(term, _)| term)
+            .unwrap();
+
+        let query = TermQuery::new(rarest_term, IndexRecordOption::Basic);
         self.search(&query, bitset)
     }
 }

@@ -10,7 +10,9 @@ use crate::{
     analyzer::standard_analyzer, error::TantivyBindingError, index_reader::IndexReaderWrapper,
 };
 use crate::{
-    bitset_wrapper::BitsetWrapper, direct_bitset_collector::DirectBitsetCollector, error::Result,
+    bitset_wrapper::BitsetWrapper,
+    collectors::{DirectAndBitsetCollector, DirectBitsetCollector},
+    error::Result,
 };
 
 impl IndexReaderWrapper {
@@ -34,6 +36,44 @@ impl IndexReaderWrapper {
             terms: terms.clone(),
         };
         let query = BooleanQuery::new_multiterms_query(terms);
+        let searcher = self.reader.searcher();
+        searcher
+            .search(&query, &collector)
+            .map_err(TantivyBindingError::TantivyError)
+    }
+
+    /// Split the query string into multiple tokens using index's default tokenizer,
+    /// and then execute the conjunction (AND) of term queries.
+    ///
+    /// This method directly collects intersection results into the bitset,
+    /// bypassing Tantivy's internal intersection structures for better performance.
+    pub(crate) fn and_match_query(&self, q: &str, bitset: *mut c_void) -> Result<()> {
+        // Clone the tokenizer to make `and_match_query` thread-safe.
+        let mut tokenizer = self
+            .index
+            .tokenizer_for_field(self.field)
+            .unwrap_or(standard_analyzer(vec![]))
+            .clone();
+        let mut token_stream = tokenizer.token_stream(q);
+        let mut terms: Vec<Term> = Vec::new();
+        while token_stream.advance() {
+            let token = token_stream.token();
+            terms.push(Term::from_field_text(self.field, &token.text));
+        }
+
+        if terms.is_empty() {
+            return Ok(());
+        }
+
+        let collector = DirectAndBitsetCollector {
+            bitset_wrapper: BitsetWrapper::new(bitset, self.set_bitset),
+            terms,
+            max_terms: None, // Use all terms for text match AND query
+        };
+
+        // We still need a query for the searcher, but the collector will
+        // bypass it and directly read posting lists for intersection.
+        let query = BooleanQuery::new_multiterms_query(vec![]);
         let searcher = self.reader.searcher();
         searcher
             .search(&query, &collector)

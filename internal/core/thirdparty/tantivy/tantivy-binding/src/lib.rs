@@ -2,10 +2,9 @@ use error::TantivyBindingError;
 
 mod array;
 mod bitset_wrapper;
+mod collectors;
 mod data_type;
 mod demo_c;
-mod direct_bitset_collector;
-mod docid_collector;
 mod error;
 mod hashmap_c;
 mod index_json_key_stats_writer;
@@ -23,13 +22,11 @@ mod index_writer_text_c;
 mod index_writer_v5;
 mod index_writer_v7;
 mod log;
-mod milvus_id_collector;
 mod string_c;
 mod token_stream_c;
 mod tokenizer_c;
 mod util;
 mod util_c;
-mod vec_collector;
 
 pub mod analyzer;
 pub mod phrase_match_slop;
