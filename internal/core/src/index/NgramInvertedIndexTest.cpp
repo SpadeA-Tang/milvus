@@ -10,6 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under the License
 
 #include <gtest/gtest.h>
+#include <iomanip>
+#include <map>
+#include <random>
 #include <string>
 
 #include "common/Schema.h"
@@ -1224,4 +1227,391 @@ TEST(NgramIndex, TestJsonNonLikeExpressionsWithNgram) {
             EXPECT_TRUE(result[i]);
         }
     }
+}
+
+// Performance test for pre_filter optimization.
+// This test measures the benefit of applying pre_filter from previous expressions
+// before the ngram post-filtering phase.
+//
+// Scenario: `int_field < threshold AND varchar_field LIKE '%pattern%'`
+// - 1,000,000 rows with random unique sentences
+// - Tests phase1 hit rates: 10%, 25%, 50%, 75% (different keywords)
+// - Tests pre_filter selectivities: 10%, 25%, 50%, 75%
+// - 3 warmup runs, 5 test runs averaged
+// - Optimization: candidate_set &= pre_filter before post-filtering
+TEST(NgramIndex, TestPreFilterOptimizationPerformance) {
+    // Configuration
+    const size_t nb = 1000000;  // Total number of rows
+
+    int64_t collection_id = 1;
+    int64_t partition_id = 2;
+    int64_t segment_id = 3;
+    int64_t index_build_id = 4000;
+    int64_t index_version = 4000;
+
+    auto schema = std::make_shared<Schema>();
+    auto varchar_field_id = schema->AddDebugField("text", DataType::VARCHAR);
+    auto int_field_id = schema->AddDebugField("filter_val", DataType::INT64);
+
+    auto field_meta = milvus::segcore::gen_field_meta(collection_id,
+                                                      partition_id,
+                                                      segment_id,
+                                                      varchar_field_id.get(),
+                                                      DataType::VARCHAR,
+                                                      DataType::NONE,
+                                                      false);
+    auto index_meta = gen_index_meta(
+        segment_id, varchar_field_id.get(), index_build_id, index_version);
+
+    std::string root_path = "/tmp/test-ngram-prefilter-perf/";
+    auto storage_config = gen_local_storage_config(root_path);
+    auto cm = CreateChunkManager(storage_config);
+    auto fs = storage::InitArrowFileSystem(storage_config);
+
+    // Generate test data with random sentences and multiple keywords:
+    // - keyword_10: appears in ~10% of rows
+    // - keyword_25: appears in ~25% of rows
+    // - keyword_50: appears in ~50% of rows
+    // - keyword_75: appears in ~75% of rows
+    // Each sentence is unique with random words to create diverse ngram tokens
+    boost::container::vector<std::string> text_data;
+    std::vector<int64_t> int_data;
+    text_data.reserve(nb);
+    int_data.reserve(nb);
+
+    // Keywords with different hit rates
+    struct KeywordConfig {
+        std::string keyword;
+        int percent;
+        size_t count = 0;
+    };
+    std::vector<KeywordConfig> keywords = {
+        {"alpha_keyword", 10},
+        {"beta_keyword", 25},
+        {"gamma_keyword", 50},
+        {"delta_keyword", 75},
+    };
+
+    // Word pools for generating random sentences
+    std::vector<std::string> adjectives = {"quick",
+                                           "lazy",
+                                           "bright",
+                                           "dark",
+                                           "smooth",
+                                           "rough",
+                                           "warm",
+                                           "cold",
+                                           "large",
+                                           "small",
+                                           "happy",
+                                           "sad",
+                                           "ancient",
+                                           "modern",
+                                           "simple",
+                                           "complex"};
+    std::vector<std::string> nouns = {"database",
+                                      "server",
+                                      "network",
+                                      "system",
+                                      "process",
+                                      "memory",
+                                      "storage",
+                                      "cluster",
+                                      "node",
+                                      "index",
+                                      "query",
+                                      "table",
+                                      "record",
+                                      "field",
+                                      "cache"};
+    std::vector<std::string> verbs = {"processes",
+                                      "handles",
+                                      "manages",
+                                      "stores",
+                                      "retrieves",
+                                      "updates",
+                                      "deletes",
+                                      "creates",
+                                      "monitors",
+                                      "optimizes",
+                                      "scales",
+                                      "replicates"};
+
+    std::mt19937 rng(42);  // Fixed seed for reproducibility
+    std::uniform_int_distribution<size_t> adj_dist(0, adjectives.size() - 1);
+    std::uniform_int_distribution<size_t> noun_dist(0, nouns.size() - 1);
+    std::uniform_int_distribution<size_t> verb_dist(0, verbs.size() - 1);
+    std::uniform_int_distribution<int> percent_dist(0, 99);
+
+    for (size_t i = 0; i < nb; i++) {
+        // Build a random sentence
+        std::string sentence =
+            "The " + adjectives[adj_dist(rng)] + " " + nouns[noun_dist(rng)] +
+            " " + verbs[verb_dist(rng)] + " the " + adjectives[adj_dist(rng)] +
+            " " + nouns[noun_dist(rng)] + " id_" + std::to_string(i);
+
+        // Randomly add keywords based on their target percentages
+        for (auto& kw : keywords) {
+            if (percent_dist(rng) < kw.percent) {
+                sentence += " " + kw.keyword;
+                kw.count++;
+            }
+        }
+
+        text_data.push_back(sentence);
+        int_data.push_back(static_cast<int64_t>(i));
+    }
+
+    std::cout << "Generated data with keywords:" << std::endl;
+    for (const auto& kw : keywords) {
+        std::cout << "  - " << kw.keyword << ": " << kw.count << " rows ("
+                  << (100.0 * kw.count / nb) << "%)" << std::endl;
+    }
+
+    auto text_field_data =
+        storage::CreateFieldData(DataType::VARCHAR, DataType::NONE, false);
+    text_field_data->FillFieldData(text_data.data(), text_data.size());
+
+    auto int_field_data =
+        storage::CreateFieldData(DataType::INT64, DataType::NONE, false);
+    int_field_data->FillFieldData(int_data.data(), int_data.size());
+
+    auto segment = CreateSealedSegment(schema);
+
+    // Load varchar field
+    auto text_field_info =
+        PrepareSingleFieldInsertBinlog(collection_id,
+                                       partition_id,
+                                       segment_id,
+                                       varchar_field_id.get(),
+                                       {text_field_data},
+                                       cm);
+    segment->LoadFieldData(text_field_info);
+
+    // Load int field
+    auto int_field_info = PrepareSingleFieldInsertBinlog(collection_id,
+                                                         partition_id,
+                                                         segment_id,
+                                                         int_field_id.get(),
+                                                         {int_field_data},
+                                                         cm);
+    segment->LoadFieldData(int_field_info);
+
+    // Build and upload ngram index
+    auto payload_reader =
+        std::make_shared<milvus::storage::PayloadReader>(text_field_data);
+    storage::InsertData insert_data(payload_reader);
+    insert_data.SetFieldDataMeta(field_meta);
+    insert_data.SetTimestamps(0, 100);
+    auto serialized_bytes = insert_data.Serialize(storage::Remote);
+
+    auto log_path = fmt::format("{}/{}/{}/{}/{}",
+                                collection_id,
+                                partition_id,
+                                segment_id,
+                                varchar_field_id.get(),
+                                0);
+
+    auto cm_w = ChunkManagerWrapper(cm);
+    cm_w.Write(log_path, serialized_bytes.data(), serialized_bytes.size());
+
+    storage::FileManagerContext ctx(field_meta, index_meta, cm, fs);
+    std::vector<std::string> index_files;
+
+    {
+        Config config;
+        config[milvus::index::INDEX_TYPE] = milvus::index::INVERTED_INDEX_TYPE;
+        config[INSERT_FILES_KEY] = std::vector<std::string>{log_path};
+
+        auto ngram_params = index::NgramParams{
+            .loading_index = false,
+            .min_gram = 2,
+            .max_gram = 3,
+        };
+        auto index =
+            std::make_shared<index::NgramInvertedIndex>(ctx, ngram_params);
+        index->Build(config);
+
+        auto create_index_result = index->Upload();
+        index_files = create_index_result->GetIndexFiles();
+    }
+
+    // Load ngram index
+    Config config;
+    config[milvus::index::INDEX_FILES] = index_files;
+    config[milvus::LOAD_PRIORITY] = milvus::proto::common::LoadPriority::HIGH;
+
+    auto ngram_params = index::NgramParams{
+        .loading_index = true,
+        .min_gram = 2,
+        .max_gram = 3,
+    };
+    auto index = std::make_unique<index::NgramInvertedIndex>(ctx, ngram_params);
+    index->Load(milvus::tracer::TraceContext{}, config);
+
+    // Test configuration
+    const int warmup_runs = 3;
+    const int test_runs = 2;
+    std::vector<int> pre_filter_percentages = {75, 50, 25, 10};
+
+    // Helper lambda to create SegmentExpr
+    auto create_segment_expr = [&]() {
+        return exec::SegmentExpr(std::move(std::vector<exec::ExprPtr>{}),
+                                 "SegmentExpr",
+                                 nullptr,
+                                 segment.get(),
+                                 varchar_field_id,
+                                 {},
+                                 DataType::VARCHAR,
+                                 nb,
+                                 8192,
+                                 0);
+    };
+
+    // Helper lambda to create pre_filter bitmap
+    auto create_pre_filter = [&](int selectivity_pct) {
+        TargetBitmap pre_filter(nb, false);
+        std::mt19937 pre_rng(123 + selectivity_pct);
+        std::uniform_int_distribution<int> pre_dist(0, 99);
+        for (size_t i = 0; i < nb; i++) {
+            if (pre_dist(pre_rng) < selectivity_pct) {
+                pre_filter[i] = true;
+            }
+        }
+        return pre_filter;
+    };
+
+    // Structure to store test results
+    struct TestResult {
+        int phase1_hit_pct;
+        int pre_filter_pct;
+        size_t phase1_count;
+        size_t after_pf_count;
+        double avg_ms;
+        double speedup;
+    };
+    std::vector<TestResult> results;
+
+    std::cout << "\n=== Pre-filter Optimization Performance Test ==="
+              << std::endl;
+    std::cout << "Configuration:" << std::endl;
+    std::cout << "  - Total rows: " << nb << std::endl;
+    std::cout << "  - Warmup runs: " << warmup_runs << std::endl;
+    std::cout << "  - Test runs: " << test_runs << std::endl;
+
+    // Warmup runs (discard results)
+    std::cout << "\nWarming up..." << std::endl;
+    for (int w = 0; w < warmup_runs; w++) {
+        auto seg_expr = create_segment_expr();
+        index->ExecuteQuery(keywords[0].keyword,
+                            proto::plan::OpType::InnerMatch,
+                            &seg_expr,
+                            nullptr);
+    }
+    std::cout << "Warmup complete.\n" << std::endl;
+    std::cout << "Running tests (debug output below)...\n" << std::endl;
+
+    // Test each keyword (different phase1 hit rates) with each pre_filter selectivity
+    for (const auto& kw : keywords) {
+        // First, measure baseline (no pre_filter) for this keyword
+        std::cout << "\n============ Phase1 Hit: " << kw.percent
+                  << "%, Pre-filter: 100% (baseline) ============" << std::endl;
+        double baseline_total_ms = 0;
+        size_t baseline_count = 0;
+        for (int r = 0; r < test_runs; r++) {
+            auto seg_expr = create_segment_expr();
+            auto start = std::chrono::high_resolution_clock::now();
+            auto result = index->ExecuteQuery(kw.keyword,
+                                              proto::plan::OpType::InnerMatch,
+                                              &seg_expr,
+                                              nullptr);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration_ms =
+                std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                      start)
+                    .count() /
+                1000.0;
+            baseline_total_ms += duration_ms;
+            if (r == 0) {
+                ASSERT_TRUE(result.has_value());
+                baseline_count = result->count();
+            }
+        }
+        double baseline_avg_ms = baseline_total_ms / test_runs;
+
+        // Store baseline result
+        results.push_back({kw.percent,
+                           100,
+                           baseline_count,
+                           baseline_count,
+                           baseline_avg_ms,
+                           1.0});
+
+        // Test with different pre_filter selectivities
+        for (int pct : pre_filter_percentages) {
+            std::cout << "\n============ Phase1 Hit: " << kw.percent
+                      << "%, Pre-filter: " << pct
+                      << "% ============" << std::endl;
+            auto pre_filter = create_pre_filter(pct);
+
+            double total_ms = 0;
+            size_t result_count = 0;
+            for (int r = 0; r < test_runs; r++) {
+                auto seg_expr = create_segment_expr();
+                auto start = std::chrono::high_resolution_clock::now();
+                auto result =
+                    index->ExecuteQuery(kw.keyword,
+                                        proto::plan::OpType::InnerMatch,
+                                        &seg_expr,
+                                        &pre_filter);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration_ms =
+                    std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                          start)
+                        .count() /
+                    1000.0;
+                total_ms += duration_ms;
+                if (r == 0) {
+                    ASSERT_TRUE(result.has_value());
+                    result_count = result->count();
+                }
+            }
+            double avg_ms = total_ms / test_runs;
+            double speedup = avg_ms > 0 ? baseline_avg_ms / avg_ms : 0;
+
+            // Store result
+            results.push_back({kw.percent,
+                               pct,
+                               baseline_count,
+                               result_count,
+                               avg_ms,
+                               speedup});
+        }
+    }
+
+    // Print all results at the end
+    std::cout << "\n\n";
+    std::cout << "========================================================\n";
+    std::cout << "                    FINAL RESULTS                       \n";
+    std::cout << "========================================================\n";
+    std::cout << std::setw(12) << "Phase1 Hit" << std::setw(12) << "Pre-filter"
+              << std::setw(12) << "Phase1" << std::setw(12) << "After PF"
+              << std::setw(12) << "Avg (ms)" << std::setw(12) << "Speedup\n";
+    std::cout << std::string(72, '-') << "\n";
+
+    int last_phase1_pct = -1;
+    for (const auto& r : results) {
+        if (last_phase1_pct != -1 && last_phase1_pct != r.phase1_hit_pct) {
+            std::cout << std::string(72, '-') << "\n";
+        }
+        last_phase1_pct = r.phase1_hit_pct;
+
+        std::cout << std::setw(12) << std::to_string(r.phase1_hit_pct) + "%"
+                  << std::setw(12) << std::to_string(r.pre_filter_pct) + "%"
+                  << std::setw(12) << r.phase1_count << std::setw(12)
+                  << r.after_pf_count << std::setw(12) << std::fixed
+                  << std::setprecision(2) << r.avg_ms << std::setw(12)
+                  << std::fixed << std::setprecision(2) << r.speedup << "x\n";
+    }
+    std::cout << std::string(72, '-') << std::endl;
 }
