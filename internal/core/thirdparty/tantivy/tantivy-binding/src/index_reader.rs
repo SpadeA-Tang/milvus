@@ -4,13 +4,16 @@ use std::sync::Arc;
 
 use libc::c_char;
 use tantivy::fastfield::FastValue;
+use tantivy::query::BooleanQuery;
 use tantivy::query::{ExistsQuery, Query, RangeQuery, RegexQuery, TermQuery, TermSetQuery};
 use tantivy::schema::{Field, IndexRecordOption};
 use tantivy::tokenizer::{NgramTokenizer, TokenStream, Tokenizer};
 use tantivy::{Directory, HasLen, Index, IndexReader, ReloadPolicy, Term};
 
 use crate::bitset_wrapper::BitsetWrapper;
-use crate::collectors::{DocIdCollector, DocIdCollectorI64, MilvusIdCollector, VecCollector};
+use crate::collectors::{
+    DirectAndBitsetCollector, DocIdCollector, DocIdCollectorI64, MilvusIdCollector, VecCollector,
+};
 use crate::index_reader_c::SetBitsetFn;
 use crate::log::init_log;
 use crate::util::{c_ptr_to_str, make_bounds};
@@ -572,32 +575,30 @@ impl IndexReaderWrapper {
             return self.term_query_keyword(literal, bitset);
         }
 
-        // So, str length is larger than 'max_gram' parse 'str' by 'max_gram'-gram and search all of them with boolean intersection
+        // Parse 'literal' by 'max_gram'-gram to get all ngram tokens
         let mut terms: Vec<Term> = vec![];
         let mut tokenizer = NgramTokenizer::new(max_gram, max_gram, false).unwrap();
         let mut token_stream = tokenizer.token_stream(literal);
         token_stream.process(&mut |token| {
-            terms.push(Term::from_field_text(self.field, &token.text));
+            let term = Term::from_field_text(self.field, &token.text);
+            terms.push(term);
         });
 
-        if terms.is_empty() {
-            return Ok(());
-        }
+        // Use DirectAndBitsetCollector with max_terms=2 for 2-term optimization
+        // This selects only the 2 rarest terms (by doc_freq) for intersection
+        let collector = DirectAndBitsetCollector {
+            bitset_wrapper: BitsetWrapper::new(bitset, self.set_bitset),
+            terms,
+            max_terms: Some(2),
+        };
 
-        // Select the rarest term by doc_freq
+        // We still need a query for the searcher, but the collector will
+        // bypass it and directly read posting lists for intersection.
+        let query = BooleanQuery::new_multiterms_query(vec![]);
         let searcher = self.reader.searcher();
-        let rarest_term = terms
-            .into_iter()
-            .map(|term| {
-                let doc_freq = searcher.doc_freq(&term).unwrap_or(0);
-                (term, doc_freq)
-            })
-            .min_by_key(|(_, freq)| *freq)
-            .map(|(term, _)| term)
-            .unwrap();
-
-        let query = TermQuery::new(rarest_term, IndexRecordOption::Basic);
-        self.search(&query, bitset)
+        searcher
+            .search(&query, &collector)
+            .map_err(TantivyBindingError::TantivyError)
     }
 }
 

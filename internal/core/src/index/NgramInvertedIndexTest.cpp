@@ -14,6 +14,9 @@
 #include <map>
 #include <random>
 #include <string>
+#include <fstream>
+#include <filesystem>
+#include <nlohmann/json.hpp>
 
 #include "common/Schema.h"
 #include "test_utils/GenExprProto.h"
@@ -1485,8 +1488,7 @@ TEST(NgramIndex, TestPreFilterOptimizationPerformance) {
     struct TestResult {
         int phase1_hit_pct;
         int pre_filter_pct;
-        size_t phase1_count;
-        size_t after_pf_count;
+        double selectivity;
         double avg_ms;
         double speedup;
     };
@@ -1538,14 +1540,11 @@ TEST(NgramIndex, TestPreFilterOptimizationPerformance) {
             }
         }
         double baseline_avg_ms = baseline_total_ms / test_runs;
+        double baseline_selectivity = 100.0 * baseline_count / nb;
 
         // Store baseline result
-        results.push_back({kw.percent,
-                           100,
-                           baseline_count,
-                           baseline_count,
-                           baseline_avg_ms,
-                           1.0});
+        results.push_back(
+            {kw.percent, 100, baseline_selectivity, baseline_avg_ms, 1.0});
 
         // Test with different pre_filter selectivities
         for (int pct : pre_filter_percentages) {
@@ -1578,40 +1577,459 @@ TEST(NgramIndex, TestPreFilterOptimizationPerformance) {
             }
             double avg_ms = total_ms / test_runs;
             double speedup = avg_ms > 0 ? baseline_avg_ms / avg_ms : 0;
+            double selectivity = 100.0 * result_count / nb;
 
             // Store result
-            results.push_back({kw.percent,
-                               pct,
-                               baseline_count,
-                               result_count,
-                               avg_ms,
-                               speedup});
+            results.push_back({kw.percent, pct, selectivity, avg_ms, speedup});
         }
     }
 
     // Print all results at the end
     std::cout << "\n\n";
-    std::cout << "========================================================\n";
-    std::cout << "                    FINAL RESULTS                       \n";
-    std::cout << "========================================================\n";
-    std::cout << std::setw(12) << "Phase1 Hit" << std::setw(12) << "Pre-filter"
-              << std::setw(12) << "Phase1" << std::setw(12) << "After PF"
+    std::cout << "============================================================="
+                 "====\n";
+    std::cout
+        << "                        FINAL RESULTS                           \n";
+    std::cout << "============================================================="
+                 "====\n";
+    std::cout << std::setw(12) << "Phase1 Hit" << std::setw(18)
+              << "PF Selectivity" << std::setw(14) << "Selectivity"
               << std::setw(12) << "Avg (ms)" << std::setw(12) << "Speedup\n";
-    std::cout << std::string(72, '-') << "\n";
+    std::cout << std::string(68, '-') << "\n";
 
     int last_phase1_pct = -1;
     for (const auto& r : results) {
         if (last_phase1_pct != -1 && last_phase1_pct != r.phase1_hit_pct) {
-            std::cout << std::string(72, '-') << "\n";
+            std::cout << std::string(68, '-') << "\n";
         }
         last_phase1_pct = r.phase1_hit_pct;
 
         std::cout << std::setw(12) << std::to_string(r.phase1_hit_pct) + "%"
-                  << std::setw(12) << std::to_string(r.pre_filter_pct) + "%"
-                  << std::setw(12) << r.phase1_count << std::setw(12)
-                  << r.after_pf_count << std::setw(12) << std::fixed
+                  << std::setw(18) << std::to_string(r.pre_filter_pct) + "%"
+                  << std::setw(13) << std::fixed << std::setprecision(2)
+                  << r.selectivity << "%" << std::setw(12) << std::fixed
                   << std::setprecision(2) << r.avg_ms << std::setw(12)
                   << std::fixed << std::setprecision(2) << r.speedup << "x\n";
     }
-    std::cout << std::string(72, '-') << std::endl;
+    std::cout << std::string(68, '-') << std::endl;
+}
+
+// Forward declaration
+void
+RunWikiDataPerformanceTest(size_t max_text_length);
+
+TEST(NgramIndex, TestWikiDataPerformance) {
+    RunWikiDataPerformanceTest(0);  // 0 means no truncation (full text)
+}
+
+// Helper function to truncate string at valid UTF-8 boundary
+std::string
+TruncateUtf8(const std::string& text, size_t max_len) {
+    if (text.size() <= max_len) {
+        return text;
+    }
+    // Find valid UTF-8 boundary by backing up from max_len
+    size_t len = max_len;
+    while (len > 0 && (static_cast<unsigned char>(text[len]) & 0xC0) == 0x80) {
+        // Current byte is a UTF-8 continuation byte (10xxxxxx), back up
+        --len;
+    }
+    return text.substr(0, len);
+}
+
+// Helper function to run wiki data performance test with optional text truncation
+void
+RunWikiDataPerformanceTest(size_t max_text_length) {
+    // Read wiki JSON files from the specified directory
+    const std::string wiki_dir = "/home/spadea/working4/wiki-jsons";
+
+    boost::container::vector<std::string> text_data;
+    size_t total_text_length = 0;
+
+    std::string test_name =
+        max_text_length > 0
+            ? fmt::format("Truncated to {} bytes", max_text_length)
+            : "Full text";
+    std::cout << "\n=== " << test_name << " ===" << std::endl;
+    std::cout << "Loading wiki data from: " << wiki_dir << std::endl;
+
+    for (const auto& entry : std::filesystem::directory_iterator(wiki_dir)) {
+        if (entry.path().extension() == ".json") {
+            std::ifstream file(entry.path());
+            if (!file.is_open()) {
+                std::cerr << "Failed to open: " << entry.path() << std::endl;
+                continue;
+            }
+
+            nlohmann::json json_data = nlohmann::json::parse(file);
+            for (const auto& item : json_data) {
+                if (item.contains("text")) {
+                    std::string text = item["text"].get<std::string>();
+                    // Truncate text if max_text_length is specified
+                    if (max_text_length > 0 && text.size() > max_text_length) {
+                        text = TruncateUtf8(text, max_text_length);
+                    }
+                    total_text_length += text.size();
+                    text_data.push_back(std::move(text));
+                }
+            }
+            std::cout << "  Loaded: " << entry.path().filename()
+                      << " (total rows so far: " << text_data.size() << ")"
+                      << std::endl;
+        }
+    }
+
+    const size_t nb = text_data.size();
+    double avg_length =
+        nb > 0 ? static_cast<double>(total_text_length) / nb : 0;
+
+    std::cout << "\n=== Wiki Data Statistics ===" << std::endl;
+    std::cout << "  Total rows: " << nb << std::endl;
+    std::cout << "  Total text length: " << total_text_length << " bytes"
+              << std::endl;
+    std::cout << "  Average text length: " << std::fixed << std::setprecision(2)
+              << avg_length << " bytes" << std::endl;
+    if (max_text_length > 0) {
+        std::cout << "  Max text length (truncated): " << max_text_length
+                  << " bytes" << std::endl;
+    }
+
+    if (nb == 0) {
+        std::cout << "No data loaded, skipping test." << std::endl;
+        return;
+    }
+
+    // Setup segment and index
+    int64_t collection_id = 1;
+    int64_t partition_id = 2;
+    int64_t segment_id = 3;
+    int64_t index_build_id = 4000;
+    int64_t index_version = 4000;
+
+    auto schema = std::make_shared<Schema>();
+    auto varchar_field_id = schema->AddDebugField("text", DataType::VARCHAR);
+
+    auto field_meta = milvus::segcore::gen_field_meta(collection_id,
+                                                      partition_id,
+                                                      segment_id,
+                                                      varchar_field_id.get(),
+                                                      DataType::VARCHAR,
+                                                      DataType::NONE,
+                                                      false);
+    auto index_meta = gen_index_meta(
+        segment_id, varchar_field_id.get(), index_build_id, index_version);
+
+    std::string root_path =
+        max_text_length > 0
+            ? fmt::format("/tmp/test-ngram-wiki-perf-{}b/", max_text_length)
+            : "/tmp/test-ngram-wiki-perf/";
+    auto storage_config = gen_local_storage_config(root_path);
+    auto cm = CreateChunkManager(storage_config);
+    auto fs = storage::InitArrowFileSystem(storage_config);
+
+    auto text_field_data =
+        storage::CreateFieldData(DataType::VARCHAR, DataType::NONE, false);
+    text_field_data->FillFieldData(text_data.data(), text_data.size());
+
+    auto segment = CreateSealedSegment(schema);
+
+    auto text_field_info =
+        PrepareSingleFieldInsertBinlog(collection_id,
+                                       partition_id,
+                                       segment_id,
+                                       varchar_field_id.get(),
+                                       {text_field_data},
+                                       cm);
+    segment->LoadFieldData(text_field_info);
+
+    // Build and upload ngram index
+    auto payload_reader =
+        std::make_shared<milvus::storage::PayloadReader>(text_field_data);
+    storage::InsertData insert_data(payload_reader);
+    insert_data.SetFieldDataMeta(field_meta);
+    insert_data.SetTimestamps(0, 100);
+    auto serialized_bytes = insert_data.Serialize(storage::Remote);
+
+    auto log_path = fmt::format("{}/{}/{}/{}/{}",
+                                collection_id,
+                                partition_id,
+                                segment_id,
+                                varchar_field_id.get(),
+                                0);
+
+    auto cm_w = ChunkManagerWrapper(cm);
+    cm_w.Write(log_path, serialized_bytes.data(), serialized_bytes.size());
+
+    storage::FileManagerContext ctx(field_meta, index_meta, cm, fs);
+    std::vector<std::string> index_files;
+
+    std::cout << "\nBuilding ngram index..." << std::endl;
+    auto build_start = std::chrono::high_resolution_clock::now();
+    {
+        Config config;
+        config[milvus::index::INDEX_TYPE] = milvus::index::INVERTED_INDEX_TYPE;
+        config[INSERT_FILES_KEY] = std::vector<std::string>{log_path};
+
+        auto ngram_params = index::NgramParams{
+            .loading_index = false,
+            .min_gram = 2,
+            .max_gram = 3,
+        };
+        auto index =
+            std::make_shared<index::NgramInvertedIndex>(ctx, ngram_params);
+        index->Build(config);
+
+        auto create_index_result = index->Upload();
+        index_files = create_index_result->GetIndexFiles();
+    }
+    auto build_end = std::chrono::high_resolution_clock::now();
+    auto build_duration_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(build_end -
+                                                              build_start)
+            .count();
+    std::cout << "Index build time: " << build_duration_ms << " ms"
+              << std::endl;
+
+    // Load ngram index
+    Config config;
+    config[milvus::index::INDEX_FILES] = index_files;
+    config[milvus::LOAD_PRIORITY] = milvus::proto::common::LoadPriority::HIGH;
+
+    auto ngram_params = index::NgramParams{
+        .loading_index = true,
+        .min_gram = 2,
+        .max_gram = 3,
+    };
+    auto index = std::make_unique<index::NgramInvertedIndex>(ctx, ngram_params);
+    index->Load(milvus::tracer::TraceContext{}, config);
+
+    // Test configuration
+    const int warmup_runs = 3;
+    const int test_runs = 2;
+    std::vector<int> pre_filter_percentages = {20, 10, 5, 2};
+
+    // Search patterns: {literal, op_type}
+    std::vector<std::pair<std::string, proto::plan::OpType>> search_patterns = {
+        // InnerMatch - short patterns (6-10 chars, 4-8 ngram tokens)
+        {"history", proto::plan::OpType::InnerMatch},
+        {"national", proto::plan::OpType::InnerMatch},
+        {"football", proto::plan::OpType::InnerMatch},
+        // InnerMatch - long patterns (10+ chars, 8+ ngram tokens)
+        {"as well as", proto::plan::OpType::InnerMatch},
+        {"part of the", proto::plan::OpType::InnerMatch},
+        {"was born in", proto::plan::OpType::InnerMatch},
+        {"is a species", proto::plan::OpType::InnerMatch},
+        {"was a member", proto::plan::OpType::InnerMatch},
+        {"world war ii", proto::plan::OpType::InnerMatch},
+        {"best known for", proto::plan::OpType::InnerMatch},
+        {"to the north", proto::plan::OpType::InnerMatch},
+        {"is a municipality", proto::plan::OpType::InnerMatch},
+        {"is an unincorporated", proto::plan::OpType::InnerMatch},
+        {"located within county", proto::plan::OpType::InnerMatch},
+        {"member national football league professional team",
+         proto::plan::OpType::InnerMatch},
+        {"according United States Census Bureau population approximately "
+         "thousand residents living within boundaries",
+         proto::plan::OpType::InnerMatch},
+
+        // Match patterns - short literals (6-10 chars each)
+        {"%national%american%", proto::plan::OpType::Match},
+        {"%history%located%", proto::plan::OpType::Match},
+        {"%county%school%", proto::plan::OpType::Match},
+        // Match patterns - long literals (10+ chars each)
+        {"%as well as%part of the%", proto::plan::OpType::Match},
+        {"%the following%the united states%", proto::plan::OpType::Match},
+        {"%was born in%the united states%", proto::plan::OpType::Match},
+        {"%the following%as the first%", proto::plan::OpType::Match},
+        {"%was founded%in the united%", proto::plan::OpType::Match},
+        {"%is located in%the united states%", proto::plan::OpType::Match},
+        {"%national football%the united states%", proto::plan::OpType::Match},
+        {"%professional football%was a member%", proto::plan::OpType::Match},
+        {"%championship in%professional football%", proto::plan::OpType::Match},
+        {"%municipality in%the united states%", proto::plan::OpType::Match},
+        {"%located in%county%state%", proto::plan::OpType::Match},
+        {"%member%national%football%league%professional%",
+         proto::plan::OpType::Match},
+        {"%according%United%States%Census%Bureau%population%approximately%"
+         "thousand%residents%",
+         proto::plan::OpType::Match},
+    };
+
+    // Helper lambda to create SegmentExpr
+    auto create_segment_expr = [&]() {
+        return exec::SegmentExpr(std::move(std::vector<exec::ExprPtr>{}),
+                                 "SegmentExpr",
+                                 nullptr,
+                                 segment.get(),
+                                 varchar_field_id,
+                                 {},
+                                 DataType::VARCHAR,
+                                 nb,
+                                 8192,
+                                 0);
+    };
+
+    // Helper lambda to create pre_filter bitmap
+    auto create_pre_filter = [&](int selectivity_pct) {
+        TargetBitmap pre_filter(nb, false);
+        std::mt19937 pre_rng(123 + selectivity_pct);
+        std::uniform_int_distribution<int> pre_dist(0, 99);
+        for (size_t i = 0; i < nb; i++) {
+            if (pre_dist(pre_rng) < selectivity_pct) {
+                pre_filter[i] = true;
+            }
+        }
+        return pre_filter;
+    };
+
+    // Helper to convert OpType to string
+    auto op_type_to_string = [](proto::plan::OpType op) -> std::string {
+        switch (op) {
+            case proto::plan::OpType::InnerMatch:
+                return "InnerMatch";
+            case proto::plan::OpType::Match:
+                return "Match";
+            default:
+                return "Unknown";
+        }
+    };
+
+    // Structure to store test results
+    struct TestResult {
+        std::string pattern;
+        std::string op_type;
+        int pre_filter_pct;
+        double selectivity;
+        double avg_ms;
+        double speedup;
+    };
+    std::vector<TestResult> results;
+
+    std::cout << "\n=== Wiki Data Pre-filter Optimization Performance Test ==="
+              << std::endl;
+    std::cout << "Configuration:" << std::endl;
+    std::cout << "  - Total rows: " << nb << std::endl;
+    std::cout << "  - Avg text length: " << avg_length << " bytes" << std::endl;
+    std::cout << "  - Warmup runs: " << warmup_runs << std::endl;
+    std::cout << "  - Test runs: " << test_runs << std::endl;
+
+    // Warmup runs
+    std::cout << "\nWarming up..." << std::endl;
+    for (int w = 0; w < warmup_runs; w++) {
+        auto seg_expr = create_segment_expr();
+        index->ExecuteQuery(search_patterns[0].first,
+                            search_patterns[0].second,
+                            &seg_expr,
+                            nullptr);
+    }
+    std::cout << "Warmup complete.\n" << std::endl;
+
+    // Test each pattern with each pre_filter selectivity
+    for (const auto& [pattern, op_type] : search_patterns) {
+        std::string op_str = op_type_to_string(op_type);
+
+        // First, measure baseline (no pre_filter)
+        std::cout << "\n============ Pattern: \"" << pattern << "\" (" << op_str
+                  << "), Pre-filter: 100% (baseline) ============" << std::endl;
+        double baseline_total_ms = 0;
+        size_t baseline_count = 0;
+        for (int r = 0; r < test_runs; r++) {
+            auto seg_expr = create_segment_expr();
+            auto start = std::chrono::high_resolution_clock::now();
+            auto result =
+                index->ExecuteQuery(pattern, op_type, &seg_expr, nullptr);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration_ms =
+                std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                      start)
+                    .count() /
+                1000.0;
+            baseline_total_ms += duration_ms;
+            if (r == 0) {
+                ASSERT_TRUE(result.has_value());
+                baseline_count = result->count();
+            }
+        }
+        double baseline_avg_ms = baseline_total_ms / test_runs;
+        double baseline_selectivity = 100.0 * baseline_count / nb;
+
+        results.push_back(
+            {pattern, op_str, 100, baseline_selectivity, baseline_avg_ms, 1.0});
+
+        // Test with different pre_filter selectivities
+        for (int pct : pre_filter_percentages) {
+            std::cout << "\n============ Pattern: \"" << pattern << "\" ("
+                      << op_str << "), Pre-filter: " << pct
+                      << "% ============" << std::endl;
+            auto pre_filter = create_pre_filter(pct);
+
+            double total_ms = 0;
+            size_t result_count = 0;
+            for (int r = 0; r < test_runs; r++) {
+                auto seg_expr = create_segment_expr();
+                auto start = std::chrono::high_resolution_clock::now();
+                auto result = index->ExecuteQuery(
+                    pattern, op_type, &seg_expr, &pre_filter);
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration_ms =
+                    std::chrono::duration_cast<std::chrono::microseconds>(end -
+                                                                          start)
+                        .count() /
+                    1000.0;
+                total_ms += duration_ms;
+                if (r == 0) {
+                    ASSERT_TRUE(result.has_value());
+                    result_count = result->count();
+                }
+            }
+            double avg_ms = total_ms / test_runs;
+            double speedup = avg_ms > 0 ? baseline_avg_ms / avg_ms : 0;
+            double selectivity = 100.0 * result_count / nb;
+
+            results.push_back(
+                {pattern, op_str, pct, selectivity, avg_ms, speedup});
+        }
+    }
+
+    // Print all results
+    std::cout << "\n\n";
+    std::cout << "============================================================="
+                 "=====================================\n";
+    std::cout << "                                        FINAL RESULTS        "
+                 "                                    \n";
+    std::cout << "============================================================="
+                 "=====================================\n";
+    std::cout << std::setw(25) << "Pattern" << std::setw(12) << "OpType"
+              << std::setw(16) << "PF Selectivity" << std::setw(18)
+              << "Like Selectivity" << std::setw(12) << "Avg (ms)"
+              << std::setw(12) << "Speedup\n";
+    std::cout << std::string(95, '-') << "\n";
+
+    std::string last_pattern = "";
+    for (const auto& r : results) {
+        if (!last_pattern.empty() && last_pattern != r.pattern) {
+            std::cout << std::string(95, '-') << "\n";
+        }
+        last_pattern = r.pattern;
+
+        std::cout << std::setw(25) << r.pattern << std::setw(12) << r.op_type
+                  << std::setw(16) << std::to_string(r.pre_filter_pct) + "%"
+                  << std::setw(17) << std::fixed << std::setprecision(2)
+                  << r.selectivity << "%" << std::setw(12) << std::fixed
+                  << std::setprecision(2) << r.avg_ms << std::setw(12)
+                  << std::fixed << std::setprecision(2) << r.speedup << "x\n";
+    }
+    std::cout << std::string(95, '-') << std::endl;
+}
+
+TEST(NgramIndex, TestWikiDataPerformance_800bytes) {
+    RunWikiDataPerformanceTest(800);
+}
+
+TEST(NgramIndex, TestWikiDataPerformance_100bytes) {
+    RunWikiDataPerformanceTest(100);
+}
+
+TEST(NgramIndex, TestWikiDataPerformance_50bytes) {
+    RunWikiDataPerformanceTest(50);
 }

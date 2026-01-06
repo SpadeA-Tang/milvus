@@ -364,22 +364,24 @@ NgramInvertedIndex::ExecuteQueryWithPredicate(const std::string& literal,
                          .count();
 
     // Debug output
-    double phase1_filter_rate =
-        total_count > 0 ? 100.0 * (total_count - ngram_hit_count) / total_count
-                        : 0;
-    double phase2_filter_rate =
-        ngram_hit_count > 0
-            ? 100.0 * (ngram_hit_count - final_result_count) / ngram_hit_count
+    double phase1_hit_rate =
+        total_count > 0 ? 100.0 * ngram_hit_count / total_count : 0;
+    double prefilter_hit_rate =
+        ngram_hit_count > 0 ? 100.0 * after_pre_filter_count / ngram_hit_count
+                            : 0;
+    double phase2_hit_rate =
+        after_pre_filter_count > 0
+            ? 100.0 * final_result_count / after_pre_filter_count
             : 0;
     std::cout << "debug: phase1=" << phase1_us / 1000.0 << "ms"
               << ", phase2=" << phase2_us / 1000.0 << "ms"
               << ", total=" << total_count << ", phase1_hit=" << ngram_hit_count
               << ", after_prefilter=" << after_pre_filter_count
               << ", final=" << final_result_count
-              << ", phase1_filter_rate=" << std::fixed << std::setprecision(2)
-              << phase1_filter_rate << "%"
-              << ", phase2_filter_rate=" << phase2_filter_rate << "%"
-              << std::endl;
+              << ", phase1_hit_rate=" << std::fixed << std::setprecision(2)
+              << phase1_hit_rate << "%"
+              << ", prefilter_hit_rate=" << prefilter_hit_rate << "%"
+              << ", phase2_hit_rate=" << phase2_hit_rate << "%" << std::endl;
 
     if (auto root_span = tracer::GetRootSpan()) {
         root_span->SetAttribute("need_post_filter", need_post_filter);
@@ -435,6 +437,9 @@ NgramInvertedIndex::MatchQuery(const std::string& literal,
         root_span->SetAttribute("match_query_min_gram", min_gram_);
         root_span->SetAttribute("match_query_max_gram", max_gram_);
     }
+
+    auto phase1_start = std::chrono::high_resolution_clock::now();
+
     TargetBitmap bitset(static_cast<size_t>(Count()), true);
     auto literals = split_by_wildcard(literal);
     for (const auto& l : literals) {
@@ -446,6 +451,12 @@ NgramInvertedIndex::MatchQuery(const std::string& literal,
         bitset &= tmp_bitset;
     }
 
+    auto phase1_end = std::chrono::high_resolution_clock::now();
+    auto phase1_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                         phase1_end - phase1_start)
+                         .count();
+
+    auto total_count = bitset.size();
     auto ngram_hit_count = bitset.count();
 
     if (pre_filter != nullptr && !pre_filter->empty()) {
@@ -453,6 +464,8 @@ NgramInvertedIndex::MatchQuery(const std::string& literal,
     }
 
     auto after_pre_filter_count = bitset.count();
+
+    auto phase2_start = std::chrono::high_resolution_clock::now();
 
     TargetBitmapView res(bitset);
 
@@ -492,7 +505,32 @@ NgramInvertedIndex::MatchQuery(const std::string& literal,
             execute_batch, res);
     }
 
+    auto phase2_end = std::chrono::high_resolution_clock::now();
+    auto phase2_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                         phase2_end - phase2_start)
+                         .count();
+
     auto final_result_count = bitset.count();
+
+    // Debug output
+    double phase1_hit_rate =
+        total_count > 0 ? 100.0 * ngram_hit_count / total_count : 0;
+    double prefilter_hit_rate =
+        ngram_hit_count > 0 ? 100.0 * after_pre_filter_count / ngram_hit_count
+                            : 0;
+    double phase2_hit_rate =
+        after_pre_filter_count > 0
+            ? 100.0 * final_result_count / after_pre_filter_count
+            : 0;
+    std::cout << "debug(Match): phase1=" << phase1_us / 1000.0 << "ms"
+              << ", phase2=" << phase2_us / 1000.0 << "ms"
+              << ", total=" << total_count << ", phase1_hit=" << ngram_hit_count
+              << ", after_prefilter=" << after_pre_filter_count
+              << ", final=" << final_result_count
+              << ", phase1_hit_rate=" << std::fixed << std::setprecision(2)
+              << phase1_hit_rate << "%"
+              << ", prefilter_hit_rate=" << prefilter_hit_rate << "%"
+              << ", phase2_hit_rate=" << phase2_hit_rate << "%" << std::endl;
 
     if (auto root_span = tracer::GetRootSpan()) {
         root_span->SetAttribute("match_ngram_hit_count",
