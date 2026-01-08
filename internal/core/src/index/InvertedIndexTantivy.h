@@ -26,6 +26,7 @@
 namespace milvus::index {
 
 const std::string INDEX_NULL_OFFSET_FILE_NAME = "index_null_offset";
+const std::string NGRAM_AVG_ROW_SIZE_FILE_NAME = "ngram_avg_row_size";
 
 inline TantivyDataType
 get_tantivy_data_type(proto::schema::DataType data_type) {

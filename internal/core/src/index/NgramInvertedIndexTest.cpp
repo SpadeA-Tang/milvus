@@ -1455,7 +1455,7 @@ TEST(NgramIndex, TestPreFilterOptimizationPerformance) {
     // Test configuration
     const int warmup_runs = 3;
     const int test_runs = 2;
-    std::vector<int> pre_filter_percentages = {75, 50, 25, 10};
+    std::vector<int> pre_filter_percentages = {50, 20, 10, 5, 2};
 
     // Helper lambda to create SegmentExpr
     auto create_segment_expr = [&]() {
@@ -1612,14 +1612,6 @@ TEST(NgramIndex, TestPreFilterOptimizationPerformance) {
                   << std::fixed << std::setprecision(2) << r.speedup << "x\n";
     }
     std::cout << std::string(68, '-') << std::endl;
-}
-
-// Forward declaration
-void
-RunWikiDataPerformanceTest(size_t max_text_length);
-
-TEST(NgramIndex, TestWikiDataPerformance) {
-    RunWikiDataPerformanceTest(0);  // 0 means no truncation (full text)
 }
 
 // Helper function to truncate string at valid UTF-8 boundary
@@ -1809,50 +1801,74 @@ RunWikiDataPerformanceTest(size_t max_text_length) {
     std::vector<int> pre_filter_percentages = {20, 10, 5, 2};
 
     // Search patterns: {literal, op_type}
+    // All patterns extracted from wiki-jsons first 50 bytes
+    // All Match pattern literals are >= 6 chars
     std::vector<std::pair<std::string, proto::plan::OpType>> search_patterns = {
-        // InnerMatch - short patterns (6-10 chars, 4-8 ngram tokens)
-        {"history", proto::plan::OpType::InnerMatch},
-        {"national", proto::plan::OpType::InnerMatch},
-        {"football", proto::plan::OpType::InnerMatch},
-        // InnerMatch - long patterns (10+ chars, 8+ ngram tokens)
-        {"as well as", proto::plan::OpType::InnerMatch},
-        {"part of the", proto::plan::OpType::InnerMatch},
-        {"was born in", proto::plan::OpType::InnerMatch},
-        {"is a species", proto::plan::OpType::InnerMatch},
-        {"was a member", proto::plan::OpType::InnerMatch},
-        {"world war ii", proto::plan::OpType::InnerMatch},
-        {"best known for", proto::plan::OpType::InnerMatch},
-        {"to the north", proto::plan::OpType::InnerMatch},
-        {"is a municipality", proto::plan::OpType::InnerMatch},
-        {"is an unincorporated", proto::plan::OpType::InnerMatch},
-        {"located within county", proto::plan::OpType::InnerMatch},
-        {"member national football league professional team",
-         proto::plan::OpType::InnerMatch},
-        {"according United States Census Bureau population approximately "
-         "thousand residents living within boundaries",
-         proto::plan::OpType::InnerMatch},
+        // ============ InnerMatch - short patterns (6-10 chars) ============
+        {"species", proto::plan::OpType::InnerMatch},   // 4.54%, 7 chars
+        {"american", proto::plan::OpType::InnerMatch},  // 3.84%, 8 chars
+        {"village", proto::plan::OpType::InnerMatch},   // 2.10%, 7 chars
 
-        // Match patterns - short literals (6-10 chars each)
-        {"%national%american%", proto::plan::OpType::Match},
-        {"%history%located%", proto::plan::OpType::Match},
-        {"%county%school%", proto::plan::OpType::Match},
-        // Match patterns - long literals (10+ chars each)
-        {"%as well as%part of the%", proto::plan::OpType::Match},
-        {"%the following%the united states%", proto::plan::OpType::Match},
-        {"%was born in%the united states%", proto::plan::OpType::Match},
-        {"%the following%as the first%", proto::plan::OpType::Match},
-        {"%was founded%in the united%", proto::plan::OpType::Match},
-        {"%is located in%the united states%", proto::plan::OpType::Match},
-        {"%national football%the united states%", proto::plan::OpType::Match},
-        {"%professional football%was a member%", proto::plan::OpType::Match},
-        {"%championship in%professional football%", proto::plan::OpType::Match},
-        {"%municipality in%the united states%", proto::plan::OpType::Match},
-        {"%located in%county%state%", proto::plan::OpType::Match},
-        {"%member%national%football%league%professional%",
-         proto::plan::OpType::Match},
-        {"%according%United%States%Census%Bureau%population%approximately%"
-         "thousand%residents%",
-         proto::plan::OpType::Match},
+        // ============ InnerMatch - medium patterns (11-20 chars) ============
+        {"is a species", proto::plan::OpType::InnerMatch},   // 4.24%, 12 chars
+        {"a species of", proto::plan::OpType::InnerMatch},   // 4.22%, 12 chars
+        {"may refer to", proto::plan::OpType::InnerMatch},   // 3.30%, 12 chars
+        {"a village in", proto::plan::OpType::InnerMatch},   // 1.02%, 12 chars
+        {"also known as", proto::plan::OpType::InnerMatch},  // 1.17%, 13 chars
+        {"is a genus of", proto::plan::OpType::InnerMatch},  // 0.93%, 13 chars
+        {"in the family", proto::plan::OpType::InnerMatch},  // 0.90%, 13 chars
+        {"railway station",
+         proto::plan::OpType::InnerMatch},                    // 0.96%, 15 chars
+        {"rural locality", proto::plan::OpType::InnerMatch},  // 0.82%, 14 chars
+        {"notable people", proto::plan::OpType::InnerMatch},  // 0.61%, 14 chars
+
+        // ============ InnerMatch - long patterns (21-35 chars) ============
+        {"is a species of plant",
+         proto::plan::OpType::InnerMatch},  // 2.03%, 21 chars
+        {"a species of plant in",
+         proto::plan::OpType::InnerMatch},  // 1.98%, 21 chars
+        {"is a species of beetle",
+         proto::plan::OpType::InnerMatch},  // 1.09%, 22 chars
+        {"species of plant in the",
+         proto::plan::OpType::InnerMatch},  // 1.56%, 23 chars
+        {"species of beetle in the",
+         proto::plan::OpType::InnerMatch},  // 0.68%, 24 chars
+        {"unincorporated community",
+         proto::plan::OpType::InnerMatch},  // 0.40%, 24 chars
+        {"a species of beetle in the",
+         proto::plan::OpType::InnerMatch},  // 0.68%, 26 chars
+        {"is an unincorporated community",
+         proto::plan::OpType::InnerMatch},  // 0.38%, 30 chars
+
+        // ============ InnerMatch - extra long patterns (36-50 chars) ============
+        {"is a species of plant in the family",
+         proto::plan::OpType::InnerMatch},  // 0.12%, 35 chars
+        {"is a species of beetle in the family",
+         proto::plan::OpType::InnerMatch},  // 0.04%, 36 chars
+
+        // ============ Match - short patterns (each literal >= 6 chars) ============
+        {"%species%family%", proto::plan::OpType::Match},  // 0.18%, 16 chars
+        {"%species%beetle%", proto::plan::OpType::Match},  // 1.16%, 16 chars
+        {"%surname%people%", proto::plan::OpType::Match},  // 0.61%, 16 chars
+
+        // ============ Match - medium patterns (each literal >= 6 chars) ============
+        {"%railway%station%", proto::plan::OpType::Match},   // 0.96%, 17 chars
+        {"%village%district%", proto::plan::OpType::Match},  // 0.22%, 18 chars
+        {"%station%located%", proto::plan::OpType::Match},   // 0.45%, 17 chars
+        {"%village%located%", proto::plan::OpType::Match},   // 0.13%, 17 chars
+        {"%football%season%", proto::plan::OpType::Match},   // 0.04%, 17 chars
+
+        // ============ Match - long patterns (each literal >= 6 chars) ============
+        {"%surname%notable%people%",
+         proto::plan::OpType::Match},  // 0.56%, 24 chars
+        {"%railway%station%located%",
+         proto::plan::OpType::Match},  // 0.44%, 25 chars
+        {"%unincorporated%community%",
+         proto::plan::OpType::Match},  // 0.40%, 26 chars
+        {"%species%beetle%family%",
+         proto::plan::OpType::Match},  // 0.04%, 23 chars
+        {"%village%located%district%",
+         proto::plan::OpType::Match},  // 0.03%, 26 chars
     };
 
     // Helper lambda to create SegmentExpr
@@ -2022,8 +2038,20 @@ RunWikiDataPerformanceTest(size_t max_text_length) {
     std::cout << std::string(95, '-') << std::endl;
 }
 
-TEST(NgramIndex, TestWikiDataPerformance_800bytes) {
-    RunWikiDataPerformanceTest(800);
+TEST(NgramIndex, TestWikiDataPerformance) {
+    RunWikiDataPerformanceTest(0);  // 0 means no truncation (full text)
+}
+
+TEST(NgramIndex, TestWikiDataPerformance_2000bytes) {
+    RunWikiDataPerformanceTest(3500);
+}
+
+TEST(NgramIndex, TestWikiDataPerformance_1000bytes) {
+    RunWikiDataPerformanceTest(1900);
+}
+
+TEST(NgramIndex, TestWikiDataPerformance_500bytes) {
+    RunWikiDataPerformanceTest(600);
 }
 
 TEST(NgramIndex, TestWikiDataPerformance_100bytes) {

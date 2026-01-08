@@ -551,3 +551,37 @@ pub extern "C" fn tantivy_ngram_match_query(
             .into()
     }
 }
+
+#[no_mangle]
+pub extern "C" fn tantivy_ngram_tokenize(
+    ptr: *mut c_void,
+    literals: *const *const c_char,
+    literals_len: usize,
+    min_gram: usize,
+    max_gram: usize,
+) -> RustResult {
+    let real = ptr as *mut IndexReaderWrapper;
+    let literals_slice = unsafe { slice::from_raw_parts(literals, literals_len) };
+
+    let mut literal_strs: Vec<&str> = Vec::with_capacity(literals_len);
+    for &lit in literals_slice {
+        let s = unsafe { CStr::from_ptr(lit).to_str() };
+        match s {
+            Ok(str) => literal_strs.push(str),
+            Err(e) => return RustResult::from_error(e.to_string()),
+        }
+    }
+
+    unsafe { (*real).ngram_tokenize(&literal_strs, min_gram, max_gram).into() }
+}
+
+#[no_mangle]
+pub extern "C" fn tantivy_ngram_term_posting_list(
+    ptr: *mut c_void,
+    term: *const c_char,
+    bitset: *mut c_void,
+) -> RustResult {
+    let real = ptr as *mut IndexReaderWrapper;
+    let term = cstr_to_str!(term);
+    unsafe { (*real).ngram_term_posting_list(term, bitset).into() }
+}

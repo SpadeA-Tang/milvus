@@ -5,7 +5,9 @@ use std::sync::Arc;
 use libc::c_char;
 use tantivy::fastfield::FastValue;
 use tantivy::query::BooleanQuery;
-use tantivy::query::{ExistsQuery, Query, RangeQuery, RegexQuery, TermQuery, TermSetQuery};
+use tantivy::query::{
+    AllQuery, ExistsQuery, Query, RangeQuery, RegexQuery, TermQuery, TermSetQuery,
+};
 use tantivy::schema::{Field, IndexRecordOption};
 use tantivy::tokenizer::{NgramTokenizer, TokenStream, Tokenizer};
 use tantivy::{Directory, HasLen, Index, IndexReader, ReloadPolicy, Term};
@@ -575,30 +577,99 @@ impl IndexReaderWrapper {
             return self.term_query_keyword(literal, bitset);
         }
 
-        // Parse 'literal' by 'max_gram'-gram to get all ngram tokens
-        let mut terms: Vec<Term> = vec![];
+        let mut terms = vec![];
+        // So, str length is larger than 'max_gram' parse 'str' by 'max_gram'-gram and search all of them with boolean intersection
+        // nivers
+        let mut term_queries: Vec<Box<dyn Query>> = vec![];
         let mut tokenizer = NgramTokenizer::new(max_gram, max_gram, false).unwrap();
         let mut token_stream = tokenizer.token_stream(literal);
         token_stream.process(&mut |token| {
             let term = Term::from_field_text(self.field, &token.text);
-            terms.push(term);
+            term_queries.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+            terms.push(token.text.clone());
         });
+        let query = BooleanQuery::intersection(term_queries);
+        self.search(&query, bitset)
+    }
 
-        // Use DirectAndBitsetCollector with max_terms=2 for 2-term optimization
-        // This selects only the 2 rarest terms (by doc_freq) for intersection
-        let collector = DirectAndBitsetCollector {
-            bitset_wrapper: BitsetWrapper::new(bitset, self.set_bitset),
-            terms,
-            max_terms: Some(2),
-        };
+    /// Tokenize literals into ngram terms and return them sorted by doc_freq (ascending).
+    ///
+    /// For Match type queries like `%xxx%yyy%`, literals = ["xxx", "yyy"].
+    /// For InnerMatch type queries like `%xxx%`, literals = ["xxx"].
+    ///
+    /// Returns: Vec of term strings sorted by doc_freq ascending (rarest first).
+    pub fn ngram_tokenize(
+        &self,
+        literals: &[&str],
+        min_gram: usize,
+        max_gram: usize,
+    ) -> Result<Vec<String>> {
+        // Collect (term_text, Term) pairs to track text alongside terms
+        let mut all_term_pairs: Vec<(String, Term)> = vec![];
+        let mut tokenizer = NgramTokenizer::new(max_gram, max_gram, false).unwrap();
 
-        // We still need a query for the searcher, but the collector will
-        // bypass it and directly read posting lists for intersection.
-        let query = BooleanQuery::new_multiterms_query(vec![]);
+        for literal in literals {
+            assert!(
+                literal.chars().count() >= min_gram,
+                "literal '{}' must be >= min_gram {}",
+                literal,
+                min_gram
+            );
+
+            if literal.chars().count() <= max_gram {
+                all_term_pairs.push((
+                    literal.to_string(),
+                    Term::from_field_text(self.field, literal),
+                ));
+            } else {
+                let mut token_stream = tokenizer.token_stream(literal);
+                token_stream.process(&mut |token| {
+                    all_term_pairs.push((
+                        token.text.clone(),
+                        Term::from_field_text(self.field, &token.text),
+                    ));
+                });
+            }
+        }
+
+        if all_term_pairs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Get doc_freq for each term and sort
         let searcher = self.reader.searcher();
-        searcher
-            .search(&query, &collector)
-            .map_err(TantivyBindingError::TantivyError)
+        let mut term_with_freq: Vec<(String, u64)> = Vec::with_capacity(all_term_pairs.len());
+
+        for (text, term) in all_term_pairs.iter() {
+            let mut total_doc_freq: u64 = 0;
+            for segment_reader in searcher.segment_readers() {
+                let inv_index = segment_reader.inverted_index(term.field())?;
+                total_doc_freq += inv_index.doc_freq(term)? as u64;
+            }
+            term_with_freq.push((text.clone(), total_doc_freq));
+        }
+
+        // Sort by doc_freq ascending (rarest first)
+        term_with_freq.sort_by_key(|(_, freq)| *freq);
+
+        // Remove duplicates
+        let mut seen = std::collections::HashSet::new();
+        Ok(term_with_freq
+            .into_iter()
+            .filter_map(|(text, _)| {
+                if seen.insert(text.clone()) {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+
+    /// Get the posting list for a single ngram term.
+    /// Sets bits in the bitset for all documents containing the term.
+    pub fn ngram_term_posting_list(&self, term_str: &str, bitset: *mut c_void) -> Result<()> {
+        self.term_query_keyword(term_str, bitset)
     }
 }
 

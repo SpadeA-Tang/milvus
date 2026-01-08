@@ -25,6 +25,22 @@ const JsonCastType JSON_CAST_TYPE = JsonCastType::FromString("VARCHAR");
 const JsonCastFunction JSON_CAST_FUNCTION =
     JsonCastFunction::FromString("unknown");
 
+constexpr size_t kLargeRowThreshold = 5000;
+constexpr size_t kMediumRowThreshold = 1000;
+constexpr size_t kSmallRowThreshold = 100;
+
+constexpr double kPreFilterRatioThreshold = 0.20;  // 20%
+// Default avg_row_size for compatibility (older indexes without metadata)
+constexpr size_t kDefaultAvgRowSize = kLargeRowThreshold;
+// Iterative strategy parameters
+constexpr size_t kMaxIterations = 5;
+constexpr double kBreakThreshold = 0.002;  // 0.2%
+
+constexpr size_t kMaxIterationsForMediumRow = 3;
+
+constexpr double kBreakThresholdForSmallRow = 0.01;  // 1%
+constexpr size_t kMaxIterationsForSmallRow = 2;
+
 // for string/varchar type
 NgramInvertedIndex::NgramInvertedIndex(const storage::FileManagerContext& ctx,
                                        const NgramParams& params)
@@ -70,6 +86,27 @@ NgramInvertedIndex::BuildWithFieldData(const std::vector<FieldDataPtr>& datas) {
     if (schema_.data_type() == proto::schema::DataType::JSON) {
         BuildWithJsonFieldData(datas);
     } else {
+        // Calculate avg_row_size for String/VarChar types
+        size_t total_bytes = 0;
+        size_t total_rows = 0;
+        for (const auto& data : datas) {
+            auto n = data->get_num_rows();
+            total_rows += n;
+            for (size_t i = 0; i < n; i++) {
+                if (schema_.nullable() && !data->is_valid(i)) {
+                    continue;
+                }
+                auto* str = static_cast<const std::string*>(data->RawValue(i));
+                if (str) {
+                    total_bytes += str->size();
+                }
+            }
+        }
+        avg_row_size_ = total_rows > 0 ? total_bytes / total_rows : 0;
+        LOG_INFO("Ngram index avg_row_size: {} bytes", avg_row_size_);
+
+        std::cout << "debug: avg_row_size=" << avg_row_size_ << std::endl;
+
         InvertedIndexTantivy<std::string>::BuildWithFieldData(datas);
     }
 }
@@ -85,6 +122,11 @@ NgramInvertedIndex::BuildWithJsonFieldData(
              nested_path_);
 
     index_build_begin_ = std::chrono::system_clock::now();
+
+    // Track total bytes and rows for avg_row_size calculation
+    size_t total_bytes = 0;
+    size_t total_rows = 0;
+
     ProcessJsonFieldData<std::string>(
         field_datas,
         this->schema_,
@@ -92,14 +134,23 @@ NgramInvertedIndex::BuildWithJsonFieldData(
         JSON_CAST_TYPE,
         JSON_CAST_FUNCTION,
         // add data
-        [this](const std::string* data, int64_t size, int64_t offset) {
+        [this, &total_bytes, &total_rows](
+            const std::string* data, int64_t size, int64_t offset) {
             this->wrapper_->template add_array_data<std::string>(
                 data, size, offset);
+            // Track row size
+            total_rows++;
+            if (data && size > 0) {
+                total_bytes += data->size();
+            }
         },
         // handle null
-        [this](int64_t offset) { this->null_offset_.push_back(offset); },
+        [this, &total_rows](int64_t offset) {
+            this->null_offset_.push_back(offset);
+            total_rows++;
+        },
         // handle non exist
-        [this](int64_t offset) {},
+        [&total_rows](int64_t offset) { total_rows++; },
         // handle error
         [this](const Json& json,
                const std::string& nested_path,
@@ -107,7 +158,24 @@ NgramInvertedIndex::BuildWithJsonFieldData(
             this->error_recorder_.Record(json, nested_path, error);
         });
 
+    avg_row_size_ = total_rows > 0 ? total_bytes / total_rows : 0;
+    LOG_INFO("Ngram index (JSON) avg_row_size: {} bytes", avg_row_size_);
+
     error_recorder_.PrintErrStats();
+}
+
+BinarySet
+NgramInvertedIndex::Serialize(const Config& config) {
+    auto res_set = InvertedIndexTantivy<std::string>::Serialize(config);
+
+    // Serialize avg_row_size
+    std::shared_ptr<uint8_t[]> avg_row_size_data(new uint8_t[sizeof(size_t)]);
+    memcpy(avg_row_size_data.get(), &avg_row_size_, sizeof(size_t));
+    res_set.Append(
+        NGRAM_AVG_ROW_SIZE_FILE_NAME, avg_row_size_data, sizeof(size_t));
+
+    milvus::Disassemble(res_set);
+    return res_set;
 }
 
 IndexStatsPtr
@@ -119,11 +187,71 @@ NgramInvertedIndex::Upload(const Config& config) {
             .count();
     LOG_INFO(
         "index build done for ngram index, data type {}, field id: {}, "
-        "duration: {}s",
+        "duration: {}s, avg_row_size: {} bytes",
         schema_.data_type(),
         field_id_,
-        index_build_duration);
+        index_build_duration,
+        avg_row_size_);
+
     return InvertedIndexTantivy<std::string>::Upload(config);
+}
+
+void
+NgramInvertedIndex::LoadIndexMetas(const std::vector<std::string>& index_files,
+                                   const Config& config) {
+    // Call parent to load null_offset
+    InvertedIndexTantivy<std::string>::LoadIndexMetas(index_files, config);
+
+    // Load avg_row_size
+    auto avg_row_size_it = std::find_if(
+        index_files.begin(), index_files.end(), [](const std::string& file) {
+            return file.find(NGRAM_AVG_ROW_SIZE_FILE_NAME) != std::string::npos;
+        });
+
+    if (avg_row_size_it != index_files.end()) {
+        auto load_priority =
+            GetValueFromConfig<milvus::proto::common::LoadPriority>(
+                config, milvus::LOAD_PRIORITY)
+                .value_or(milvus::proto::common::LoadPriority::HIGH);
+        std::vector<std::string> files = {*avg_row_size_it};
+        auto index_datas =
+            mem_file_manager_->LoadIndexToMemory(files, load_priority);
+        BinarySet binary_set;
+        AssembleIndexDatas(index_datas, binary_set);
+        auto avg_row_size_data =
+            binary_set.GetByName(NGRAM_AVG_ROW_SIZE_FILE_NAME);
+        if (avg_row_size_data != nullptr) {
+            memcpy(
+                &avg_row_size_, avg_row_size_data->data.get(), sizeof(size_t));
+            LOG_INFO("Loaded ngram index avg_row_size: {} bytes",
+                     avg_row_size_);
+        } else {
+            avg_row_size_ = kDefaultAvgRowSize;
+            LOG_INFO("avg_row_size data invalid, using default: {}",
+                     kDefaultAvgRowSize);
+        }
+    } else {
+        avg_row_size_ = kDefaultAvgRowSize;
+        LOG_INFO("No avg_row_size metadata found, using default: {}",
+                 kDefaultAvgRowSize);
+    }
+}
+
+void
+NgramInvertedIndex::RetainTantivyIndexFiles(
+    std::vector<std::string>& index_files) {
+    // Call parent to filter null_offset
+    InvertedIndexTantivy<std::string>::RetainTantivyIndexFiles(index_files);
+
+    // Also filter avg_row_size
+    index_files.erase(
+        std::remove_if(index_files.begin(),
+                       index_files.end(),
+                       [](const std::string& file) {
+                           return file.find(NGRAM_AVG_ROW_SIZE_FILE_NAME) !=
+                                  std::string::npos;
+                       }),
+        index_files.end());
 }
 
 void
@@ -133,45 +261,25 @@ NgramInvertedIndex::Load(milvus::tracer::TraceContext ctx,
         GetValueFromConfig<std::vector<std::string>>(config, INDEX_FILES);
     AssertInfo(index_files.has_value(),
                "index file paths is empty when load ngram index");
+    auto files_value = index_files.value();
+
+    LoadIndexMetas(files_value, config);
+    RetainTantivyIndexFiles(files_value);
 
     auto load_priority =
         GetValueFromConfig<milvus::proto::common::LoadPriority>(
             config, milvus::LOAD_PRIORITY)
             .value_or(milvus::proto::common::LoadPriority::HIGH);
-    auto files_value = index_files.value();
-    auto it = std::find_if(
-        files_value.begin(), files_value.end(), [](const std::string& file) {
-            constexpr std::string_view suffix{"/index_null_offset"};
-            return file.size() >= suffix.size() &&
-                   std::equal(suffix.rbegin(), suffix.rend(), file.rbegin());
-        });
-    if (it != files_value.end()) {
-        std::vector<std::string> file;
-        file.push_back(*it);
-        files_value.erase(it);
-        auto index_datas =
-            mem_file_manager_->LoadIndexToMemory(file, load_priority);
-        BinarySet binary_set;
-        AssembleIndexDatas(index_datas, binary_set);
-        // clear index_datas to free memory early
-        index_datas.clear();
-        auto index_valid_data = binary_set.GetByName("index_null_offset");
-        null_offset_.resize((size_t)index_valid_data->size / sizeof(size_t));
-        memcpy(null_offset_.data(),
-               index_valid_data->data.get(),
-               (size_t)index_valid_data->size);
-    }
-
     disk_file_manager_->CacheNgramIndexToDisk(files_value, load_priority);
     AssertInfo(
         tantivy_index_exist(path_.c_str()), "index not exist: {}", path_);
+
     auto load_in_mmap =
         GetValueFromConfig<bool>(config, ENABLE_MMAP).value_or(true);
     wrapper_ = std::make_shared<TantivyIndexWrapper>(
         path_.c_str(), load_in_mmap, milvus::index::SetBitsetSealed);
 
     if (!load_in_mmap) {
-        // the index is loaded in ram, so we can remove files in advance
         disk_file_manager_->RemoveNgramIndexFiles();
     }
 
@@ -314,6 +422,10 @@ handle_batch(const T* data,
     }
 }
 
+// Dynamic hit_rate threshold based on row_size
+// When hit_rate drops below this, we stop adding more terms and proceed to Phase 2
+static constexpr double DEFAULT_HIT_RATE_THRESHOLD = 0.01;  // 1%
+
 template <typename T, typename Predicate>
 std::optional<TargetBitmap>
 NgramInvertedIndex::ExecuteQueryWithPredicate(const std::string& literal,
@@ -323,22 +435,68 @@ NgramInvertedIndex::ExecuteQueryWithPredicate(const std::string& literal,
                                               const TargetBitmap* pre_filter) {
     auto total_count = static_cast<size_t>(Count());
 
-    // Phase 1: ngram index query
+    // Calculate pre_filter stats for strategy selection
+    size_t candidate_count = (pre_filter != nullptr && !pre_filter->empty())
+                                 ? pre_filter->count()
+                                 : total_count;
+    double pre_filter_ratio =
+        total_count > 0 ? 1.0 * candidate_count / total_count : 1.0;
+
+    // Phase 1: ngram index query with adaptive strategy
     auto phase1_start = std::chrono::high_resolution_clock::now();
-    TargetBitmap bitset{total_count};
-    wrapper_->ngram_match_query(literal, min_gram_, max_gram_, &bitset);
+    TargetBitmap bitset(total_count, true);
+    if (pre_filter != nullptr && !pre_filter->empty()) {
+        bitset &= *pre_filter;
+    }
+
+    // Strategy selection based on avg_row_size and pre_filter_ratio
+    std::string strategy_info;
+    if (avg_row_size_ >= kLargeRowThreshold ||
+        (avg_row_size_ >= kMediumRowThreshold &&
+         pre_filter_ratio > kPreFilterRatioThreshold)) {
+        TargetBitmap ngram_bitset{total_count};
+        wrapper_->ngram_match_query(
+            literal, min_gram_, max_gram_, &ngram_bitset);
+        bitset &= ngram_bitset;
+        strategy_info = "master";
+    } else {
+        std::vector<std::string> literals_vec = {literal};
+        auto sorted_terms =
+            wrapper_->ngram_tokenize(literals_vec, min_gram_, max_gram_);
+        AssertInfo(!sorted_terms.empty(),
+                   "ngram_tokenize should not return empty for valid literal");
+        size_t iterations = 0;
+
+        auto max_iterations = kMaxIterations;
+        if (avg_row_size_ < kSmallRowThreshold) {
+            max_iterations = kMaxIterationsForSmallRow;
+        } else if (avg_row_size_ < kMediumRowThreshold) {
+            max_iterations = kMaxIterationsForMediumRow;
+        }
+        for (size_t i = 0; i < std::min(sorted_terms.size(), max_iterations);
+             i++) {
+            TargetBitmap term_bitset{total_count};
+            wrapper_->ngram_term_posting_list(sorted_terms[i], &term_bitset);
+            bitset &= term_bitset;
+            iterations = i + 1;
+
+            double current_hit_rate =
+                total_count > 0 ? 1.0 * bitset.count() / total_count : 0;
+            if (current_hit_rate < kBreakThreshold) {
+                break;
+            }
+            if (avg_row_size_ < kSmallRowThreshold &&
+                current_hit_rate < kBreakThresholdForSmallRow) {
+                break;
+            }
+        }
+        strategy_info = "iterative(" + std::to_string(iterations) + ")";
+    }
+
     auto phase1_end = std::chrono::high_resolution_clock::now();
     auto phase1_us = std::chrono::duration_cast<std::chrono::microseconds>(
                          phase1_end - phase1_start)
                          .count();
-
-    auto ngram_hit_count = bitset.count();
-
-    // Optimization: apply pre_filter from previous expressions to reduce
-    // the number of rows that need post-filtering
-    if (pre_filter != nullptr && !pre_filter->empty()) {
-        bitset &= *pre_filter;
-    }
 
     auto after_pre_filter_count = bitset.count();
     auto final_result_count = after_pre_filter_count;
@@ -364,29 +522,26 @@ NgramInvertedIndex::ExecuteQueryWithPredicate(const std::string& literal,
                          .count();
 
     // Debug output
-    double phase1_hit_rate =
-        total_count > 0 ? 100.0 * ngram_hit_count / total_count : 0;
-    double prefilter_hit_rate =
-        ngram_hit_count > 0 ? 100.0 * after_pre_filter_count / ngram_hit_count
-                            : 0;
-    double phase2_hit_rate =
-        after_pre_filter_count > 0
-            ? 100.0 * final_result_count / after_pre_filter_count
-            : 0;
-    std::cout << "debug: phase1=" << phase1_us / 1000.0 << "ms"
+    size_t pre_filter_count = (pre_filter != nullptr && !pre_filter->empty())
+                                  ? pre_filter->count()
+                                  : total_count;
+    double pre_filter_hit_rate =
+        total_count > 0 ? 100.0 * pre_filter_count / total_count : 0;
+    double hit_rate_before_phase2 =
+        total_count > 0 ? 100.0 * after_pre_filter_count / total_count : 0;
+    double final_hit_rate =
+        total_count > 0 ? 100.0 * final_result_count / total_count : 0;
+    std::cout << "debug: strategy=" << strategy_info
+              << ", phase1=" << phase1_us / 1000.0 << "ms"
               << ", phase2=" << phase2_us / 1000.0 << "ms"
-              << ", total=" << total_count << ", phase1_hit=" << ngram_hit_count
-              << ", after_prefilter=" << after_pre_filter_count
-              << ", final=" << final_result_count
-              << ", phase1_hit_rate=" << std::fixed << std::setprecision(2)
-              << phase1_hit_rate << "%"
-              << ", prefilter_hit_rate=" << prefilter_hit_rate << "%"
-              << ", phase2_hit_rate=" << phase2_hit_rate << "%" << std::endl;
+              << ", total=" << total_count
+              << ", pre_filter_hit_rate=" << std::fixed << std::setprecision(3)
+              << pre_filter_hit_rate << "%"
+              << ", hit_rate_before_phase2=" << hit_rate_before_phase2 << "%"
+              << ", final_hit_rate=" << final_hit_rate << "%" << std::endl;
 
     if (auto root_span = tracer::GetRootSpan()) {
         root_span->SetAttribute("need_post_filter", need_post_filter);
-        root_span->SetAttribute("ngram_hit_count",
-                                static_cast<int>(ngram_hit_count));
         root_span->SetAttribute("after_pre_filter_count",
                                 static_cast<int>(after_pre_filter_count));
         root_span->SetAttribute("final_result_count",
@@ -438,30 +593,78 @@ NgramInvertedIndex::MatchQuery(const std::string& literal,
         root_span->SetAttribute("match_query_max_gram", max_gram_);
     }
 
-    auto phase1_start = std::chrono::high_resolution_clock::now();
+    auto total_count = static_cast<size_t>(Count());
 
-    TargetBitmap bitset(static_cast<size_t>(Count()), true);
+    // Calculate pre_filter stats for strategy selection
+    size_t candidate_count = (pre_filter != nullptr && !pre_filter->empty())
+                                 ? pre_filter->count()
+                                 : total_count;
+    double pre_filter_ratio =
+        total_count > 0 ? 1.0 * candidate_count / total_count : 1.0;
+
     auto literals = split_by_wildcard(literal);
     for (const auto& l : literals) {
         if (l.length() < min_gram_) {
             return std::nullopt;
         }
-        TargetBitmap tmp_bitset(static_cast<size_t>(Count()), false);
-        wrapper_->ngram_match_query(l, min_gram_, max_gram_, &tmp_bitset);
-        bitset &= tmp_bitset;
+    }
+
+    auto phase1_start = std::chrono::high_resolution_clock::now();
+    TargetBitmap bitset(total_count, true);
+    if (pre_filter != nullptr && !pre_filter->empty()) {
+        bitset &= *pre_filter;
+    }
+
+    // Strategy selection based on avg_row_size and pre_filter_ratio
+    std::string strategy_info;
+    if (avg_row_size_ >= kLargeRowThreshold ||
+        (avg_row_size_ >= kMediumRowThreshold &&
+         pre_filter_ratio > kPreFilterRatioThreshold)) {
+        for (const auto& l : literals) {
+            TargetBitmap tmp_bitset{total_count};
+            wrapper_->ngram_match_query(l, min_gram_, max_gram_, &tmp_bitset);
+            bitset &= tmp_bitset;
+        }
+        strategy_info = "master";
+    } else {
+        auto sorted_terms =
+            wrapper_->ngram_tokenize(literals, min_gram_, max_gram_);
+        AssertInfo(!sorted_terms.empty(),
+                   "ngram_tokenize returned empty sorted_terms for iterative "
+                   "strategy");
+
+        size_t iterations = 0;
+        auto max_iterations = kMaxIterations;
+        if (avg_row_size_ < kSmallRowThreshold) {
+            max_iterations = kMaxIterationsForSmallRow;
+        } else if (avg_row_size_ < kMediumRowThreshold) {
+            max_iterations = kMaxIterationsForMediumRow;
+        }
+        for (size_t i = 0; i < std::min(sorted_terms.size(), kMaxIterations);
+             i++) {
+            TargetBitmap term_bitset{total_count};
+            wrapper_->ngram_term_posting_list(sorted_terms[i], &term_bitset);
+            bitset &= term_bitset;
+            iterations = i + 1;
+
+            double current_hit_rate =
+                total_count > 0 ? 1.0 * bitset.count() / total_count : 0;
+
+            if (current_hit_rate < kBreakThreshold) {
+                break;
+            }
+            if (avg_row_size_ < kSmallRowThreshold &&
+                current_hit_rate < kBreakThresholdForSmallRow) {
+                break;
+            }
+        }
+        strategy_info = "iterative(" + std::to_string(iterations) + ")";
     }
 
     auto phase1_end = std::chrono::high_resolution_clock::now();
     auto phase1_us = std::chrono::duration_cast<std::chrono::microseconds>(
                          phase1_end - phase1_start)
                          .count();
-
-    auto total_count = bitset.size();
-    auto ngram_hit_count = bitset.count();
-
-    if (pre_filter != nullptr && !pre_filter->empty()) {
-        bitset &= *pre_filter;
-    }
 
     auto after_pre_filter_count = bitset.count();
 
@@ -513,28 +716,25 @@ NgramInvertedIndex::MatchQuery(const std::string& literal,
     auto final_result_count = bitset.count();
 
     // Debug output
-    double phase1_hit_rate =
-        total_count > 0 ? 100.0 * ngram_hit_count / total_count : 0;
-    double prefilter_hit_rate =
-        ngram_hit_count > 0 ? 100.0 * after_pre_filter_count / ngram_hit_count
-                            : 0;
-    double phase2_hit_rate =
-        after_pre_filter_count > 0
-            ? 100.0 * final_result_count / after_pre_filter_count
-            : 0;
-    std::cout << "debug(Match): phase1=" << phase1_us / 1000.0 << "ms"
+    size_t pre_filter_count = (pre_filter != nullptr && !pre_filter->empty())
+                                  ? pre_filter->count()
+                                  : total_count;
+    double pre_filter_hit_rate =
+        total_count > 0 ? 100.0 * pre_filter_count / total_count : 0;
+    double hit_rate_before_phase2 =
+        total_count > 0 ? 100.0 * after_pre_filter_count / total_count : 0;
+    double final_hit_rate =
+        total_count > 0 ? 100.0 * final_result_count / total_count : 0;
+    std::cout << "debug(Match): strategy=" << strategy_info
+              << ", phase1=" << phase1_us / 1000.0 << "ms"
               << ", phase2=" << phase2_us / 1000.0 << "ms"
-              << ", total=" << total_count << ", phase1_hit=" << ngram_hit_count
-              << ", after_prefilter=" << after_pre_filter_count
-              << ", final=" << final_result_count
-              << ", phase1_hit_rate=" << std::fixed << std::setprecision(2)
-              << phase1_hit_rate << "%"
-              << ", prefilter_hit_rate=" << prefilter_hit_rate << "%"
-              << ", phase2_hit_rate=" << phase2_hit_rate << "%" << std::endl;
+              << ", total=" << total_count
+              << ", pre_filter_hit_rate=" << std::fixed << std::setprecision(3)
+              << pre_filter_hit_rate << "%"
+              << ", hit_rate_before_phase2=" << hit_rate_before_phase2 << "%"
+              << ", final_hit_rate=" << final_hit_rate << "%" << std::endl;
 
     if (auto root_span = tracer::GetRootSpan()) {
-        root_span->SetAttribute("match_ngram_hit_count",
-                                static_cast<int>(ngram_hit_count));
         root_span->SetAttribute("match_after_pre_filter_count",
                                 static_cast<int>(after_pre_filter_count));
         root_span->SetAttribute("match_final_result_count",
