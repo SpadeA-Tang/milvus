@@ -21,6 +21,7 @@ class SegmentExpr;
 }  // namespace milvus::exec
 
 namespace milvus::index {
+
 class NgramInvertedIndex : public InvertedIndexTantivy<std::string> {
  public:
     // for string/varchar type
@@ -32,11 +33,21 @@ class NgramInvertedIndex : public InvertedIndexTantivy<std::string> {
                                 const NgramParams& params,
                                 const std::string& nested_path);
 
+    BinarySet
+    Serialize(const Config& config) override;
+
     IndexStatsPtr
     Upload(const Config& config = {}) override;
 
     void
     Load(milvus::tracer::TraceContext ctx, const Config& config) override;
+
+    void
+    LoadIndexMetas(const std::vector<std::string>& index_files,
+                   const Config& config) override;
+
+    void
+    RetainTantivyIndexFiles(std::vector<std::string>& index_files) override;
 
     void
     BuildWithFieldData(const std::vector<FieldDataPtr>& datas) override;
@@ -49,6 +60,32 @@ class NgramInvertedIndex : public InvertedIndexTantivy<std::string> {
                  proto::plan::OpType op_type,
                  exec::SegmentExpr* segment,
                  const TargetBitmap* pre_filter = nullptr);
+
+    // Check if literal can be handled by ngram index (length >= min_gram)
+    bool
+    CanHandleLiteral(const std::string& literal, proto::plan::OpType op_type) const;
+
+    // Phase1: Execute ngram index query, AND-merge result into candidates
+    // Requires: CanHandleLiteral(literal, op_type) == true
+    // Requires: candidates must be non-empty (caller initializes it)
+    // Ngram query result is AND-merged with existing candidates.
+    void
+    ExecutePhase1(const std::string& literal,
+                  proto::plan::OpType op_type,
+                  TargetBitmap& candidates);
+
+    // Phase2: Execute post-filter verification on a specific range
+    // - segment_offset: starting position in segment
+    // - batch_size: number of rows to process
+    // - candidates: bitmap of size batch_size (relative to the range)
+    // Requires: CanHandleLiteral(literal, op_type) == true
+    void
+    ExecutePhase2(const std::string& literal,
+                  proto::plan::OpType op_type,
+                  exec::SegmentExpr* segment,
+                  TargetBitmap& candidates,
+                  int64_t segment_offset,
+                  int64_t batch_size);
 
     ScalarIndexType
     GetIndexType() const override {
@@ -66,24 +103,18 @@ class NgramInvertedIndex : public InvertedIndexTantivy<std::string> {
     }
 
  private:
-    template <typename T, typename Predicate>
-    std::optional<TargetBitmap>
-    ExecuteQueryWithPredicate(const std::string& literal,
-                              exec::SegmentExpr* segment,
-                              Predicate&& predicate,
-                              bool need_post_filter,
-                              const TargetBitmap* pre_filter);
+    void
+    ApplyIterativeNgramFilter(const std::vector<std::string>& sorted_terms,
+                              size_t total_count,
+                              TargetBitmap& bitset);
 
-    // Match is something like xxx%xxx%xxx, xxx%xxx, %xxx%xxx, xxx_x etc.
-    std::optional<TargetBitmap>
-    MatchQuery(const std::string& literal,
-               exec::SegmentExpr* segment,
-               const TargetBitmap* pre_filter);
+    bool
+    ShouldUseBatchStrategy(double pre_filter_hit_rate) const;
 
- private:
     uintptr_t min_gram_{0};
     uintptr_t max_gram_{0};
     int64_t field_id_{0};
+    size_t avg_row_size_{0};
     std::chrono::time_point<std::chrono::system_clock> index_build_begin_;
 
     // for json type

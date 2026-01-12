@@ -33,6 +33,7 @@ file(GLOB_RECURSE SOURCE_TEST_FILES
 set(MILVUS_TEST_FILES
         # ${SOURCE_TEST_FILES}
         ${CMAKE_HOME_DIRECTORY}/src/index/NgramInvertedIndexTest.cpp
+        ${CMAKE_HOME_DIRECTORY}/src/exec/expression/LikeConjunctExprTest.cpp
         init_gtest.cpp
         # test_loading.cpp
         # test_exec.cpp
