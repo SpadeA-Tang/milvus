@@ -212,6 +212,7 @@ TextMatchIndex::AddTextsGrowing(size_t n,
                                 const std::string* texts,
                                 const bool* valids,
                                 int64_t offset_begin) {
+    LOG_INFO("debug=== AddTextsGrowing n={} offset_begin={}", n, offset_begin);
     if (valids != nullptr) {
         for (int i = 0; i < n; i++) {
             auto offset = i + offset_begin;
@@ -231,6 +232,16 @@ TextMatchIndex::AddTextsGrowing(size_t n,
 void
 TextMatchIndex::BuildIndexFromFieldData(
     const std::vector<FieldDataPtr>& field_datas, bool nullable) {
+    int64_t total_rows_to_index = 0;
+    for (const auto& data : field_datas) {
+        total_rows_to_index += data->get_num_rows();
+    }
+    LOG_INFO(
+        "debug=== BuildIndexFromFieldData total_rows={} field_data_chunks={} "
+        "nullable={}",
+        total_rows_to_index,
+        field_datas.size(),
+        nullable);
     int64_t offset = 0;
     if (nullable) {
         int64_t total = 0;

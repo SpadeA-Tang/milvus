@@ -84,6 +84,12 @@ func loadGrowingSegments(ctx context.Context, delegator delegator.ShardDelegator
 				continue
 			}
 			if len(segmentInfo.GetBinlogs()) > 0 {
+				log.Info("debug=== loadGrowingSegments",
+					zap.Int64("segmentID", segmentInfo.ID),
+					zap.Int64("numOfRows", segmentInfo.NumOfRows),
+					zap.String("manifestPath", segmentInfo.GetManifestPath()),
+					zap.Int("binlogCount", len(segmentInfo.GetBinlogs())),
+				)
 				growingSegments = append(growingSegments, &querypb.SegmentLoadInfo{
 					SegmentID:      segmentInfo.ID,
 					Level:          segmentInfo.GetLevel(),

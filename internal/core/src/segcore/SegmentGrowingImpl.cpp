@@ -248,6 +248,11 @@ SegmentGrowingImpl::InitializeArrayOffsets() {
 int64_t
 SegmentGrowingImpl::PreInsert(int64_t size) {
     auto reserved_begin = insert_record_.reserved.fetch_add(size);
+    LOG_INFO(
+        "debug=== PreInsert segment {} size={} reserved_begin={}",
+        id_,
+        size,
+        reserved_begin);
     return reserved_begin;
 }
 
@@ -587,6 +592,13 @@ SegmentGrowingImpl::Insert(int64_t reserved_offset,
 
         // index text.
         if (field_meta.enable_match()) {
+            LOG_INFO(
+                "debug=== Insert segment {} field {} enable_match "
+                "reserved_offset={} num_rows={}",
+                id_,
+                field_id.get(),
+                reserved_offset,
+                num_rows);
             // TODO: iterate texts and call `AddText` instead of `AddTexts`. This may cost much more memory.
             std::vector<std::string> texts(
                 insert_record_proto->fields_data(data_offset)
@@ -791,6 +803,18 @@ SegmentGrowingImpl::load_field_data_common(
 
     // build text match index
     if (field_meta.enable_match()) {
+        int64_t text_total_rows = 0;
+        for (auto& fd : field_data) {
+            text_total_rows += fd->get_num_rows();
+        }
+        LOG_INFO(
+            "debug=== segment {} field {} enable_match building text index "
+            "total_rows={} reserved_offset={} metadata_num_rows={}",
+            get_segment_id(),
+            field_id.get(),
+            text_total_rows,
+            reserved_offset,
+            num_rows);
         auto pinned = GetTextIndex(nullptr, field_id);
         auto index = pinned.get();
         index->BuildIndexFromFieldData(field_data, field_meta.is_nullable());
@@ -2002,6 +2026,10 @@ SegmentGrowingImpl::LoadColumnsGroups(std::string manifest_path) {
         "Loading segment {} field data with manifest {}", id_, manifest_path);
     // size_t num_rows = storage::GetNumRowsForLoadInfo(infos);
     auto num_rows = load_info_.num_of_rows();
+    LOG_INFO(
+        "debug=== LoadColumnsGroups segment {} metadata num_rows={}",
+        id_,
+        num_rows);
     auto primary_field_id =
         schema_->get_primary_field_id().value_or(FieldId(-1));
     auto properties = milvus::storage::LoonFFIPropertiesSingleton::GetInstance()
@@ -2047,7 +2075,31 @@ SegmentGrowingImpl::LoadColumnsGroups(std::string manifest_path) {
         std::rethrow_exception(load_exceptions[0]);
     }
 
+    // Compute actual rows loaded from storage per field for debugging
+    for (auto& column_group_result : column_group_results) {
+        for (auto& [field_id, field_data] : column_group_result) {
+            int64_t actual_rows = 0;
+            for (auto& fd : field_data) {
+                actual_rows += fd->get_num_rows();
+            }
+            LOG_INFO(
+                "debug=== LoadColumnsGroups segment {} field {} actual_rows={} "
+                "metadata num_rows={} field_data_chunks={}",
+                id_,
+                field_id.get(),
+                actual_rows,
+                num_rows,
+                field_data.size());
+        }
+    }
+
     auto reserved_offset = PreInsert(num_rows);
+    LOG_INFO(
+        "debug=== LoadColumnsGroups segment {} PreInsert({}) returned "
+        "reserved_offset={}",
+        id_,
+        num_rows,
+        reserved_offset);
 
     for (auto& column_group_result : column_group_results) {
         for (auto& [field_id, field_data] : column_group_result) {
@@ -2090,7 +2142,13 @@ SegmentGrowingImpl::LoadColumnGroup(
     auto parallel_degree =
         static_cast<uint64_t>(DEFAULT_FIELD_MAX_MEMORY_LIMIT / FILE_SLICE_SIZE);
 
-    std::vector<int64_t> all_row_groups(chunk_reader->total_number_of_chunks());
+    auto total_chunks = chunk_reader->total_number_of_chunks();
+    LOG_INFO(
+        "debug=== LoadColumnGroup segment {} column_group {} total_chunks={}",
+        id_,
+        index,
+        total_chunks);
+    std::vector<int64_t> all_row_groups(total_chunks);
 
     std::iota(all_row_groups.begin(), all_row_groups.end(), 0);
 
@@ -2145,7 +2203,20 @@ SegmentGrowingImpl::LoadColumnGroup(
         }
     }
 
-    LOG_INFO("Finished loading segment {} column group {}", id_, index);
+    int64_t total_loaded_rows = 0;
+    for (auto& [fid, fds] : field_data_map) {
+        int64_t field_rows = 0;
+        for (auto& fd : fds) {
+            field_rows += fd->get_num_rows();
+        }
+        total_loaded_rows = std::max(total_loaded_rows, field_rows);
+    }
+    LOG_INFO(
+        "debug=== Finished loading segment {} column_group {} "
+        "total_loaded_rows={}",
+        id_,
+        index,
+        total_loaded_rows);
     return field_data_map;
 }
 

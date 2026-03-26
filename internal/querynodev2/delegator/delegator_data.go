@@ -120,6 +120,11 @@ func (sd *shardDelegator) ProcessInsert(insertRecords map[int64]*InsertData) {
 			newGrowingSegment = true
 		}
 
+		log.Info("debug=== ProcessInsert",
+			zap.Int64("segmentID", segmentID),
+			zap.Int("numRows", len(insertData.RowIDs)),
+			zap.Bool("newGrowingSegment", newGrowingSegment),
+		)
 		err := growing.Insert(context.Background(), insertData.RowIDs, insertData.Timestamps, insertData.InsertRecord)
 		if err != nil {
 			log.Error("failed to insert data into growing segment",
