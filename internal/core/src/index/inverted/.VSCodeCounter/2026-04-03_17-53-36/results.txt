@@ -1,0 +1,85 @@
+Date : 2026-04-03 17:53:36
+Directory : /home/spadea/working2/milvus/internal/core/src/index/inverted
+Total : 52 files,  5427 codes, 870 comments, 1296 blanks, all 7593 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| C++      |         50 |      5,039 |        870 |      1,148 |      7,057 |
+| Markdown |          2 |        388 |          0 |        148 |        536 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                                 | files      | code       | comment    | blank      | total      |
++------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                                    |         52 |      5,427 |        870 |      1,296 |      7,593 |
+| . (Files)                                                                                            |          2 |        388 |          0 |        148 |        536 |
+| indexer                                                                                              |         16 |      1,533 |        229 |        366 |      2,128 |
+| indexing                                                                                             |          7 |        809 |        105 |        173 |      1,087 |
+| postings                                                                                             |         11 |      1,475 |        342 |        307 |      2,124 |
+| query                                                                                                |          4 |        280 |         40 |         76 |        396 |
+| segment                                                                                              |          2 |        149 |         38 |         38 |        225 |
+| storage                                                                                              |          6 |        283 |         35 |         72 |        390 |
+| termdict                                                                                             |          4 |        510 |         81 |        116 |        707 |
++------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++------------------------------------------------------------------------------------------------------+----------+------------+------------+------------+------------+
+| filename                                                                                             | language | code       | comment    | blank      | total      |
++------------------------------------------------------------------------------------------------------+----------+------------+------------+------------+------------+
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/IndexDirectory.h               | C++      |        131 |         26 |         28 |        185 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/IndexMeta.h                    | C++      |         39 |          6 |         11 |         56 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/IndexReader.h                  | C++      |         44 |         12 |         14 |         70 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/IndexWriter.h                  | C++      |        214 |         30 |         40 |        284 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/IndexWriterTest.cpp            | C++      |        162 |         22 |         49 |        233 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/LogMergePolicy.h               | C++      |         84 |          7 |         16 |        107 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/MergePolicy.h                  | C++      |         23 |         11 |          9 |         43 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/Searcher.h                     | C++      |         61 |         10 |         12 |         83 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentEntry.h                 | C++      |         17 |          4 |          9 |         30 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentManager.h               | C++      |        121 |         10 |         20 |        151 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentManagerTest.cpp         | C++      |        138 |         10 |         34 |        182 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentMerger.h                | C++      |         78 |         27 |         21 |        126 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentMergerTest.cpp          | C++      |        168 |         13 |         40 |        221 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentRegister.h              | C++      |         83 |          4 |         17 |        104 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/SegmentUpdater.h               | C++      |        143 |         30 |         35 |        208 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexer/Stamper.h                      | C++      |         27 |          7 |         11 |         45 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/ArenaHashMap.h                | C++      |         48 |         11 |         15 |         74 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/ArenaHashMapTest.cpp          | C++      |        111 |          4 |         26 |        141 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/ExpUnrolledLinkedList.h       | C++      |        102 |         26 |         25 |        153 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/ExpUnrolledLinkedListTest.cpp | C++      |        110 |          3 |         24 |        137 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/MemoryArena.h                 | C++      |        134 |         26 |         30 |        190 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/MemoryArenaTest.cpp           | C++      |         72 |          1 |         20 |         93 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/indexing/SharedArenaHashMap.h          | C++      |        232 |         34 |         33 |        299 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/native_inverted_index_design.md        | Markdown |        320 |          0 |        133 |        453 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/native_inverted_index_impl.md          | Markdown |         68 |          0 |         15 |         83 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/BlockEncoder.h                | C++      |         51 |         27 |         16 |         94 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/PostingFormat.h               | C++      |        264 |         44 |         53 |        361 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/PostingFormatTest.cpp         | C++      |        192 |          7 |         31 |        230 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/PostingsSerializer.h          | C++      |        132 |         57 |         34 |        223 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/PostingsSerializerTest.cpp    | C++      |        163 |          8 |         16 |        187 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/PostingsWriter.h              | C++      |        113 |         26 |         21 |        160 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/PostingsWriterTest.cpp        | C++      |        191 |         19 |         43 |        253 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/Recorder.h                    | C++      |         86 |         82 |         21 |        189 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/SegmentSerializer.h           | C++      |         72 |         21 |         18 |        111 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/SkipSerializer.h              | C++      |        149 |         40 |         35 |        224 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/postings/SkipSerializerTest.cpp        | C++      |         62 |         11 |         19 |         92 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/query/BoolQuery.h                      | C++      |         68 |         12 |         18 |         98 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/query/Query.h                          | C++      |         19 |         12 |         10 |         41 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/query/QueryTest.cpp                    | C++      |        162 |          6 |         36 |        204 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/query/TermQuery.h                      | C++      |         31 |         10 |         12 |         53 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/segment/SegmentMeta.h                  | C++      |         71 |         20 |         17 |        108 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/segment/SegmentReader.h                | C++      |         78 |         18 |         21 |        117 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/storage/Allocator.h                    | C++      |         40 |         10 |         10 |         60 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/storage/AllocatorTest.cpp              | C++      |         17 |          0 |          8 |         25 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/storage/BlockCache.h                   | C++      |         58 |         12 |         14 |         84 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/storage/BlockCacheTest.cpp             | C++      |         18 |          1 |          8 |         27 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/storage/FileIO.h                       | C++      |        121 |         10 |         21 |        152 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/storage/FileIOTest.cpp                 | C++      |         29 |          2 |         11 |         42 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/termdict/SortedBlockKeyMap.h           | C++      |        222 |         32 |         50 |        304 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/termdict/SortedBlockKeyMapTest.cpp     | C++      |        201 |         18 |         35 |        254 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/termdict/TermDictionary.h              | C++      |         23 |         15 |         14 |         52 |
+| /home/spadea/working2/milvus/internal/core/src/index/inverted/termdict/TermMerger.h                  | C++      |         64 |         16 |         17 |         97 |
+| Total                                                                                                |          |      5,427 |        870 |      1,296 |      7,593 |
++------------------------------------------------------------------------------------------------------+----------+------------+------------+------------+------------+

@@ -94,6 +94,17 @@ class SegmentReader {
         return meta_.max_doc_id + 1;
     }
 
+    // Accessors for merger.
+    SortedBlockKeyMapReader*
+    dict_reader() {
+        return dict_reader_.get();
+    }
+
+    FileReader*
+    pst_reader() const {
+        return pst_reader_.get();
+    }
+
  private:
     SegmentMeta meta_;
     std::unique_ptr<LocalFileReader> pst_reader_;

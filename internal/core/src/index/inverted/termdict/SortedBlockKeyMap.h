@@ -177,31 +177,11 @@ class SortedBlockKeyMapReader : public TermDictionaryReader {
         return sparse_index_;
     }
 
- private:
-    void
-    load_sparse_index(FileReader* idx_reader) {
-        size_t file_size = static_cast<size_t>(idx_reader->file_size());
-        std::vector<uint8_t> buf(file_size);
-        idx_reader->read(0, file_size, buf.data());
-        const uint8_t* ptr = buf.data();
-
-        uint64_t num_blocks = decode_varuint(ptr);
-        sparse_index_.entries.resize(num_blocks);
-
-        for (uint64_t i = 0; i < num_blocks; i++) {
-            uint64_t token_len = decode_varuint(ptr);
-            sparse_index_.entries[i].first_token.assign(
-                reinterpret_cast<const char*>(ptr), token_len);
-            ptr += token_len;
-            sparse_index_.entries[i].block_offset = decode_varuint(ptr);
-        }
-    }
-
+    // Load a single dictionary block by index.
     DictBlock
-    load_dict_block(int block_idx) {
+    load_dict_block(int block_idx) const {
         uint64_t offset = sparse_index_.entries[block_idx].block_offset;
 
-        // Block extends from its offset to the next block's offset (or EOF).
         uint64_t end_offset;
         if (block_idx + 1 < static_cast<int>(sparse_index_.entries.size())) {
             end_offset = sparse_index_.entries[block_idx + 1].block_offset;
@@ -231,8 +211,93 @@ class SortedBlockKeyMapReader : public TermDictionaryReader {
         return block;
     }
 
+    size_t
+    num_blocks() const {
+        return sparse_index_.entries.size();
+    }
+
+ private:
+    void
+    load_sparse_index(FileReader* idx_reader) {
+        size_t file_size = static_cast<size_t>(idx_reader->file_size());
+        std::vector<uint8_t> buf(file_size);
+        idx_reader->read(0, file_size, buf.data());
+        const uint8_t* ptr = buf.data();
+
+        uint64_t num_blocks = decode_varuint(ptr);
+        sparse_index_.entries.resize(num_blocks);
+
+        for (uint64_t i = 0; i < num_blocks; i++) {
+            uint64_t token_len = decode_varuint(ptr);
+            sparse_index_.entries[i].first_token.assign(
+                reinterpret_cast<const char*>(ptr), token_len);
+            ptr += token_len;
+            sparse_index_.entries[i].block_offset = decode_varuint(ptr);
+        }
+    }
+
     SparseIndex sparse_index_;
     FileReader* dct_reader_;
+};
+
+// Ported from tantivy's sstable::Streamer.
+//
+// Lazy block-by-block, entry-by-entry iterator over a SortedBlockKeyMapReader.
+// Only one DictBlock is held in memory at a time.
+
+class Streamer {
+ public:
+    explicit Streamer(SortedBlockKeyMapReader* reader)
+        : reader_(reader),
+          num_blocks_(reader->num_blocks()),
+          block_idx_(0),
+          entry_idx_(0) {
+        if (num_blocks_ > 0) {
+            current_block_ = reader_->load_dict_block(0);
+        }
+    }
+
+    // Move to the next entry. Returns false when exhausted.
+    bool
+    advance() {
+        if (block_idx_ >= num_blocks_) {
+            return false;
+        }
+        entry_idx_++;
+        if (entry_idx_ >= current_block_.tokens.size()) {
+            block_idx_++;
+            if (block_idx_ >= num_blocks_) {
+                return false;
+            }
+            current_block_ = reader_->load_dict_block(
+                static_cast<int>(block_idx_));
+            entry_idx_ = 0;
+        }
+        return true;
+    }
+
+    const std::string&
+    key() const {
+        return current_block_.tokens[entry_idx_];
+    }
+
+    const PostingsInfo&
+    value() const {
+        return current_block_.infos[entry_idx_];
+    }
+
+    bool
+    is_valid() const {
+        return block_idx_ < num_blocks_ &&
+               entry_idx_ < current_block_.tokens.size();
+    }
+
+ private:
+    SortedBlockKeyMapReader* reader_;
+    size_t num_blocks_;
+    size_t block_idx_;
+    size_t entry_idx_;
+    DictBlock current_block_;
 };
 
 }  // namespace milvus::index::inverted
