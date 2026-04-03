@@ -16,11 +16,10 @@
 #include <cstring>
 #include <vector>
 
-#include "MemoryArena.h"
+#include "index/inverted/indexing/MemoryArena.h"
 
 namespace milvus::index::inverted {
 
-// Ported from tantivy stacker/src/expull.rs
 //
 // Exponential unrolled linked list stored in MemoryArena.
 // Block sizes grow exponentially: first block 8B (1<<3),
@@ -78,7 +77,6 @@ class ExpUnrolledLinkedList {
     }
 
     // Writer for appending data to the list.
-    // Ported from tantivy ExpUnrolledLinkedListWriter.
     class Writer {
      public:
         Writer(ExpUnrolledLinkedList& eull, MemoryArena& arena)

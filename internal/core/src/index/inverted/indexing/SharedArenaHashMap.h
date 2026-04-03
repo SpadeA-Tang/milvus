@@ -18,7 +18,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "MemoryArena.h"
+#include "index/inverted/indexing/MemoryArena.h"
 
 namespace milvus::index::inverted {
 
@@ -61,7 +61,6 @@ murmurhash2(const uint8_t* key, size_t len) {
 }
 
 // Hash table slot: address in arena + cached hash.
-// Ported from tantivy KeyValue.
 struct KeyValue {
     Addr key_value_addr = Addr::null_pointer();
     uint32_t hash = 0;
@@ -77,7 +76,6 @@ struct KeyValue {
 };
 
 // Linear probing helper.
-// Ported from tantivy LinearProbing.
 struct LinearProbing {
     size_t pos;
     size_t mask;
@@ -95,7 +93,6 @@ struct LinearProbing {
 };
 
 // Greatest power of two <= n. Panics if n == 0.
-// Ported from tantivy compute_previous_power_of_two.
 inline size_t
 compute_previous_power_of_two(size_t n) {
     if (n == 0) {
@@ -106,7 +103,6 @@ compute_previous_power_of_two(size_t n) {
 }
 
 // Arena-based hash map with byte-slice keys.
-// Ported from tantivy stacker/src/shared_arena_hashmap.rs
 //
 // Keys and values are stored inline in an external MemoryArena.
 // Arena layout per entry: [key_len: u16 LE] [key_bytes] [value_bytes]

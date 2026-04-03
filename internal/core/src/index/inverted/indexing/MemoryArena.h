@@ -20,7 +20,6 @@
 namespace milvus::index::inverted {
 
 // 32-bit address: 12 bits page_id + 20 bits local offset.
-// Ported from tantivy stacker/src/memory_arena.rs
 class Addr {
  public:
     static constexpr uint32_t kPageBits = 20;
@@ -72,7 +71,6 @@ class Addr {
 };
 
 // 32-bit memory arena for types that are trivially copyable.
-// Ported from tantivy stacker/src/memory_arena.rs
 //
 // - Allocations are very cheap.
 // - Consecutive allocations have great locality.

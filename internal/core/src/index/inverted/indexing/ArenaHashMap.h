@@ -11,12 +11,11 @@
 
 #pragma once
 
-#include "SharedArenaHashMap.h"
+#include "index/inverted/indexing/SharedArenaHashMap.h"
 
 namespace milvus::index::inverted {
 
 // Convenience wrapper: SharedArenaHashMap + owned MemoryArena.
-// Ported from tantivy stacker/src/arena_hashmap.rs
 class ArenaHashMap {
  public:
     explicit ArenaHashMap(size_t table_size = 4) : map_(table_size) {
