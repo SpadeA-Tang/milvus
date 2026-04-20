@@ -270,7 +270,7 @@ class SharedArenaHashMap {
 
     void
     resize() {
-        size_t new_len = std::max(table_.size() * 2, size_t(8));
+        size_t new_len = std::max(table_.size() * 2, size_t(1) << 13);
         size_t new_mask = new_len - 1;
         mask_ = new_mask;
         std::vector<KeyValue> new_table(new_len);
