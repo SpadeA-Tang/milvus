@@ -423,10 +423,10 @@ func (s *server) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*he
 func TestClientBase_RetryPolicy(t *testing.T) {
 	// server
 	lis, err := net.Listen("tcp", "localhost:")
-	address := lis.Addr()
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		t.Fatalf("failed to listen: %v", err)
 	}
+	address := lis.Addr()
 	kaep := keepalive.EnforcementPolicy{
 		MinTime:             5 * time.Second,
 		PermitWithoutStream: true,
@@ -444,9 +444,8 @@ func TestClientBase_RetryPolicy(t *testing.T) {
 	helloworld.RegisterGreeterServer(s, &server{SuccessCount: uint(maxAttempts)})
 	reflection.Register(s)
 	go func() {
-		if err := s.Serve(lis); err != nil {
-			log.Fatalf("failed to serve: %v", err)
-		}
+		// s.Stop() causes Serve to return; ignore the error
+		s.Serve(lis)
 	}()
 	defer s.Stop()
 
@@ -485,10 +484,10 @@ func TestClientBase_RetryPolicy(t *testing.T) {
 
 func TestClientBase_Compression(t *testing.T) {
 	lis, err := net.Listen("tcp", "localhost:")
-	address := lis.Addr()
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		t.Fatalf("failed to listen: %v", err)
 	}
+	address := lis.Addr()
 	kaep := keepalive.EnforcementPolicy{
 		MinTime:             5 * time.Second,
 		PermitWithoutStream: true,
@@ -506,9 +505,8 @@ func TestClientBase_Compression(t *testing.T) {
 	helloworld.RegisterGreeterServer(s, &server{SuccessCount: uint(1)})
 	reflection.Register(s)
 	go func() {
-		if err := s.Serve(lis); err != nil {
-			log.Fatalf("failed to serve: %v", err)
-		}
+		// s.Stop() causes Serve to return; ignore the error
+		s.Serve(lis)
 	}()
 	defer s.Stop()
 
@@ -633,4 +631,25 @@ func TestClientBase_ServerIDMismatch_NodeFastFail(t *testing.T) {
 	assert.True(t, IsServerIDMismatchErr(err))
 	// The caller should be invoked exactly once (no retries)
 	assert.Equal(t, 1, callCount)
+}
+
+func TestIsConnectionClosingErr(t *testing.T) {
+	// Positive case — the exact exported sentinel
+	assert.True(t, IsConnectionClosingErr(grpc.ErrClientConnClosing))
+
+	// Positive case — wrapped sentinel still matches via errors.Is
+	err := errors.Wrap(grpc.ErrClientConnClosing, "outer context")
+	assert.True(t, IsConnectionClosingErr(err))
+
+	// Positive case — status with same code and message (proto.Equal match)
+	err = status.Error(codes.Canceled, "grpc: the client connection is closing")
+	assert.True(t, IsConnectionClosingErr(err))
+
+	// Negative — normal canceled
+	err = status.Error(codes.Canceled, "context canceled")
+	assert.False(t, IsConnectionClosingErr(err))
+
+	// Negative — non-grpc error
+	err = errors.New("random error")
+	assert.False(t, IsConnectionClosingErr(err))
 }

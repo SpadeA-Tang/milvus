@@ -40,7 +40,8 @@ empty_search_result(int64_t num_queries, bool element_level) {
 BitsetType
 ExecPlanNodeVisitor::ExecuteTask(
     plan::PlanFragment& plan,
-    std::shared_ptr<milvus::exec::QueryContext> query_context) {
+    std::shared_ptr<milvus::exec::QueryContext> query_context,
+    bool collect_bitset) {
     tracer::AutoSpan span("ExecuteTask", tracer::GetRootSpan(), true);
     span.GetSpan()->SetAttribute("active_count",
                                  query_context->get_active_count());
@@ -64,21 +65,22 @@ ExecPlanNodeVisitor::ExecuteTask(
             }
             break;
         }
-        auto childrens = result->childrens();
+        const auto& childrens = result->childrens();
         AssertInfo(childrens.size() == 1,
                    "plannode result vector's children size not equal one");
         LOG_DEBUG("output result length:{}", childrens[0]->size());
         if (auto vec = std::dynamic_pointer_cast<ColumnVector>(childrens[0])) {
             processed_num += vec->size();
-            BitsetTypeView view(vec->GetRawData(), vec->size());
-            bitset_holder.append(view);
+            if (collect_bitset) {
+                BitsetTypeView view(vec->GetRawData(), vec->size());
+                bitset_holder.append(view);
+            }
         } else {
             ThrowInfo(UnexpectedError, "expr return type not matched");
         }
     }
 
     span.GetSpan()->SetAttribute("total_rows", processed_num);
-    span.GetSpan()->SetAttribute("matched_rows", bitset_holder.count());
 
     return bitset_holder;
 }
@@ -197,7 +199,7 @@ ExecPlanNodeVisitor::visit(VectorPlanNode& node) {
     query_context->set_op_context(&op_context);
 
     // Do plan fragment task work
-    auto result = ExecuteTask(plan, query_context);
+    ExecuteTask(plan, query_context, false);
 
     // Store result
     search_result_opt_ = std::move(query_context->get_search_result());

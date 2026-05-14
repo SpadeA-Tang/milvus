@@ -98,7 +98,7 @@ func (c *checkpointCandidates) Add(segmentID int64, position *msgpb.MsgPosition,
 }
 
 func (c *checkpointCandidates) GetEarliestWithDefault(def *checkpointCandidate) *checkpointCandidate {
-	var result *checkpointCandidate = def
+	result := def
 	c.candidates.Range(func(_ string, candidate *checkpointCandidate) bool {
 		if result == nil || candidate.position.GetTimestamp() < result.position.GetTimestamp() {
 			result = candidate
@@ -231,21 +231,29 @@ func (wb *writeBufferBase) MemorySize() int64 {
 
 func (wb *writeBufferBase) EvictBuffer(policies ...SyncPolicy) {
 	log := wb.logger
+
 	wb.mut.Lock()
-	defer wb.mut.Unlock()
 
 	// need valid checkpoint before triggering syncing
 	if wb.checkpoint == nil {
+		wb.mut.Unlock()
 		log.Warn("evict buffer before buffering data")
 		return
 	}
 
 	ts := wb.checkpoint.GetTimestamp()
-
 	segmentIDs := wb.getSegmentsToSync(ts, policies...)
+
+	var futures []*conc.Future[struct{}]
 	if len(segmentIDs) > 0 {
 		log.Info("evict buffer find segments to sync", zap.Int64s("segmentIDs", segmentIDs))
-		conc.AwaitAll(wb.syncSegments(context.Background(), segmentIDs)...)
+		futures = wb.syncSegments(context.Background(), segmentIDs)
+	}
+
+	wb.mut.Unlock()
+
+	if len(futures) > 0 {
+		conc.AwaitAll(futures...)
 	}
 }
 
@@ -300,6 +308,16 @@ func (wb *writeBufferBase) sealSegments(_ context.Context, segmentIDs []int64) e
 	// mark segment flushing if segment was growing
 	wb.metaCache.UpdateSegments(metacache.UpdateState(commonpb.SegmentState_Sealed),
 		metacache.WithSegmentIDs(segmentIDs...),
+		metacache.WithSegmentState(commonpb.SegmentState_Growing))
+	return nil
+}
+
+func (wb *writeBufferBase) sealAllSegments(ctx context.Context) error {
+	allSegmentIds := wb.metaCache.GetSegmentIDsBy()
+	log.Ctx(ctx).Info("seal all segments", zap.Int64s("segmentIDs", allSegmentIds))
+	// mark segment flushing if segment was growing
+	wb.metaCache.UpdateSegments(metacache.UpdateState(commonpb.SegmentState_Sealed),
+		metacache.WithSegmentIDs(allSegmentIds...),
 		metacache.WithSegmentState(commonpb.SegmentState_Growing))
 	return nil
 }
@@ -528,9 +546,9 @@ func (wb *writeBufferBase) CreateNewGrowingSegment(partitionID int64, segmentID 
 		// set manifest path when creating segment
 		if paramtable.Get().CommonCfg.UseLoonFFI.GetAsBool() {
 			k := metautil.JoinIDPath(wb.collectionID, partitionID, segmentID)
-			basePath := path.Join(paramtable.Get().ServiceParam.MinioCfg.RootPath.GetValue(), common.SegmentInsertLogPath, k)
+			basePath := path.Join(paramtable.Get().MinioCfg.RootPath.GetValue(), common.SegmentInsertLogPath, k)
 			if paramtable.Get().CommonCfg.StorageType.GetValue() != "local" {
-				basePath = path.Join(paramtable.Get().ServiceParam.MinioCfg.BucketName.GetValue(), basePath)
+				basePath = path.Join(paramtable.Get().MinioCfg.BucketName.GetValue(), basePath)
 			}
 			// -1 for first write
 			segmentInfo.ManifestPath = packed.MarshalManifestPath(basePath, -1)

@@ -45,6 +45,7 @@ type ParamItem struct {
 
 	Formatter func(originValue string) string
 	Forbidden bool
+	Immutable bool
 
 	manager *config.Manager
 
@@ -59,6 +60,9 @@ func (pi *ParamItem) Init(manager *config.Manager) {
 	pi.manager = manager
 	if pi.Forbidden {
 		pi.manager.ForbidUpdate(pi.Key)
+	}
+	if pi.Immutable {
+		pi.manager.ImmutableUpdate(pi.Key)
 	}
 
 	currentValue := pi.GetValue()
@@ -323,7 +327,12 @@ func (pi *ParamItem) GetAsRoleDetails() map[string](map[string]([](map[string]st
 }
 
 func (pi *ParamItem) GetAsDurationByParse() time.Duration {
-	val, _ := pi.get()
+	if val, exist := pi.manager.GetCachedValue(pi.Key); exist {
+		if durationVal, ok := val.(time.Duration); ok {
+			return durationVal
+		}
+	}
+	val, raw, _ := pi.getWithRaw()
 	durationVal, err := time.ParseDuration(val)
 	if err != nil {
 		durationVal, err = time.ParseDuration(pi.DefaultValue)
@@ -331,6 +340,7 @@ func (pi *ParamItem) GetAsDurationByParse() time.Duration {
 			panic(fmt.Sprintf("unreachable: parse duration from default value failed, %s, err: %s", pi.DefaultValue, err.Error()))
 		}
 	}
+	pi.manager.CASCachedValue(pi.Key, raw, durationVal)
 	return durationVal
 }
 

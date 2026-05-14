@@ -50,6 +50,7 @@ import (
 	"github.com/milvus-io/milvus/internal/querycoordv2/params"
 	"github.com/milvus-io/milvus/internal/querycoordv2/session"
 	"github.com/milvus-io/milvus/internal/querycoordv2/task"
+	"github.com/milvus-io/milvus/internal/querycoordv2/utils"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/internal/util/proxyutil"
 	"github.com/milvus-io/milvus/internal/util/sessionutil"
@@ -261,15 +262,16 @@ func (s *Server) initQueryCoord() error {
 	metaType := Params.MetaStoreCfg.MetaStoreType.GetValue()
 	var idAllocatorKV kv.TxnKV
 	log.Info(fmt.Sprintf("query coordinator connecting to %s.", metaType))
-	if metaType == util.MetaStoreTypeTiKV {
+	switch metaType {
+	case util.MetaStoreTypeTiKV:
 		s.kv = tikv.NewTiKV(s.tikvCli, Params.TiKVCfg.MetaRootPath.GetValue(),
-			tikv.WithRequestTimeout(paramtable.Get().ServiceParam.TiKVCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
+			tikv.WithRequestTimeout(paramtable.Get().TiKVCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
 		idAllocatorKV = tsoutil.NewTSOTiKVBase(s.tikvCli, Params.TiKVCfg.KvRootPath.GetValue(), "querycoord-id-allocator")
-	} else if metaType == util.MetaStoreTypeEtcd {
+	case util.MetaStoreTypeEtcd:
 		s.kv = etcdkv.NewEtcdKV(s.etcdCli, Params.EtcdCfg.MetaRootPath.GetValue(),
-			etcdkv.WithRequestTimeout(paramtable.Get().ServiceParam.EtcdCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
+			etcdkv.WithRequestTimeout(paramtable.Get().EtcdCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
 		idAllocatorKV = tsoutil.NewTSOKVBase(s.etcdCli, Params.EtcdCfg.KvRootPath.GetValue(), "querycoord-id-allocator")
-	} else {
+	default:
 		return fmt.Errorf("not supported meta store: %s", metaType)
 	}
 	log.Info(fmt.Sprintf("query coordinator successfully connected to %s.", metaType))
@@ -729,7 +731,7 @@ func (s *Server) rewatchNodes(sessions map[string]*sessionutil.Session) error {
 	// Note: Node manager doesn't persist node list, so after query coord restart, we cannot
 	// update all node statuses in resource manager based on session and node manager's node list.
 	// Therefore, manual status checking of all nodes in resource manager is needed.
-	s.meta.ResourceManager.CheckNodesInResourceGroup(s.ctx)
+	s.meta.CheckNodesInResourceGroup(s.ctx)
 
 	return nil
 }
@@ -748,7 +750,7 @@ func (s *Server) handleNodeUp(node int64) {
 	s.distController.StartDistInstance(s.ctx, node)
 
 	// need assign to new rg and replica
-	s.meta.ResourceManager.HandleNodeUp(s.ctx, node)
+	s.meta.HandleNodeUp(s.ctx, node)
 
 	s.metricsCacheManager.InvalidateSystemInfoMetrics()
 	s.checkerController.Check()
@@ -765,7 +767,7 @@ func (s *Server) handleNodeDown(node int64) {
 	// Clear tasks
 	s.taskScheduler.RemoveByNode(node)
 
-	s.meta.ResourceManager.HandleNodeDown(context.Background(), node)
+	s.meta.HandleNodeDown(context.Background(), node)
 
 	// clean node's metrics
 	metrics.QueryCoordLastHeartbeatTimeStamp.DeleteLabelValues(fmt.Sprint(node))
@@ -777,7 +779,7 @@ func (s *Server) handleNodeStopping(node int64) {
 	s.nodeMgr.Stopping(node)
 
 	// mark node as stopping in resource manager
-	s.meta.ResourceManager.HandleNodeStopping(context.Background(), node)
+	s.meta.HandleNodeStopping(context.Background(), node)
 
 	// trigger checker to check stopping node
 	s.checkerController.Check()
@@ -853,4 +855,70 @@ func (s *Server) watchLoadConfigChanges() {
 
 	rgHandler := config.NewHandler("watchResourceGroupChanges", func(e *config.Event) { w.Trigger() })
 	paramtable.Get().Watch(paramtable.Get().QueryCoordCfg.ClusterLevelLoadResourceGroups.Key, rgHandler)
+}
+
+// GetInternalReplicasByCollection returns replicas for a collection from internal meta.
+// This method provides access to internal replica information including resource groups.
+func (s *Server) GetInternalReplicasByCollection(ctx context.Context, collectionID int64) []*meta.Replica {
+	return s.meta.GetByCollection(ctx, collectionID)
+}
+
+// CheckAllReplicasServiceable returns an error if any replica has a non-serviceable
+// shard leader for any channel in the collection's current target. Unlike
+// CalculateLoadPercentage (which reads the CollectionObserver's periodically-persisted
+// snapshot), this performs a live check against the distribution manager and so
+// reflects the real-time serviceability after scale-up / scale-down.
+func (s *Server) CheckAllReplicasServiceable(ctx context.Context, collectionID int64) error {
+	replicas := s.meta.GetByCollection(ctx, collectionID)
+	if len(replicas) == 0 {
+		return errors.New("no replica found")
+	}
+	for _, replica := range replicas {
+		if err := s.checkReplicaServiceable(ctx, replica); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) checkReplicaServiceable(ctx context.Context, replica *meta.Replica) error {
+	channels := s.targetMgr.GetDmChannelsByCollection(ctx, replica.GetCollectionID(), meta.CurrentTarget)
+	if len(channels) == 0 {
+		return errors.New("no channels in current target")
+	}
+	for channelName := range channels {
+		leader := s.dist.ChannelDistManager.GetShardLeader(channelName, replica)
+		if leader == nil || leader.View == nil {
+			return fmt.Errorf("replica %d (rg=%s): no leader for channel %s",
+				replica.GetID(), replica.GetResourceGroup(), channelName)
+		}
+		if err := utils.CheckDelegatorDataReady(s.nodeMgr, s.targetMgr, leader.View, meta.CurrentTarget); err != nil {
+			return fmt.Errorf("replica %d (rg=%s) channel %s not serviceable: %w",
+				replica.GetID(), replica.GetResourceGroup(), channelName, err)
+		}
+	}
+	return nil
+}
+
+// GetLeakedResourcesByCollection returns the number of segments and channels still held by
+// querynodes that are NOT part of any current replica of the collection. A non-zero result
+// means physical resources have not been fully released yet (e.g., during scale-down a
+// decommissioned replica's querynode may still hold segments while release RPCs are in flight).
+func (s *Server) GetLeakedResourcesByCollection(ctx context.Context, collectionID int64) (leakedSegments, leakedChannels int) {
+	replicas := s.meta.GetByCollection(ctx, collectionID)
+	validNodes := typeutil.NewUniqueSet()
+	for _, r := range replicas {
+		validNodes.Insert(r.GetNodes()...)
+	}
+	for _, seg := range s.dist.SegmentDistManager.GetByFilter(meta.WithCollectionID(collectionID)) {
+		if !validNodes.Contain(seg.Node) {
+			leakedSegments++
+		}
+	}
+	for _, ch := range s.dist.ChannelDistManager.GetByCollectionAndFilter(collectionID) {
+		if !validNodes.Contain(ch.Node) {
+			leakedChannels++
+		}
+	}
+	return leakedSegments, leakedChannels
 }

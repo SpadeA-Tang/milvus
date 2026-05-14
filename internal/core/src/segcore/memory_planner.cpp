@@ -196,11 +196,12 @@ LoadWithStrategy(const std::vector<std::string>& remote_files,
                             file,
                             schema,
                             reader_memory_limit,
-                            milvus::storage::GetReaderProperties());
+                            milvus::storage::GetReaderProperties(),
+                            milvus::storage::GetArrowReaderProperties());
                         AssertInfo(
                             result.ok(),
-                            "[StorageV2] Failed to create row group reader: " +
-                                result.status().ToString());
+                            "[StorageV2] Failed to create row group reader: {}",
+                            result.status().ToString());
                         auto row_group_reader = result.ValueOrDie();
                         auto close_guard =
                             folly::makeGuard([&row_group_reader]() {
@@ -211,20 +212,21 @@ LoadWithStrategy(const std::vector<std::string>& remote_files,
                                 block.offset, block.count);
                         AssertInfo(status.ok(),
                                    "[StorageV2] Failed to set row group offset "
-                                   "and count " +
-                                       std::to_string(block.offset) + " and " +
-                                       std::to_string(block.count) +
-                                       " with error " + status.ToString());
+                                   "and count {} and {} with error {}",
+                                   block.offset,
+                                   block.count,
+                                   status.ToString());
                         auto ret = std::make_shared<ArrowDataWrapper>();
                         for (int64_t i = 0; i < block.count; ++i) {
                             std::shared_ptr<arrow::Table> table;
                             auto status =
                                 row_group_reader->ReadNextRowGroup(&table);
                             AssertInfo(status.ok(),
-                                       "[StorageV2] Failed to read row group " +
-                                           std::to_string(block.offset + i) +
-                                           " from file " + file +
-                                           " with error " + status.ToString());
+                                       "[StorageV2] Failed to read row group "
+                                       "{} from file {} with error {}",
+                                       block.offset + i,
+                                       file,
+                                       status.ToString());
                             ret->arrow_tables.push_back(
                                 {file_idx,
                                  static_cast<size_t>(block.offset + i),
@@ -270,17 +272,20 @@ LoadCellBatchAsync(milvus::OpContext* op_ctx,
                   return a.local_rg_offset < b.local_rg_offset;
               });
 
-    // Determine batch size based on parallel degree
-    auto parallel_degree =
-        static_cast<size_t>(memory_limit / FILE_SLICE_SIZE.load());
-    size_t cells_per_batch = std::max<size_t>(
-        1, (cell_specs.size() + parallel_degree - 1) / parallel_degree);
+    for (const auto& spec : cell_specs) {
+        AssertInfo(spec.memory_size > 0,
+                   "[StorageV2] CellSpec cid={} has memory_size={}, "
+                   "callers must provide actual memory size",
+                   spec.cid,
+                   spec.memory_size);
+    }
 
     // Group consecutive, same-key cells into batches for IO merging
     struct CellBatch {
         size_t file_idx;
         int64_t rg_offset;
         int64_t rg_count;
+        int64_t batch_memory = 0;
         std::vector<CellSpec> cells;
     };
 
@@ -290,9 +295,11 @@ LoadCellBatchAsync(milvus::OpContext* op_ctx,
     for (const auto& spec : cell_specs) {
         bool should_split = false;
         if (!current.cells.empty()) {
+            bool batch_full =
+                (current.batch_memory + spec.memory_size > memory_limit);
             if (spec.file_idx != current.file_idx ||
                 spec.local_rg_offset != current.rg_offset + current.rg_count ||
-                current.cells.size() >= cells_per_batch) {
+                batch_full) {
                 should_split = true;
             }
         }
@@ -304,13 +311,22 @@ LoadCellBatchAsync(milvus::OpContext* op_ctx,
             current.file_idx = spec.file_idx;
             current.rg_offset = spec.local_rg_offset;
             current.rg_count = 0;
+            current.batch_memory = 0;
         }
         current.rg_count += spec.rg_count;
+        current.batch_memory += spec.memory_size;
         current.cells.push_back(spec);
     }
     if (!current.cells.empty()) {
         batches.push_back(std::move(current));
     }
+
+    LOG_INFO(
+        "[StorageV2] LoadCellBatchAsync: {} cells -> {} batches "
+        "(memory_limit={}MB)",
+        cell_specs.size(),
+        batches.size(),
+        memory_limit >> 20);
 
     if (batches.empty()) {
         channel->close();
@@ -355,9 +371,11 @@ LoadCellBatchAsync(milvus::OpContext* op_ctx,
                        "count: {}, result size: {}",
                        batch.rg_count,
                        all_tables.size());
+            CheckCancellation(op_ctx, -1, "LoadCellBatchAsync");
 
             int64_t table_offset = 0;
             for (const auto& cell : batch.cells) {
+                CheckCancellation(op_ctx, -1, "LoadCellBatchAsync");
                 auto cell_result = std::make_shared<CellLoadResult>();
                 cell_result->cid = cell.cid;
                 cell_result->tables.reserve(cell.rg_count);
@@ -390,7 +408,8 @@ MakeFileReaderFactory(std::vector<std::string> remote_files,
                                   (*files)[batch_key],
                                   nullptr,
                                   reader_memory_limit,
-                                  milvus::storage::GetReaderProperties()));
+                                  milvus::storage::GetReaderProperties(),
+                                  milvus::storage::GetArrowReaderProperties()));
         auto close_guard =
             folly::makeGuard([&reader]() { (void)reader->Close(); });
         ARROW_RETURN_NOT_OK(

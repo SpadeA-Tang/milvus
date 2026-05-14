@@ -26,7 +26,9 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
+	"github.com/milvus-io/milvus-proto/go-api/v2/hook"
 	"github.com/milvus-io/milvus/internal/proxy/accesslog/info"
+	"github.com/milvus-io/milvus/internal/util/hookutil"
 )
 
 type AccessKey struct{}
@@ -49,15 +51,20 @@ func UnaryUpdateAccessInfoInterceptor(ctx context.Context, req any, rpcInfonfo *
 }
 
 func AccessLogMiddleware(ctx *gin.Context) {
-	accessInfo := info.NewRestfulInfo()
+	accessInfo := info.NewRestfulInfo(ctx)
 	ctx.Set(ContextLogKey, accessInfo)
 	ctx.Next()
 	accessInfo.InitReq()
 	_globalL.Write(accessInfo)
+
+	// Plugin pulls req / status / err / path from the gin context — the
+	// middleware only needs to surface it through the stdlib context.
+	reqCtx := context.WithValue(ctx.Request.Context(), hook.GinParamsKey, ctx)
+	hookutil.GetExtension().ReportAction(reqCtx, nil, nil, nil, "", hookutil.ActionRestfulReturn)
 }
 
-func SetHTTPParams(p *gin.LogFormatterParams) {
-	value, ok := p.Keys[ContextLogKey]
+func SetHTTPParams(ctx *gin.Context, p *gin.LogFormatterParams) {
+	value, ok := ctx.Get(ContextLogKey)
 	if !ok {
 		return
 	}

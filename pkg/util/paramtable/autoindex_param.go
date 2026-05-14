@@ -40,7 +40,7 @@ type AutoIndexConfig struct {
 	SparseIndexParams      ParamItem  `refreshable:"true"`
 	BinaryIndexParams      ParamItem  `refreshable:"true"`
 	DeduplicateIndexParams ParamItem  `refreshable:"true"`
-	BigTopKIndexParams     ParamItem  `refreshable:"true"`
+	LargeTopKIndexParams   ParamItem  `refreshable:"true"`
 	EnableDeduplicateIndex ParamItem  `refreshable:"true"`
 	PrepareParams          ParamItem  `refreshable:"true"`
 	LoadAdaptParams        ParamItem  `refreshable:"true"`
@@ -140,14 +140,14 @@ func (p *AutoIndexConfig) init(base *BaseTable) {
 	}
 	p.EnableDeduplicateIndex.Init(base.mgr)
 
-	p.BigTopKIndexParams = ParamItem{
-		Key:          "autoIndex.params.bigTopK.build",
-		Version:      "2.6.13",
+	p.LargeTopKIndexParams = ParamItem{
+		Key:          "autoIndex.params.largeTopK.build",
+		Version:      "2.6.14",
 		DefaultValue: `{"nlist": 128, "index_type": "IVF_SQ8", "metric_type": "COSINE"}`,
-		Formatter:    GetBuildParamFormatter(FloatVectorDefaultMetricType, "autoIndex.params.bigTopK.build"),
+		Formatter:    GetBuildParamFormatter(FloatVectorDefaultMetricType, "autoIndex.params.largeTopK.build"),
 		Export:       true,
 	}
-	p.BigTopKIndexParams.Init(base.mgr)
+	p.LargeTopKIndexParams.Init(base.mgr)
 
 	p.PrepareParams = ParamItem{
 		Key:     "autoIndex.params.prepare",
@@ -208,7 +208,7 @@ func (p *AutoIndexConfig) init(base *BaseTable) {
 	p.ScalarAutoIndexParams = ParamItem{
 		Key:          "scalarAutoIndex.params.build",
 		Version:      "2.4.0",
-		DefaultValue: `{"int": "HYBRID","varchar": "HYBRID","bool": "BITMAP", "float": "INVERTED", "json": "INVERTED", "geometry": "RTREE", "timestamptz": "STL_SORT"}`,
+		DefaultValue: `{"int": "HYBRID","varchar": "HYBRID","bool": "BITMAP", "float": "HYBRID", "json": "INVERTED", "geometry": "RTREE", "timestamptz": "STL_SORT"}`,
 	}
 	p.ScalarAutoIndexParams.Init(base.mgr)
 

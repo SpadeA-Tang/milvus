@@ -98,12 +98,12 @@ class BitmapIndex : public ScalarIndex<T> {
     IsNotNull() override;
 
     const TargetBitmap
-    Range(T value, OpType op) override;
+    Range(const T& value, OpType op) override;
 
     const TargetBitmap
-    Range(T lower_bound_value,
+    Range(const T& lower_bound_value,
           bool lb_inclusive,
-          T upper_bound_value,
+          const T& upper_bound_value,
           bool ub_inclusive) override;
 
     std::optional<T>
@@ -195,6 +195,13 @@ class BitmapIndex : public ScalarIndex<T> {
     const TargetBitmap
     Query(const DatasetPtr& dataset) override;
 
+    void
+    WriteEntries(storage::IndexEntryWriter* writer) override;
+
+    void
+    LoadEntries(storage::IndexEntryReader& reader,
+                const Config& config) override;
+
     bool
     SupportPatternMatch() const override {
         return SupportRegexQuery();
@@ -259,16 +266,24 @@ class BitmapIndex : public ScalarIndex<T> {
     SerializeIndexData(uint8_t* index_data_ptr);
 
     std::pair<std::shared_ptr<uint8_t[]>, size_t>
+    SerializeValidBitsetData() const;
+
+    std::pair<std::shared_ptr<uint8_t[]>, size_t>
     SerializeIndexMeta();
 
     std::pair<size_t, size_t>
     DeserializeIndexMeta(const uint8_t* data_ptr, size_t data_size);
 
+    void
+    DeserializeValidBitsetData(const uint8_t* data_ptr, size_t data_size);
+
     T
     ParseKey(const uint8_t** ptr);
 
     void
-    DeserializeIndexData(const uint8_t* data_ptr, size_t index_length);
+    DeserializeIndexData(const uint8_t* data_ptr,
+                         size_t index_length,
+                         bool rebuild_validity_from_postings);
 
     void
     BuildOffsetCache();
@@ -286,30 +301,30 @@ class BitmapIndex : public ScalarIndex<T> {
     ConvertRoaringToBitset(const roaring::Roaring& values);
 
     TargetBitmap
-    RangeForRoaring(T value, OpType op);
+    RangeForRoaring(const T& value, OpType op);
 
     TargetBitmap
-    RangeForBitset(T value, OpType op);
+    RangeForBitset(const T& value, OpType op);
 
     TargetBitmap
-    RangeForMmap(T value, OpType op);
+    RangeForMmap(const T& value, OpType op);
 
     TargetBitmap
-    RangeForRoaring(T lower_bound_value,
+    RangeForRoaring(const T& lower_bound_value,
                     bool lb_inclusive,
-                    T upper_bound_value,
+                    const T& upper_bound_value,
                     bool ub_inclusive);
 
     TargetBitmap
-    RangeForBitset(T lower_bound_value,
+    RangeForBitset(const T& lower_bound_value,
                    bool lb_inclusive,
-                   T upper_bound_value,
+                   const T& upper_bound_value,
                    bool ub_inclusive);
 
     TargetBitmap
-    RangeForMmap(T lower_bound_value,
+    RangeForMmap(const T& lower_bound_value,
                  bool lb_inclusive,
-                 T upper_bound_value,
+                 const T& upper_bound_value,
                  bool ub_inclusive);
 
     void
@@ -317,7 +332,8 @@ class BitmapIndex : public ScalarIndex<T> {
                   const uint8_t* data,
                   size_t data_size,
                   size_t index_length,
-                  milvus::proto::common::LoadPriority priority);
+                  milvus::proto::common::LoadPriority priority,
+                  bool rebuild_validity_from_postings);
 
     void
     UnmapIndexData();
@@ -340,7 +356,6 @@ class BitmapIndex : public ScalarIndex<T> {
         bitsets_offsets_cache_;
     std::vector<typename std::map<T, roaring::Roaring>::iterator>
         mmap_offsets_cache_;
-    std::shared_ptr<storage::MemFileManagerImpl> file_manager_;
 
     // generate valid_bitset to speed up NotIn and IsNull and IsNotNull operate
     TargetBitmap valid_bitset_;

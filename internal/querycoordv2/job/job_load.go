@@ -32,10 +32,12 @@ import (
 	"github.com/milvus-io/milvus/internal/querycoordv2/observers"
 	"github.com/milvus-io/milvus/internal/querycoordv2/session"
 	"github.com/milvus-io/milvus/internal/querycoordv2/utils"
+	"github.com/milvus-io/milvus/internal/util/proxyutil"
 	"github.com/milvus-io/milvus/pkg/v2/eventlog"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/metrics"
 	"github.com/milvus-io/milvus/pkg/v2/proto/messagespb"
+	"github.com/milvus-io/milvus/pkg/v2/proto/proxypb"
 	"github.com/milvus-io/milvus/pkg/v2/proto/querypb"
 	"github.com/milvus-io/milvus/pkg/v2/streaming/util/message"
 	"github.com/milvus-io/milvus/pkg/v2/util/merr"
@@ -56,6 +58,7 @@ type LoadCollectionJob struct {
 	collectionObserver *observers.CollectionObserver
 	checkerController  *checkers.CheckerController
 	nodeMgr            *session.NodeManager
+	proxyManager       proxyutil.ProxyClientManagerInterface
 }
 
 func NewLoadCollectionJob(
@@ -69,6 +72,7 @@ func NewLoadCollectionJob(
 	collectionObserver *observers.CollectionObserver,
 	checkerController *checkers.CheckerController,
 	nodeMgr *session.NodeManager,
+	proxyManager proxyutil.ProxyClientManagerInterface,
 ) *LoadCollectionJob {
 	return &LoadCollectionJob{
 		BaseJob:            NewBaseJob(ctx, 0, result.Message.Header().GetCollectionId()),
@@ -82,6 +86,7 @@ func NewLoadCollectionJob(
 		collectionObserver: collectionObserver,
 		checkerController:  checkerController,
 		nodeMgr:            nodeMgr,
+		proxyManager:       proxyManager,
 	}
 }
 
@@ -110,13 +115,21 @@ func (job *LoadCollectionJob) Execute() error {
 			zap.Int("localReplicaCount", len(localReplicas)))
 	}
 
-	// 2. create replica if not exist
+	// 2. create replica if not exist (may also remove redundant replicas)
 	if _, err := utils.SpawnReplicasWithReplicaConfig(job.ctx, job.meta, meta.SpawnWithReplicaConfigParams{
 		CollectionID: req.GetCollectionId(),
 		Channels:     collInfo.GetVirtualChannelNames(),
 		Configs:      replicas,
 	}); err != nil {
 		return err
+	}
+
+	// 2.1 invalidate shard leader cache after replica changes, so proxies stop
+	// routing to released replicas' shard leaders before async cleanup happens.
+	if job.proxyManager != nil {
+		job.proxyManager.InvalidateShardLeaderCache(job.ctx, &proxypb.InvalidateShardLeaderCacheRequest{
+			CollectionIDs: []int64{req.GetCollectionId()},
+		})
 	}
 
 	// 3. put load info meta
@@ -159,7 +172,7 @@ func (job *LoadCollectionJob) Execute() error {
 		Schema:    collInfo.GetSchema(),
 	}
 	incomingPartitions := typeutil.NewSet(req.GetPartitionIds()...)
-	currentPartitions := job.meta.CollectionManager.GetPartitionsByCollection(job.ctx, req.GetCollectionId())
+	currentPartitions := job.meta.GetPartitionsByCollection(job.ctx, req.GetCollectionId())
 	toReleasePartitions := make([]int64, 0)
 	for _, partition := range currentPartitions {
 		if !incomingPartitions.Contain(partition.GetPartitionID()) {
@@ -168,12 +181,12 @@ func (job *LoadCollectionJob) Execute() error {
 	}
 	if len(toReleasePartitions) > 0 {
 		job.targetObserver.ReleasePartition(req.GetCollectionId(), toReleasePartitions...)
-		if err := job.meta.CollectionManager.RemovePartition(job.ctx, req.GetCollectionId(), toReleasePartitions...); err != nil {
+		if err := job.meta.RemovePartition(job.ctx, req.GetCollectionId(), toReleasePartitions...); err != nil {
 			return errors.Wrap(err, "failed to remove partitions")
 		}
 	}
 
-	if err = job.meta.CollectionManager.PutCollection(job.ctx, collection, partitions...); err != nil {
+	if err = job.meta.PutCollection(job.ctx, collection, partitions...); err != nil {
 		msg := "failed to store collection and partitions"
 		log.Warn(msg, zap.Error(err))
 		return errors.Wrap(err, msg)
@@ -233,7 +246,7 @@ func getLocalReplicaConfig(ctx context.Context, m *meta.Meta, collectionID int64
 	}
 
 	// Get current replicas from meta for idempotent generation
-	currentReplicas := m.ReplicaManager.GetByCollection(ctx, collectionID)
+	currentReplicas := m.GetByCollection(ctx, collectionID)
 	currentReplicaMap := make(map[int64]*meta.Replica)
 	for _, r := range currentReplicas {
 		currentReplicaMap[r.GetID()] = r

@@ -2,6 +2,7 @@ package meta
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -451,9 +452,10 @@ func (suite *ReplicaSuite) TestTryBalanceNodeForChannelUnbalancedToBalanced() {
 	countOfChannelsWith2Nodes := 0
 	countOfChannelsWith1Node := 0
 	for _, count := range nodeCountPerChannel {
-		if count == 2 {
+		switch count {
+		case 2:
 			countOfChannelsWith2Nodes++
-		} else if count == 1 {
+		case 1:
 			countOfChannelsWith1Node++
 		}
 	}
@@ -717,9 +719,10 @@ func (suite *ReplicaSuite) TestCalculateOptimalAssignments() {
 	countsOfThree := 0
 	for _, count := range assignments {
 		totalAssigned += count
-		if count == 2 {
+		switch count {
+		case 2:
 			countsOfTwo++
-		} else if count == 3 {
+		case 3:
 			countsOfThree++
 		}
 	}
@@ -837,6 +840,42 @@ func (suite *ReplicaSuite) TestTryEnableChannelExclusiveModeInsufficientNodes() 
 	for _, channelNodeInfo := range newR.replicaPB.GetChannelNodeInfos() {
 		suite.Equal(0, len(channelNodeInfo.GetRwNodes()))
 	}
+}
+
+func (suite *ReplicaSuite) TestWaitRGReady() {
+	paramtable.Get().Save(paramtable.Get().QueryCoordCfg.ClusterLevelLoadWaitRGReadyTimeout.Key, "1m")
+	defer paramtable.Get().Reset(paramtable.Get().QueryCoordCfg.ClusterLevelLoadWaitRGReadyTimeout.Key)
+
+	// Default replica should not have the flag set
+	r := newReplica(&querypb.Replica{
+		ID:            1,
+		CollectionID:  2,
+		ResourceGroup: DefaultResourceGroupName,
+	})
+	suite.False(r.NeedWaitRGReady(), "default replica should not need to wait for RG ready")
+
+	// Set the timestamp via mutableReplica
+	mutable := r.CopyForWrite()
+	mutable.SetWaitRGReadyAt(time.Now())
+	r2 := mutable.IntoReplica()
+	suite.True(r2.NeedWaitRGReady(), "should need to wait when timestamp is recent")
+
+	// CopyForWrite should carry the timestamp
+	mutable2 := r2.CopyForWrite()
+	r3 := mutable2.IntoReplica()
+	suite.True(r3.NeedWaitRGReady(), "CopyForWrite should carry waitRGReadyAt")
+
+	// Explicitly clear the timestamp
+	mutable3 := r3.CopyForWrite()
+	mutable3.SetWaitRGReadyAt(time.Time{})
+	r4 := mutable3.IntoReplica()
+	suite.False(r4.NeedWaitRGReady(), "should not wait after clearing timestamp")
+
+	// Expired timestamp should return false
+	mutable4 := r.CopyForWrite()
+	mutable4.SetWaitRGReadyAt(time.Now().Add(-120 * time.Second))
+	r5 := mutable4.IntoReplica()
+	suite.False(r5.NeedWaitRGReady(), "should not wait when timestamp has expired")
 }
 
 func TestReplica(t *testing.T) {

@@ -19,6 +19,7 @@ package httpserver
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -162,7 +163,8 @@ type RenameCollectionReq struct {
 	NewDbName         string `json:"newDbName"`
 }
 
-func (req *RenameCollectionReq) GetDbName() string { return req.DbName }
+func (req *RenameCollectionReq) GetDbName() string         { return req.DbName }
+func (req *RenameCollectionReq) GetCollectionName() string { return req.CollectionName }
 
 type DropCollectionPropertiesReq struct {
 	DbName         string   `json:"dbName"`
@@ -296,7 +298,8 @@ type QueryReqV2 struct {
 	ConsistencyLevel string                 `json:"consistencyLevel"`
 }
 
-func (req *QueryReqV2) GetDbName() string { return req.DbName }
+func (req *QueryReqV2) GetDbName() string         { return req.DbName }
+func (req *QueryReqV2) GetCollectionName() string { return req.CollectionName }
 
 type CollectionIDReq struct {
 	DbName           string      `json:"dbName"`
@@ -308,7 +311,8 @@ type CollectionIDReq struct {
 	ConsistencyLevel string      `json:"consistencyLevel"`
 }
 
-func (req *CollectionIDReq) GetDbName() string { return req.DbName }
+func (req *CollectionIDReq) GetDbName() string         { return req.DbName }
+func (req *CollectionIDReq) GetCollectionName() string { return req.CollectionName }
 
 type CollectionFilterReq struct {
 	DbName         string                 `json:"dbName"`
@@ -318,17 +322,58 @@ type CollectionFilterReq struct {
 	ExprParams     map[string]interface{} `json:"exprParams"`
 }
 
-func (req *CollectionFilterReq) GetDbName() string { return req.DbName }
+func (req *CollectionFilterReq) GetDbName() string         { return req.DbName }
+func (req *CollectionFilterReq) GetCollectionName() string { return req.CollectionName }
 
 type CollectionDataReq struct {
-	DbName         string                   `json:"dbName"`
-	CollectionName string                   `json:"collectionName" binding:"required"`
-	PartitionName  string                   `json:"partitionName"`
-	Data           []map[string]interface{} `json:"data" binding:"required"`
-	PartialUpdate  bool                     `json:"partialUpdate"`
+	DbName         string                    `json:"dbName"`
+	CollectionName string                    `json:"collectionName" binding:"required"`
+	PartitionName  string                    `json:"partitionName"`
+	Data           []map[string]interface{}  `json:"data" binding:"required"`
+	PartialUpdate  bool                      `json:"partialUpdate"`
+	FieldOps       []FieldPartialUpdateOpReq `json:"fieldOps"`
 }
 
-func (req *CollectionDataReq) GetDbName() string { return req.DbName }
+func (req *CollectionDataReq) GetDbName() string         { return req.DbName }
+func (req *CollectionDataReq) GetCollectionName() string { return req.CollectionName }
+
+type FieldPartialUpdateOpReq struct {
+	FieldName string `json:"fieldName"`
+	Op        string `json:"op"`
+}
+
+func buildFieldPartialUpdateOps(fieldOps []FieldPartialUpdateOpReq) ([]*schemapb.FieldPartialUpdateOp, error) {
+	if len(fieldOps) == 0 {
+		return nil, nil
+	}
+
+	ops := make([]*schemapb.FieldPartialUpdateOp, 0, len(fieldOps))
+	for _, fieldOp := range fieldOps {
+		op, err := parseFieldPartialUpdateOp(fieldOp.Op)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, &schemapb.FieldPartialUpdateOp{
+			FieldName: fieldOp.FieldName,
+			Op:        op,
+		})
+	}
+	return ops, nil
+}
+
+func parseFieldPartialUpdateOp(op string) (schemapb.FieldPartialUpdateOp_OpType, error) {
+	switch strings.ToUpper(strings.TrimSpace(op)) {
+	case "REPLACE":
+		return schemapb.FieldPartialUpdateOp_REPLACE, nil
+	case "ARRAY_APPEND":
+		return schemapb.FieldPartialUpdateOp_ARRAY_APPEND, nil
+	case "ARRAY_REMOVE":
+		return schemapb.FieldPartialUpdateOp_ARRAY_REMOVE, nil
+	default:
+		return schemapb.FieldPartialUpdateOp_REPLACE,
+			merr.WrapErrParameterInvalidMsg("unsupported partial update op: " + op)
+	}
+}
 
 type SearchReqV2 struct {
 	DbName           string                 `json:"dbName"`
@@ -352,7 +397,8 @@ type SearchReqV2 struct {
 	Params map[string]float64 `json:"params"`
 }
 
-func (req *SearchReqV2) GetDbName() string { return req.DbName }
+func (req *SearchReqV2) GetDbName() string         { return req.DbName }
+func (req *SearchReqV2) GetCollectionName() string { return req.CollectionName }
 
 type Rand struct {
 	Strategy string                 `json:"strategy"`
@@ -387,7 +433,8 @@ type HybridSearchReq struct {
 	FunctionScore    FunctionScore  `json:"functionScore"`
 }
 
-func (req *HybridSearchReq) GetDbName() string { return req.DbName }
+func (req *HybridSearchReq) GetDbName() string         { return req.DbName }
+func (req *HybridSearchReq) GetCollectionName() string { return req.CollectionName }
 
 type ReturnErrMsg struct {
 	Code    int32  `json:"code"`
@@ -401,7 +448,8 @@ type PartitionsReq struct {
 	PartitionNames []string `json:"partitionNames" binding:"required"`
 }
 
-func (req *PartitionsReq) GetDbName() string { return req.DbName }
+func (req *PartitionsReq) GetDbName() string         { return req.DbName }
+func (req *PartitionsReq) GetCollectionName() string { return req.CollectionName }
 
 type UserReq struct {
 	UserName string `json:"userName" binding:"required"`
@@ -475,6 +523,9 @@ type GrantV2Req struct {
 	Privilege      string `json:"privilege" binding:"required"`
 }
 
+func (req *GrantV2Req) GetDbName() string         { return req.DbName }
+func (req *GrantV2Req) GetCollectionName() string { return req.CollectionName }
+
 type GrantReq struct {
 	RoleName   string `json:"roleName" binding:"required"`
 	ObjectType string `json:"objectType" binding:"required"`
@@ -499,7 +550,8 @@ type IndexParamReq struct {
 	IndexParams    []IndexParam `json:"indexParams" binding:"required"`
 }
 
-func (req *IndexParamReq) GetDbName() string { return req.DbName }
+func (req *IndexParamReq) GetDbName() string         { return req.DbName }
+func (req *IndexParamReq) GetCollectionName() string { return req.CollectionName }
 
 type IndexReq struct {
 	DbName         string `json:"dbName"`
@@ -643,7 +695,8 @@ type CollectionReq struct {
 	Description      string                 `json:"description"`
 }
 
-func (req *CollectionReq) GetDbName() string { return req.DbName }
+func (req *CollectionReq) GetDbName() string         { return req.DbName }
+func (req *CollectionReq) GetCollectionName() string { return req.CollectionName }
 
 type AliasReq struct {
 	DbName    string `json:"dbName"`
@@ -832,4 +885,5 @@ type RunAnalyzerReq struct {
 	AnalyzerNames  []string `json:"analyzerNames"`
 }
 
-func (req *RunAnalyzerReq) GetDbName() string { return req.DbName }
+func (req *RunAnalyzerReq) GetDbName() string         { return req.DbName }
+func (req *RunAnalyzerReq) GetCollectionName() string { return req.CollectionName }

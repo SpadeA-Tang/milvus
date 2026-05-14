@@ -3023,7 +3023,7 @@ func TestGetDataIterator(t *testing.T) {
 			want: []any{int64(1), int64(2), int64(3)},
 		},
 		{
-			name: "ints with nulls",
+			name: "ints with nulls compact",
 			field: &schemapb.FieldData{
 				Type: schemapb.DataType_Int64,
 				Field: &schemapb.FieldData_Scalars{
@@ -3038,6 +3038,57 @@ func TestGetDataIterator(t *testing.T) {
 				ValidData: []bool{true, false, true, true},
 			},
 			want: []any{int64(1), nil, int64(2), int64(3)},
+		},
+		{
+			name: "ints with nulls full-size",
+			field: &schemapb.FieldData{
+				Type: schemapb.DataType_Int64,
+				Field: &schemapb.FieldData_Scalars{
+					Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_LongData{
+							LongData: &schemapb.LongArray{
+								Data: []int64{1, 0, 2, 3},
+							},
+						},
+					},
+				},
+				ValidData: []bool{true, false, true, true},
+			},
+			want: []any{int64(1), nil, int64(2), int64(3)},
+		},
+		{
+			name: "strings with nulls full-size",
+			field: &schemapb.FieldData{
+				Type: schemapb.DataType_VarChar,
+				Field: &schemapb.FieldData_Scalars{
+					Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_StringData{
+							StringData: &schemapb.StringArray{
+								Data: []string{"a", "b", "", "c", ""},
+							},
+						},
+					},
+				},
+				ValidData: []bool{true, true, false, true, false},
+			},
+			want: []any{"a", "b", nil, "c", nil},
+		},
+		{
+			name: "strings with nulls compact",
+			field: &schemapb.FieldData{
+				Type: schemapb.DataType_VarChar,
+				Field: &schemapb.FieldData_Scalars{
+					Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_StringData{
+							StringData: &schemapb.StringArray{
+								Data: []string{"a", "b", "c"},
+							},
+						},
+					},
+				},
+				ValidData: []bool{true, true, false, true, false},
+			},
+			want: []any{"a", "b", nil, "c", nil},
 		},
 	}
 	for _, tt := range tests {
@@ -4572,7 +4623,7 @@ func TestGetNeedProcessFunctions(t *testing.T) {
 	{
 		fs := []*schemapb.FunctionSchema{{Name: "test_func", Type: schemapb.FunctionType_BM25, OutputFieldIds: []int64{1}}}
 		_, err := GetNeedProcessFunctions([]int64{1}, fs, true, false)
-		assert.ErrorContains(t, err, "Attempt to insert bm25 function output field")
+		assert.ErrorContains(t, err, "attempt to insert bm25 function output field")
 	}
 	{
 		fs := []*schemapb.FunctionSchema{

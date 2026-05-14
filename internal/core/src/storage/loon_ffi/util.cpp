@@ -107,12 +107,17 @@ MakePropertiesFromStorageConfig(CStorageConfig c_storage_config) {
     keys.emplace_back(PROPERTY_FS_MAX_CONNECTIONS);
     values.emplace_back(max_connections_str.c_str());
 
-    if (c_storage_config.tls_min_version != nullptr &&
-        std::string(c_storage_config.tls_min_version).length() > 0 &&
-        std::string(c_storage_config.tls_min_version) != "default") {
-        keys.emplace_back(PROPERTY_FS_TLS_MIN_VERSION);
-        values.emplace_back(c_storage_config.tls_min_version);
+    if (c_storage_config.tls_min_version != nullptr) {
+        std::string tls_ver(c_storage_config.tls_min_version);
+        if (!tls_ver.empty() && tls_ver != "default") {
+            keys.emplace_back(PROPERTY_FS_TLS_MIN_VERSION);
+            values.emplace_back(c_storage_config.tls_min_version);
+        }
     }
+
+    keys.emplace_back(PROPERTY_FS_USE_CRC32C_CHECKSUM);
+    values.emplace_back(c_storage_config.use_crc32c_checksum ? "true"
+                                                             : "false");
 
     // Create Properties using FFI
     auto properties = std::make_shared<Properties>();
@@ -219,13 +224,19 @@ MakeInternalPropertiesFromStorageConfig(CStorageConfig c_storage_config) {
         PROPERTY_FS_MAX_CONNECTIONS,
         std::to_string(c_storage_config.max_connections).c_str());
 
-    if (c_storage_config.tls_min_version != nullptr &&
-        std::string(c_storage_config.tls_min_version).length() > 0 &&
-        std::string(c_storage_config.tls_min_version) != "default") {
-        milvus_storage::api::SetValue(*properties_map,
-                                      PROPERTY_FS_TLS_MIN_VERSION,
-                                      c_storage_config.tls_min_version);
+    if (c_storage_config.tls_min_version != nullptr) {
+        std::string tls_ver(c_storage_config.tls_min_version);
+        if (!tls_ver.empty() && tls_ver != "default") {
+            milvus_storage::api::SetValue(*properties_map,
+                                          PROPERTY_FS_TLS_MIN_VERSION,
+                                          c_storage_config.tls_min_version);
+        }
     }
+
+    milvus_storage::api::SetValue(
+        *properties_map,
+        PROPERTY_FS_USE_CRC32C_CHECKSUM,
+        c_storage_config.use_crc32c_checksum ? "true" : "false");
 
     return properties_map;
 }
@@ -263,7 +274,8 @@ ToCStorageConfig(const milvus::storage::StorageConfig& config) {
                           config.gcp_credential_json.c_str(),
                           false,  // this field does not exist in StorageConfig
                           config.max_connections,
-                          config.tls_min_version.c_str()};
+                          config.tls_min_version.c_str(),
+                          config.use_crc32c_checksum};
 }
 
 std::shared_ptr<milvus_storage::api::ColumnGroups>

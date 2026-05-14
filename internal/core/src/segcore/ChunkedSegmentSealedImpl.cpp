@@ -1785,8 +1785,6 @@ ChunkedSegmentSealedImpl::LoadTextIndex(
     // Check for cancellation before starting
     CheckCancellation(op_ctx, id_, "ChunkedSegmentSealedImpl::LoadTextIndex()");
 
-    std::unique_lock lck(mutex_);
-
     milvus::storage::FieldDataMeta field_data_meta{info_proto->collectionid(),
                                                    info_proto->partitionid(),
                                                    this->get_segment_id(),
@@ -1811,6 +1809,7 @@ ChunkedSegmentSealedImpl::LoadTextIndex(
     config[milvus::index::INDEX_FILES] = files;
     config[milvus::LOAD_PRIORITY] = info_proto->load_priority();
     config[milvus::index::ENABLE_MMAP] = info_proto->enable_mmap();
+    config[milvus::index::COLLECTION_ID] = info_proto->collectionid();
     if (info_proto->warmup_policy() != "") {
         config[milvus::index::WARMUP] = info_proto->warmup_policy();
     }
@@ -1835,6 +1834,11 @@ ChunkedSegmentSealedImpl::LoadTextIndex(
     auto cache_slot =
         milvus::cachinglayer::Manager::GetInstance().CreateCacheSlot(
             std::move(translator), op_ctx);
+
+    // CreateCacheSlot may synchronously warm up the text index. Keep that work
+    // outside the segment mutex so multiple text indexes can load in parallel.
+    CheckCancellation(op_ctx, id_, "ChunkedSegmentSealedImpl::LoadTextIndex()");
+    std::unique_lock lck(mutex_);
     text_indexes_[field_id] = std::move(cache_slot);
 }
 
@@ -2173,8 +2177,7 @@ ChunkedSegmentSealedImpl::bulk_subscript(
     column->BulkRawJsonAt(
         op_ctx,
         [&](Json json, size_t offset, bool is_valid) {
-            dst->at(offset) =
-                ExtractSubJson(std::string(json.data()), dynamic_field_names);
+            dst->at(offset) = ExtractSubJson(json.data(), dynamic_field_names);
         },
         seg_offsets,
         count);
@@ -2694,9 +2697,8 @@ ChunkedSegmentSealedImpl::Reopen(SchemaPtr sch) {
 
 void
 ChunkedSegmentSealedImpl::Reopen(
+    milvus::OpContext* op_ctx,
     const milvus::proto::segcore::SegmentLoadInfo& new_load_info) {
-    // TODO: add op_ctx for Reopen
-    milvus::OpContext* op_ctx = nullptr;
     SegmentLoadInfo new_seg_load_info(new_load_info, schema_);
 
     SegmentLoadInfo current;
@@ -2709,15 +2711,15 @@ ChunkedSegmentSealedImpl::Reopen(
     // compute load diff
     auto diff = current.ComputeDiff(new_seg_load_info);
     LOG_INFO("Reopen segment {} with diff {}", id_, diff.ToString());
-    ApplyLoadDiff(new_seg_load_info, diff);
+    ApplyLoadDiff(op_ctx, new_seg_load_info, diff);
 
     LOG_INFO("Reopen segment {} done", id_);
 }
 
 void
-ChunkedSegmentSealedImpl::ApplyLoadDiff(SegmentLoadInfo& segment_load_info,
-                                        LoadDiff& diff,
-                                        milvus::OpContext* op_ctx) {
+ChunkedSegmentSealedImpl::ApplyLoadDiff(milvus::OpContext* op_ctx,
+                                        SegmentLoadInfo& segment_load_info,
+                                        LoadDiff& diff) {
     milvus::tracer::TraceContext trace_ctx;
     if (!diff.indexes_to_load.empty()) {
         LoadBatchIndexes(trace_ctx, diff.indexes_to_load, op_ctx);
@@ -2725,7 +2727,7 @@ ChunkedSegmentSealedImpl::ApplyLoadDiff(SegmentLoadInfo& segment_load_info,
 
     // reload fields
     if (!diff.fields_to_reload.empty()) {
-        ReloadColumns(diff.fields_to_reload);
+        ReloadColumns(diff.fields_to_reload, op_ctx);
     }
 
     // drop index, must after reload binlog
@@ -2746,14 +2748,18 @@ ChunkedSegmentSealedImpl::ApplyLoadDiff(SegmentLoadInfo& segment_load_info,
         reader_ = milvus_storage::api::Reader::create(
             column_groups, arrow_schema, nullptr, *properties);
         if (!diff.column_groups_to_load.empty()) {
-            LoadColumnGroups(
-                column_groups, properties, diff.column_groups_to_load, true);
+            LoadColumnGroups(column_groups,
+                             properties,
+                             diff.column_groups_to_load,
+                             true,
+                             op_ctx);
         }
         if (!diff.column_groups_to_lazyload.empty()) {
             LoadColumnGroups(column_groups,
                              properties,
                              diff.column_groups_to_lazyload,
-                             false);
+                             false,
+                             op_ctx);
         }
     }
 
@@ -2921,9 +2927,9 @@ ChunkedSegmentSealedImpl::LoadGeometryCache(
 
 void
 ChunkedSegmentSealedImpl::SetLoadInfo(
-    const proto::segcore::SegmentLoadInfo& load_info) {
+    proto::segcore::SegmentLoadInfo load_info) {
     std::unique_lock lck(mutex_);
-    segment_load_info_ = SegmentLoadInfo(load_info, schema_);
+    segment_load_info_ = SegmentLoadInfo(std::move(load_info), schema_);
     LOG_INFO(
         "SetLoadInfo for segment {}, num_rows: {}, index count: {}, "
         "storage_version: {}",
@@ -2950,9 +2956,14 @@ ChunkedSegmentSealedImpl::LoadColumnGroups(
                                    properties,
                                    cg_index,
                                    field_ids,
-                                   eager_load]() {
-            LoadColumnGroup(
-                column_groups, properties, cg_index, field_ids, eager_load);
+                                   eager_load,
+                                   op_ctx]() {
+            LoadColumnGroup(column_groups,
+                            properties,
+                            cg_index,
+                            field_ids,
+                            eager_load,
+                            op_ctx);
         });
         load_group_futures.emplace_back(std::move(future));
     }
@@ -3306,7 +3317,7 @@ ChunkedSegmentSealedImpl::Load(milvus::tracer::TraceContext& trace_ctx,
 
     auto diff = segment_load_info_.GetLoadDiff();
     LOG_WARN("Load segment {} with diff {}", id_, diff.ToString());
-    ApplyLoadDiff(segment_load_info_, diff, op_ctx);
+    ApplyLoadDiff(op_ctx, segment_load_info_, diff);
 
     LOG_INFO("Successfully loaded segment {} with {} rows", id_, num_rows);
 }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "common/common_type_c.h"
+#include "fmt/core.h"
 #include "parquet/encryption/encryption.h"
 #include "parquet/properties.h"
 #include "parquet/types.h"
@@ -76,6 +77,7 @@ NewPackedWriterWithStorageConfig(struct ArrowSchema* schema,
             c_storage_config.tls_min_version != nullptr
                 ? std::string(c_storage_config.tls_min_version)
                 : "",
+            c_storage_config.use_crc32c_checksum,
         });
         if (!trueFs) {
             return milvus::FailureCStatus(
@@ -236,8 +238,9 @@ WriteRecordBatch(CPackedWriter c_packed_writer,
             if (!array.ok()) {
                 return milvus::FailureCStatus(
                     milvus::ErrorCode::FileWriteFailed,
-                    "Failed to import array " + std::to_string(i) + ": " +
-                        array.status().ToString());
+                    fmt::format("Failed to import array {}: {}",
+                                i,
+                                array.status().ToString()));
             }
             all_arrays.push_back(array.ValueOrDie());
         }
@@ -333,6 +336,7 @@ GetFileSizeWithStorageConfig(const char* path,
             c_storage_config.tls_min_version != nullptr
                 ? std::string(c_storage_config.tls_min_version)
                 : "",
+            c_storage_config.use_crc32c_checksum,
         });
 
         if (!trueFs) {

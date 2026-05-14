@@ -109,6 +109,7 @@ class SegmentGrowingImpl : public SegmentGrowing {
 
     void
     Reopen(
+        milvus::OpContext* op_ctx,
         const milvus::proto::segcore::SegmentLoadInfo& new_load_info) override;
 
     void
@@ -222,6 +223,11 @@ class SegmentGrowingImpl : public SegmentGrowing {
     int64_t
     get_deleted_count() const override {
         return deleted_record_.size();
+    }
+
+    Timestamp
+    get_max_timestamp() const override {
+        return insert_record_.timestamp_index_.get_max_timestamp();
     }
 
     int64_t

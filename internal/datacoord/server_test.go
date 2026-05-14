@@ -1878,7 +1878,7 @@ func TestHandleSessionEvent(t *testing.T) {
 		}
 		err = svr.handleSessionEvent(context.Background(), typeutil.DataNodeRole, evt)
 		assert.NoError(t, err)
-		dataNodes = svr.nodeManager.GetClientIDs()
+		_ = svr.nodeManager.GetClientIDs()
 	})
 
 	t.Run("nil evt", func(t *testing.T) {
@@ -2113,10 +2113,10 @@ func WithMeta(meta *meta) Option {
 		svr.meta = meta
 
 		svr.watchClient = etcdkv.NewEtcdKV(svr.etcdCli, Params.EtcdCfg.MetaRootPath.GetValue(),
-			etcdkv.WithRequestTimeout(paramtable.Get().ServiceParam.EtcdCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
+			etcdkv.WithRequestTimeout(paramtable.Get().EtcdCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
 		metaRootPath := Params.EtcdCfg.MetaRootPath.GetValue()
 		svr.kv = etcdkv.NewEtcdKV(svr.etcdCli, metaRootPath,
-			etcdkv.WithRequestTimeout(paramtable.Get().ServiceParam.EtcdCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
+			etcdkv.WithRequestTimeout(paramtable.Get().EtcdCfg.RequestTimeout.GetAsDuration(time.Millisecond)))
 	}
 }
 
@@ -2578,22 +2578,8 @@ func TestServer_InitMessageCallback(t *testing.T) {
 	}
 	server.stateCode.Store(commonpb.StateCode_Abnormal)
 
-	// Test initMessageCallback
-	server.initMessageCallback()
-
-	// Test Import message check callback
-	msg, err := message.NewImportMessageBuilderV1().
-		WithHeader(&message.ImportMessageHeader{}).
-		WithBody(&msgpb.ImportMsg{
-			Base: &commonpb.MsgBase{
-				MsgType: commonpb.MsgType_Import,
-			},
-			Schema: &schemapb.CollectionSchema{},
-		}).
-		WithBroadcast([]string{"ch-0"}).
-		BuildBroadcast()
-	err = registry.CallMessageCheckCallback(ctx, msg)
-	assert.NoError(t, err)
+	registry.ResetRegistration()
+	RegisterDDLCallbacks(server)
 
 	// Test Import message ack callback
 	importMsg := message.NewImportMessageBuilderV1().
@@ -2606,7 +2592,7 @@ func TestServer_InitMessageCallback(t *testing.T) {
 		}).
 		WithBroadcast([]string{"test_channel"}).
 		MustBuildBroadcast()
-	err = registry.CallMessageAckCallback(ctx, importMsg, map[string]*message.AppendResult{
+	err := registry.CallMessageAckCallback(ctx, importMsg, map[string]*message.AppendResult{
 		"test_channel": {
 			MessageID:              walimplstest.NewTestMessageID(1),
 			LastConfirmedMessageID: walimplstest.NewTestMessageID(1),

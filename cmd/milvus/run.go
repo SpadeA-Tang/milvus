@@ -37,6 +37,7 @@ func (c *run) execute(args []string, flags *flag.FlagSet) {
 	runtimeDir := createRuntimeDir(serverType)
 	filename := getPidFileName(serverType, roles.Alias)
 
+	maybeEnableOpenSSLFIPS()
 	c.printBanner(flags.Output())
 	c.injectVariablesToEnv()
 	c.printHardwareInfo(flags.Output())
@@ -56,12 +57,13 @@ func (c *run) printBanner(w io.Writer) {
 	fmt.Fprintln(w, " /_/  /_/___/____/___/\\____/___/     ")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Welcome to Milvus!")
-	fmt.Fprintln(w, "Version:   "+common.Version.String())
+	fmt.Fprintln(w, "Version:   "+getEffectiveVersion())
 	fmt.Fprintln(w, "Built:     "+BuildTime)
 	fmt.Fprintln(w, "GitCommit: "+GitCommit)
 	fmt.Fprintln(w, "GoVersion: "+GoVersion)
+	fmt.Fprintf(w, "Milvus FIPS in Go: BoringCrypto %v\n", boringEnabled())
 	fmt.Fprintln(w)
-	metrics.BuildInfo.WithLabelValues(common.Version.String(), BuildTime, GitCommit).Set(1)
+	metrics.BuildInfo.WithLabelValues(getEffectiveVersion(), BuildTime, GitCommit).Set(1)
 }
 
 func (c *run) printHardwareInfo(w io.Writer) {
@@ -70,6 +72,13 @@ func (c *run) printHardwareInfo(w io.Writer) {
 	fmt.Fprintf(w, "TotalMem: %d\n", totalMem)
 	fmt.Fprintf(w, "UsedMem: %d\n", usedMem)
 	fmt.Fprintln(w)
+}
+
+func getEffectiveVersion() string {
+	if MilvusVersion != "" && MilvusVersion != "unknown" {
+		return MilvusVersion
+	}
+	return common.Version.String()
 }
 
 func (c *run) injectVariablesToEnv() {
@@ -83,7 +92,7 @@ func (c *run) injectVariablesToEnv() {
 			zap.Error(err))
 	}
 
-	err = os.Setenv(metricsinfo.GitBuildTagsEnvKey, common.Version.String())
+	err = os.Setenv(metricsinfo.GitBuildTagsEnvKey, getEffectiveVersion())
 	if err != nil {
 		log.Warn(fmt.Sprintf("failed to inject %s to environment variable", metricsinfo.GitBuildTagsEnvKey),
 			zap.Error(err))

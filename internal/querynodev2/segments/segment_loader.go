@@ -84,8 +84,8 @@ type Loader interface {
 	// LoadBloomFilterSet loads needed statslog for RemoteSegment.
 	LoadBloomFilterSet(ctx context.Context, collectionID int64, infos ...*querypb.SegmentLoadInfo) ([]*pkoracle.BloomFilterSet, error)
 
-	// LoadBM25Stats loads BM25 statslog for RemoteSegment
-	LoadBM25Stats(ctx context.Context, collectionID int64, infos ...*querypb.SegmentLoadInfo) (*typeutil.ConcurrentMap[int64, map[int64]*storage.BM25Stats], error)
+	// GetChunkManager returns the chunk manager for remote storage access.
+	GetChunkManager() storage.ChunkManager
 
 	// LoadIndex append index for segment and remove vector binlogs.
 	LoadIndex(ctx context.Context,
@@ -245,7 +245,7 @@ var _ Loader = (*segmentLoader)(nil)
 
 func addBucketNameStorageV2(segmentInfo *querypb.SegmentLoadInfo) {
 	if segmentInfo.GetStorageVersion() == 2 && paramtable.Get().CommonCfg.StorageType.GetValue() != "local" {
-		bucketName := paramtable.Get().ServiceParam.MinioCfg.BucketName.GetValue()
+		bucketName := paramtable.Get().MinioCfg.BucketName.GetValue()
 		for _, fieldBinlog := range segmentInfo.GetBinlogPaths() {
 			for _, binlog := range fieldBinlog.GetBinlogs() {
 				binlog.LogPath = path.Join(bucketName, binlog.LogPath)
@@ -628,42 +628,8 @@ func (loader *segmentLoader) waitSegmentLoadDone(ctx context.Context, segmentTyp
 	return nil
 }
 
-func (loader *segmentLoader) LoadBM25Stats(ctx context.Context, collectionID int64, infos ...*querypb.SegmentLoadInfo) (*typeutil.ConcurrentMap[int64, map[int64]*storage.BM25Stats], error) {
-	segmentNum := len(infos)
-	if segmentNum == 0 {
-		return nil, nil
-	}
-
-	log.Info("start loading bm25 stats for remote...", zap.Int64("collectionID", collectionID), zap.Int("segmentNum", segmentNum))
-
-	loadedStats := typeutil.NewConcurrentMap[int64, map[int64]*storage.BM25Stats]()
-	loadRemoteBM25Func := func(idx int) error {
-		loadInfo := infos[idx]
-		segmentID := loadInfo.SegmentID
-		stats := make(map[int64]*storage.BM25Stats)
-
-		log.Info("loading bm25 stats for remote...", zap.Int64("collectionID", collectionID), zap.Int64("segment", segmentID))
-		logpaths := loader.filterBM25Stats(loadInfo.Bm25Logs)
-		err := loader.loadBm25Stats(ctx, segmentID, stats, logpaths)
-		if err != nil {
-			log.Warn("load remote segment bm25 stats failed",
-				zap.Int64("segmentID", segmentID),
-				zap.Error(err),
-			)
-			return err
-		}
-		loadedStats.Insert(segmentID, stats)
-		return nil
-	}
-
-	err := funcutil.ProcessFuncParallel(segmentNum, segmentNum, loadRemoteBM25Func, "loadRemoteBM25Func")
-	if err != nil {
-		// no partial success here
-		log.Warn("failed to load bm25 stats for remote segment", zap.Int64("collectionID", collectionID), zap.Error(err))
-		return nil, err
-	}
-
-	return loadedStats, nil
+func (loader *segmentLoader) GetChunkManager() storage.ChunkManager {
+	return loader.cm
 }
 
 // load single bloom filter
@@ -992,11 +958,16 @@ func (loader *segmentLoader) loadSealedSegment(ctx context.Context, loadInfo *qu
 		})
 	}
 
-	// load text indexes.
+	// Load text indexes in parallel through LoadPool.
+	futures := make([]*conc.Future[any], 0, len(textIndexes))
 	for _, info := range textIndexes {
-		if err := segment.LoadTextIndex(ctx, info, schemaHelper); err != nil {
-			return err
-		}
+		textIndexInfo := info
+		futures = append(futures, GetLoadPool().Submit(func() (any, error) {
+			return nil, segment.loadTextIndexCgo(ctx, textIndexInfo, schemaHelper)
+		}))
+	}
+	if err := conc.BlockOnAll(futures...); err != nil {
+		return err
 	}
 	loadTextIndexesSpan := tr.RecordSpan()
 
@@ -1184,6 +1155,51 @@ func (loader *segmentLoader) filterBM25Stats(fieldBinlogs []*datapb.FieldBinlog)
 	return result
 }
 
+func (loader *segmentLoader) loadBm25Stats(ctx context.Context, segmentID int64, stats map[int64]*storage.BM25Stats, binlogPaths map[int64][]string) error {
+	log := log.Ctx(ctx).With(
+		zap.Int64("segmentID", segmentID),
+	)
+	if len(binlogPaths) == 0 {
+		log.Info("there are no bm25 stats logs saved with segment")
+		return nil
+	}
+
+	pathList := []string{}
+	fieldList := []int64{}
+	fieldOffset := []int{}
+	for fieldId, logpaths := range binlogPaths {
+		pathList = append(pathList, logpaths...)
+		fieldList = append(fieldList, fieldId)
+		fieldOffset = append(fieldOffset, len(logpaths))
+	}
+
+	startTs := time.Now()
+	values, err := loader.cm.MultiRead(ctx, pathList)
+	if err != nil {
+		return err
+	}
+
+	cnt := 0
+	for i, fieldID := range fieldList {
+		newStats, ok := stats[fieldID]
+		if !ok {
+			newStats = storage.NewBM25Stats()
+			stats[fieldID] = newStats
+		}
+
+		for j := 0; j < fieldOffset[i]; j++ {
+			err := newStats.Deserialize(values[cnt+j])
+			if err != nil {
+				return err
+			}
+		}
+		cnt += fieldOffset[i]
+		log.Info("Successfully load bm25 stats", zap.Duration("time", time.Since(startTs)), zap.Int64("numRow", newStats.NumRow()), zap.Int64("fieldID", fieldID))
+	}
+
+	return nil
+}
+
 func loadSealedSegmentFields(ctx context.Context, collection *Collection, segment *LocalSegment, fields []*datapb.FieldBinlog, rowCount int64) error {
 	runningGroup, _ := errgroup.WithContext(ctx)
 	for _, field := range fields {
@@ -1274,51 +1290,6 @@ func (loader *segmentLoader) loadFieldIndex(ctx context.Context, segment *LocalS
 	}
 
 	return segment.LoadIndex(ctx, indexInfo, fieldType)
-}
-
-func (loader *segmentLoader) loadBm25Stats(ctx context.Context, segmentID int64, stats map[int64]*storage.BM25Stats, binlogPaths map[int64][]string) error {
-	log := log.Ctx(ctx).With(
-		zap.Int64("segmentID", segmentID),
-	)
-	if len(binlogPaths) == 0 {
-		log.Info("there are no bm25 stats logs saved with segment")
-		return nil
-	}
-
-	pathList := []string{}
-	fieldList := []int64{}
-	fieldOffset := []int{}
-	for fieldId, logpaths := range binlogPaths {
-		pathList = append(pathList, logpaths...)
-		fieldList = append(fieldList, fieldId)
-		fieldOffset = append(fieldOffset, len(logpaths))
-	}
-
-	startTs := time.Now()
-	values, err := loader.cm.MultiRead(ctx, pathList)
-	if err != nil {
-		return err
-	}
-
-	cnt := 0
-	for i, fieldID := range fieldList {
-		newStats, ok := stats[fieldID]
-		if !ok {
-			newStats = storage.NewBM25Stats()
-			stats[fieldID] = newStats
-		}
-
-		for j := 0; j < fieldOffset[i]; j++ {
-			err := newStats.Deserialize(values[cnt+j])
-			if err != nil {
-				return err
-			}
-		}
-		cnt += fieldOffset[i]
-		log.Info("Successfully load bm25 stats", zap.Duration("time", time.Since(startTs)), zap.Int64("numRow", newStats.NumRow()), zap.Int64("fieldID", fieldID))
-	}
-
-	return nil
 }
 
 func (loader *segmentLoader) loadBloomFilter(ctx context.Context, segmentID int64, bfs *pkoracle.BloomFilterSet,

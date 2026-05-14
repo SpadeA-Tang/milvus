@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -21,12 +22,12 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/milvuspb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/json"
-	"github.com/milvus-io/milvus/internal/kv"
 	etcdkv "github.com/milvus-io/milvus/internal/kv/etcd"
 	"github.com/milvus-io/milvus/internal/kv/mocks"
 	"github.com/milvus-io/milvus/internal/metastore"
 	"github.com/milvus-io/milvus/internal/metastore/model"
 	"github.com/milvus-io/milvus/pkg/v2/common"
+	"github.com/milvus-io/milvus/pkg/v2/kv/predicates"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	pb "github.com/milvus-io/milvus/pkg/v2/proto/etcdpb"
 	"github.com/milvus-io/milvus/pkg/v2/proto/internalpb"
@@ -38,6 +39,14 @@ import (
 	"github.com/milvus-io/milvus/pkg/v2/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/v2/util/typeutil"
 )
+
+var Params = paramtable.Get()
+
+func TestMain(m *testing.M) {
+	paramtable.Init()
+	code := m.Run()
+	os.Exit(code)
+}
 
 var (
 	indexName = "idx"
@@ -101,27 +110,27 @@ func TestCatalog_ListCollections(t *testing.T) {
 	targetErr := errors.New("fail")
 
 	t.Run("load collection with prefix fail", func(t *testing.T) {
-		kv := mocks.NewSnapShotKV(t)
+		kv := mocks.NewTxnKV(t)
 		ts := uint64(1)
-		kv.On("LoadWithPrefix", mock.Anything, CollectionMetaPrefix, ts).
+		kv.On("LoadWithPrefix", mock.Anything, getDatabasePrefix(util.NonDBID)).
 			Return(nil, nil, targetErr)
 
-		kc := NewCatalog(nil, kv)
+		kc := NewCatalog(kv)
 		ret, err := kc.ListCollections(ctx, util.NonDBID, ts)
 		assert.ErrorIs(t, err, targetErr)
 		assert.Nil(t, ret)
 	})
 
 	t.Run("list partition fail", func(t *testing.T) {
-		kv := mocks.NewSnapShotKV(t)
+		kv := mocks.NewTxnKV(t)
 		ts := uint64(1)
 
 		bColl, err := proto.Marshal(coll2)
 		assert.NoError(t, err)
-		kv.On("LoadWithPrefix", mock.Anything, CollectionMetaPrefix, ts).
+		kv.On("LoadWithPrefix", mock.Anything, getDatabasePrefix(util.NonDBID)).
 			Return([]string{"key"}, []string{string(bColl)}, nil)
-		kv.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, targetErr)
-		kc := NewCatalog(nil, kv)
+		kv.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).Return(nil, nil, targetErr)
+		kc := NewCatalog(kv)
 
 		ret, err := kc.ListCollections(ctx, util.NonDBID, ts)
 		assert.ErrorIs(t, err, targetErr)
@@ -129,12 +138,12 @@ func TestCatalog_ListCollections(t *testing.T) {
 	})
 
 	t.Run("list fields fail", func(t *testing.T) {
-		kv := mocks.NewSnapShotKV(t)
+		kv := mocks.NewTxnKV(t)
 		ts := uint64(1)
 
 		bColl, err := proto.Marshal(coll2)
 		assert.NoError(t, err)
-		kv.On("LoadWithPrefix", mock.Anything, CollectionMetaPrefix, ts).
+		kv.On("LoadWithPrefix", mock.Anything, getDatabasePrefix(util.NonDBID)).
 			Return([]string{"key"}, []string{string(bColl)}, nil)
 
 		partitionMeta := &pb.PartitionInfo{}
@@ -144,15 +153,30 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, PartitionMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"key"}, []string{string(pm)}, nil)
 
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, FieldMetaPrefix)
-			}), ts).
+			})).
 			Return(nil, nil, targetErr)
-		kc := NewCatalog(nil, kv)
+
+		// appendPartitionAndFieldsInfo runs all 4 list calls in parallel,
+		// so structArrayFields and functions calls also need mock expectations.
+		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
+			func(prefix string) bool {
+				return strings.HasPrefix(prefix, StructArrayFieldMetaPrefix)
+			})).
+			Return([]string{}, []string{}, nil).Maybe()
+
+		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
+			func(prefix string) bool {
+				return strings.HasPrefix(prefix, FunctionMetaPrefix)
+			})).
+			Return([]string{}, []string{}, nil).Maybe()
+
+		kc := NewCatalog(kv)
 
 		ret, err := kc.ListCollections(ctx, util.NonDBID, ts)
 		assert.ErrorIs(t, err, targetErr)
@@ -160,15 +184,15 @@ func TestCatalog_ListCollections(t *testing.T) {
 	})
 
 	t.Run("list collection ok for 210 version", func(t *testing.T) {
-		kv := mocks.NewSnapShotKV(t)
+		kv := mocks.NewTxnKV(t)
 		ts := uint64(1)
 
 		bColl, err := proto.Marshal(coll1)
 		assert.NoError(t, err)
-		kv.On("LoadWithPrefix", mock.Anything, CollectionMetaPrefix, ts).
+		kv.On("LoadWithPrefix", mock.Anything, getDatabasePrefix(util.NonDBID)).
 			Return([]string{"key"}, []string{string(bColl)}, nil)
-		kv.On("MultiSaveAndRemove", mock.Anything, mock.Anything, mock.Anything, ts).Return(nil)
-		kc := NewCatalog(nil, kv)
+		kv.On("MultiSaveAndRemove", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		kc := NewCatalog(kv)
 
 		ret, err := kc.ListCollections(ctx, util.NonDBID, ts)
 		assert.NoError(t, err)
@@ -178,12 +202,12 @@ func TestCatalog_ListCollections(t *testing.T) {
 	})
 
 	t.Run("list collection with db", func(t *testing.T) {
-		kv := mocks.NewSnapShotKV(t)
+		kv := mocks.NewTxnKV(t)
 		ts := uint64(1)
 
 		bColl, err := proto.Marshal(coll2)
 		assert.NoError(t, err)
-		kv.On("LoadWithPrefix", mock.Anything, BuildDatabasePrefixWithDBID(testDb), ts).
+		kv.On("LoadWithPrefix", mock.Anything, BuildDatabasePrefixWithDBID(testDb)).
 			Return([]string{"key"}, []string{string(bColl)}, nil)
 
 		partitionMeta := &pb.PartitionInfo{}
@@ -193,7 +217,7 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, PartitionMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"rootcoord/partitions/1/1"}, []string{string(pm)}, nil)
 
 		fieldMeta := &schemapb.FieldSchema{}
@@ -203,7 +227,7 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, FieldMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"rootcoord/fields/1/1"}, []string{string(fm)}, nil)
 
 		functionMeta := &schemapb.FunctionSchema{}
@@ -212,16 +236,16 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, FunctionMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"rootcoord/functions/1/1"}, []string{string(fcm)}, nil)
 
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, StructArrayFieldMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{}, []string{}, nil)
 
-		kc := NewCatalog(nil, kv)
+		kc := NewCatalog(kv)
 		ret, err := kc.ListCollections(ctx, testDb, ts)
 		assert.NoError(t, err)
 		assert.NotNil(t, ret)
@@ -230,7 +254,7 @@ func TestCatalog_ListCollections(t *testing.T) {
 	})
 
 	t.Run("list collection ok for the newest version", func(t *testing.T) {
-		kv := mocks.NewSnapShotKV(t)
+		kv := mocks.NewTxnKV(t)
 		ts := uint64(1)
 
 		bColl, err := proto.Marshal(coll2)
@@ -239,7 +263,7 @@ func TestCatalog_ListCollections(t *testing.T) {
 		aColl, err := proto.Marshal(coll3)
 		assert.NoError(t, err)
 
-		kv.On("LoadWithPrefix", mock.Anything, CollectionMetaPrefix, ts).
+		kv.On("LoadWithPrefix", mock.Anything, getDatabasePrefix(util.NonDBID)).
 			Return([]string{"key", "key2"}, []string{string(bColl), string(aColl)}, nil)
 
 		partitionMeta := &pb.PartitionInfo{}
@@ -249,7 +273,7 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, PartitionMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"rootcoord/partitions/1/1"}, []string{string(pm)}, nil)
 
 		fieldMeta := &schemapb.FieldSchema{}
@@ -259,7 +283,7 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, FieldMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"rootcoord/fields/1/1"}, []string{string(fm)}, nil)
 
 		functionMeta := &schemapb.FunctionSchema{}
@@ -268,17 +292,17 @@ func TestCatalog_ListCollections(t *testing.T) {
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, FunctionMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{"rootcoord/functions/1/1"}, []string{string(fcm)}, nil)
 
 		kv.On("LoadWithPrefix", mock.Anything, mock.MatchedBy(
 			func(prefix string) bool {
 				return strings.HasPrefix(prefix, StructArrayFieldMetaPrefix)
-			}), ts).
+			})).
 			Return([]string{}, []string{}, nil)
 
-		kv.On("MultiSaveAndRemove", mock.Anything, mock.Anything, mock.Anything, ts).Return(nil)
-		kc := NewCatalog(nil, kv)
+		kv.On("MultiSaveAndRemove", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		kc := NewCatalog(kv)
 
 		ret, err := kc.ListCollections(ctx, util.NonDBID, ts)
 		assert.NoError(t, err)
@@ -292,18 +316,18 @@ func TestCatalog_ListCollections(t *testing.T) {
 func TestCatalog_loadCollection(t *testing.T) {
 	t.Run("load failed", func(t *testing.T) {
 		ctx := context.Background()
-		kv := mocks.NewSnapShotKV(t)
-		kv.EXPECT().Load(mock.Anything, mock.Anything, mock.Anything).Return("", errors.New("mock"))
-		kc := NewCatalog(nil, kv).(*Catalog)
+		kv := mocks.NewTxnKV(t)
+		kv.EXPECT().Load(mock.Anything, mock.Anything).Return("", errors.New("mock"))
+		kc := NewCatalog(kv).(*Catalog)
 		_, err := kc.loadCollection(ctx, testDb, 1, 0)
 		assert.Error(t, err)
 	})
 
 	t.Run("load, not collection info", func(t *testing.T) {
 		ctx := context.Background()
-		kv := mocks.NewSnapShotKV(t)
-		kv.EXPECT().Load(mock.Anything, mock.Anything, mock.Anything).Return("not in pb format", nil)
-		kc := NewCatalog(nil, kv).(*Catalog)
+		kv := mocks.NewTxnKV(t)
+		kv.EXPECT().Load(mock.Anything, mock.Anything).Return("not in pb format", nil)
+		kc := NewCatalog(kv).(*Catalog)
 		_, err := kc.loadCollection(ctx, testDb, 1, 0)
 		assert.Error(t, err)
 	})
@@ -313,9 +337,9 @@ func TestCatalog_loadCollection(t *testing.T) {
 		coll := &pb.CollectionInfo{ID: 1, DbId: util.DefaultDBID}
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
-		kv := mocks.NewSnapShotKV(t)
-		kv.EXPECT().Load(mock.Anything, mock.Anything, mock.Anything).Return(string(value), nil)
-		kc := NewCatalog(nil, kv).(*Catalog)
+		kv := mocks.NewTxnKV(t)
+		kv.EXPECT().Load(mock.Anything, mock.Anything).Return(string(value), nil)
+		kc := NewCatalog(kv).(*Catalog)
 		got, err := kc.loadCollection(ctx, util.DefaultDBID, 1, 0)
 		assert.NoError(t, err)
 		assert.Equal(t, got.GetID(), coll.GetID())
@@ -330,10 +354,10 @@ func TestCatalog_loadCollection(t *testing.T) {
 		}
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
-		kv := mocks.NewSnapShotKV(t)
-		kv.EXPECT().Load(mock.Anything, mock.Anything, mock.Anything).Return(string(value), nil)
-		kv.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
-		kc := NewCatalog(nil, kv).(*Catalog)
+		kv := mocks.NewTxnKV(t)
+		kv.EXPECT().Load(mock.Anything, mock.Anything).Return(string(value), nil)
+		kv.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		kc := NewCatalog(kv).(*Catalog)
 		got, err := kc.loadCollection(ctx, util.NonDBID, 1, 0)
 		assert.NoError(t, err)
 		assert.Equal(t, got.GetID(), coll.GetID())
@@ -386,15 +410,15 @@ func Test_partitionExistByName(t *testing.T) {
 
 func TestCatalog_GetCollectionByID(t *testing.T) {
 	ctx := context.TODO()
-	ss := mocks.NewSnapShotKV(t)
-	c := NewCatalog(nil, ss)
+	ss := mocks.NewTxnKV(t)
+	c := NewCatalog(ss)
 
-	ss.EXPECT().Load(mock.Anything, mock.Anything, mock.Anything).Return("", errors.New("load error")).Twice()
+	ss.EXPECT().Load(mock.Anything, mock.Anything).Return("", errors.New("load error")).Twice()
 	coll, err := c.GetCollectionByID(ctx, 0, 1, 1)
 	assert.Error(t, err)
 	assert.Nil(t, coll)
 
-	ss.EXPECT().Load(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, ts uint64) (string, error) {
+	ss.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 		collByte, err := proto.Marshal(&pb.CollectionInfo{
 			ID: 1,
 			Schema: &schemapb.CollectionSchema{
@@ -409,7 +433,7 @@ func TestCatalog_GetCollectionByID(t *testing.T) {
 		require.NoError(t, err)
 		return string(collByte), nil
 	}).Once()
-	ss.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	ss.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	coll, err = c.GetCollectionByID(ctx, 0, 10000, 1)
 	assert.NoError(t, err)
@@ -420,11 +444,11 @@ func TestCatalog_GetCollectionByID(t *testing.T) {
 func TestCatalog_CreatePartitionV2(t *testing.T) {
 	t.Run("collection not exist", func(t *testing.T) {
 		ctx := context.Background()
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return "", errors.New("mock")
-		}
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		})
+		kc := NewCatalog(snapshot).(*Catalog)
 		err := kc.CreatePartition(ctx, 0, &model.Partition{}, 0)
 		assert.Error(t, err)
 	})
@@ -438,22 +462,22 @@ func TestCatalog_CreatePartitionV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return string(value), nil
-		}
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		})
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			return errors.New("mock")
-		}
+		}).Once()
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err = kc.CreatePartition(ctx, 0, &model.Partition{}, 0)
 		assert.Error(t, err)
 
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			return nil
-		}
+		})
 		err = kc.CreatePartition(ctx, 0, &model.Partition{}, 0)
 		assert.NoError(t, err)
 	})
@@ -466,12 +490,12 @@ func TestCatalog_CreatePartitionV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return string(value), nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err = kc.CreatePartition(ctx, 0, &model.Partition{PartitionID: partID}, 0)
 		assert.Error(t, err)
@@ -485,12 +509,12 @@ func TestCatalog_CreatePartitionV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return string(value), nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err = kc.CreatePartition(ctx, 0, &model.Partition{PartitionName: partition}, 0)
 		assert.Error(t, err)
@@ -508,22 +532,22 @@ func TestCatalog_CreatePartitionV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return string(value), nil
-		}
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		})
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			return errors.New("mock")
-		}
+		}).Once()
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err = kc.CreatePartition(ctx, 0, &model.Partition{}, 0)
 		assert.Error(t, err)
 
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			return nil
-		}
+		})
 		err = kc.CreatePartition(ctx, 0, &model.Partition{}, 0)
 		assert.NoError(t, err)
 	})
@@ -532,19 +556,15 @@ func TestCatalog_CreatePartitionV2(t *testing.T) {
 func TestCatalog_CreateAliasV2(t *testing.T) {
 	ctx := context.Background()
 
-	snapshot := kv.NewMockSnapshotKV()
-	snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-		return errors.New("mock")
-	}
+	snapshot := mocks.NewTxnKV(t)
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mock")).Once()
 
-	kc := NewCatalog(nil, snapshot).(*Catalog)
+	kc := NewCatalog(snapshot).(*Catalog)
 
 	err := kc.CreateAlias(ctx, &model.Alias{}, 0)
 	assert.Error(t, err)
 
-	snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-		return nil
-	}
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	err = kc.CreateAlias(ctx, &model.Alias{}, 0)
 	assert.NoError(t, err)
 }
@@ -553,12 +573,12 @@ func TestCatalog_listPartitionsAfter210(t *testing.T) {
 	t.Run("load failed", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return nil, nil, errors.New("mock")
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listPartitionsAfter210(ctx, 1, 0)
 		assert.Error(t, err)
@@ -567,12 +587,12 @@ func TestCatalog_listPartitionsAfter210(t *testing.T) {
 	t.Run("not in pb format", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{"not in pb format"}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listPartitionsAfter210(ctx, 1, 0)
 		assert.Error(t, err)
@@ -585,12 +605,12 @@ func TestCatalog_listPartitionsAfter210(t *testing.T) {
 		value, err := proto.Marshal(partition)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{string(value)}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		got, err := kc.listPartitionsAfter210(ctx, 1, 0)
 		assert.NoError(t, err)
@@ -611,12 +631,12 @@ func TestCatalog_listFieldsAfter210(t *testing.T) {
 	t.Run("load failed", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return nil, nil, errors.New("mock")
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listFieldsAfter210(ctx, 1, 0)
 		assert.Error(t, err)
@@ -625,12 +645,12 @@ func TestCatalog_listFieldsAfter210(t *testing.T) {
 	t.Run("not in pb format", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{"not in pb format"}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listFieldsAfter210(ctx, 1, 0)
 		assert.Error(t, err)
@@ -643,12 +663,12 @@ func TestCatalog_listFieldsAfter210(t *testing.T) {
 		value, err := proto.Marshal(field)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{string(value)}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		got, err := kc.listFieldsAfter210(ctx, 1, 0)
 		assert.NoError(t, err)
@@ -660,19 +680,15 @@ func TestCatalog_listFieldsAfter210(t *testing.T) {
 func TestCatalog_AlterAliasV2(t *testing.T) {
 	ctx := context.Background()
 
-	snapshot := kv.NewMockSnapshotKV()
-	snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-		return errors.New("mock")
-	}
+	snapshot := mocks.NewTxnKV(t)
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mock")).Once()
 
-	kc := NewCatalog(nil, snapshot).(*Catalog)
+	kc := NewCatalog(snapshot).(*Catalog)
 
 	err := kc.AlterAlias(ctx, &model.Alias{}, 0)
 	assert.Error(t, err)
 
-	snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-		return nil
-	}
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	err = kc.AlterAlias(ctx, &model.Alias{}, 0)
 	assert.NoError(t, err)
 }
@@ -710,11 +726,11 @@ func TestCatalog_DropPartitionV2(t *testing.T) {
 	t.Run("failed to load collection", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := mocks.NewSnapShotKV(t)
+		snapshot := mocks.NewTxnKV(t)
 		snapshot.On("Load",
-			mock.Anything, mock.Anything, mock.Anything).Return("not in codec format", nil)
+			mock.Anything, mock.Anything).Return("not in codec format", nil)
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err := kc.DropPartition(ctx, 0, 100, 101, 0)
 		assert.Error(t, err)
@@ -723,11 +739,11 @@ func TestCatalog_DropPartitionV2(t *testing.T) {
 	t.Run("failed to load collection, no key found", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := mocks.NewSnapShotKV(t)
+		snapshot := mocks.NewTxnKV(t)
 		snapshot.On("Load",
-			mock.Anything, mock.Anything, mock.Anything).Return("", merr.WrapErrIoKeyNotFound("partition"))
+			mock.Anything, mock.Anything).Return("", merr.WrapErrIoKeyNotFound("partition"))
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err := kc.DropPartition(ctx, 0, 100, 101, 0)
 		assert.NoError(t, err)
@@ -740,22 +756,18 @@ func TestCatalog_DropPartitionV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return string(value), nil
-		}
-		snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-			return errors.New("mock")
-		}
+		})
+		snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mock")).Once()
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err = kc.DropPartition(ctx, 0, 100, 101, 0)
 		assert.Error(t, err)
 
-		snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-			return nil
-		}
+		snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 		err = kc.DropPartition(ctx, 0, 100, 101, 0)
 		assert.NoError(t, err)
 	})
@@ -772,22 +784,22 @@ func TestCatalog_DropPartitionV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) (string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().Load(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) (string, error) {
 			return string(value), nil
-		}
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		})
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			return errors.New("mock")
-		}
+		}).Once()
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		err = kc.DropPartition(ctx, 0, 100, 101, 0)
 		assert.Error(t, err)
 
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			return nil
-		}
+		})
 		err = kc.DropPartition(ctx, 0, 100, 102, 0)
 		assert.NoError(t, err)
 	})
@@ -796,19 +808,15 @@ func TestCatalog_DropPartitionV2(t *testing.T) {
 func TestCatalog_DropAliasV2(t *testing.T) {
 	ctx := context.Background()
 
-	snapshot := kv.NewMockSnapshotKV()
-	snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-		return errors.New("mock")
-	}
+	snapshot := mocks.NewTxnKV(t)
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("mock")).Once()
 
-	kc := NewCatalog(nil, snapshot).(*Catalog)
+	kc := NewCatalog(snapshot).(*Catalog)
 
 	err := kc.DropAlias(ctx, testDb, "alias", 0)
 	assert.Error(t, err)
 
-	snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-		return nil
-	}
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	err = kc.DropAlias(ctx, testDb, "alias", 0)
 	assert.NoError(t, err)
 }
@@ -817,12 +825,12 @@ func TestCatalog_listAliasesBefore210(t *testing.T) {
 	t.Run("load failed", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return nil, nil, errors.New("mock")
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listAliasesBefore210(ctx, 0)
 		assert.Error(t, err)
@@ -831,12 +839,12 @@ func TestCatalog_listAliasesBefore210(t *testing.T) {
 	t.Run("not in pb format", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{"not in pb format"}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listAliasesBefore210(ctx, 0)
 		assert.Error(t, err)
@@ -849,12 +857,12 @@ func TestCatalog_listAliasesBefore210(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{string(value)}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		got, err := kc.listAliasesBefore210(ctx, 0)
 		assert.NoError(t, err)
@@ -867,12 +875,12 @@ func TestCatalog_listAliasesAfter210(t *testing.T) {
 	t.Run("load failed", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return nil, nil, errors.New("mock")
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listAliasesAfter210WithDb(ctx, testDb, 0)
 		assert.Error(t, err)
@@ -881,12 +889,12 @@ func TestCatalog_listAliasesAfter210(t *testing.T) {
 	t.Run("not in pb format", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{"not in pb format"}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.listAliasesAfter210WithDb(ctx, testDb, 0)
 		assert.Error(t, err)
@@ -899,12 +907,12 @@ func TestCatalog_listAliasesAfter210(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{string(value)}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		got, err := kc.listAliasesAfter210WithDb(ctx, testDb, 0)
 		assert.NoError(t, err)
@@ -917,12 +925,12 @@ func TestCatalog_ListAliasesV2(t *testing.T) {
 	t.Run("failed to list aliases before 210", func(t *testing.T) {
 		ctx := context.Background()
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			return []string{"key"}, []string{"not in pb format"}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err := kc.ListAliases(ctx, testDb, 0)
 		assert.Error(t, err)
@@ -935,8 +943,8 @@ func TestCatalog_ListAliasesV2(t *testing.T) {
 		value, err := proto.Marshal(coll)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			if key == AliasMetaPrefix {
 				return nil, nil, errors.New("mock")
 			}
@@ -945,9 +953,9 @@ func TestCatalog_ListAliasesV2(t *testing.T) {
 				return nil, nil, errors.New("mock")
 			}
 			return []string{"key"}, []string{string(value)}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		_, err = kc.ListAliases(ctx, util.NonDBID, 0)
 		assert.Error(t, err)
@@ -963,16 +971,16 @@ func TestCatalog_ListAliasesV2(t *testing.T) {
 		value2, err := proto.Marshal(alias)
 		assert.NoError(t, err)
 
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.LoadWithPrefixFunc = func(ctx context.Context, key string, ts typeutil.Timestamp) ([]string, []string, error) {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string) ([]string, []string, error) {
 			dbStr := fmt.Sprintf("%d", testDb)
 			if strings.Contains(key, dbStr) && strings.Contains(key, Aliases) {
 				return []string{"key1"}, []string{string(value2)}, nil
 			}
 			return []string{}, []string{}, nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 
 		got, err := kc.ListAliases(ctx, testDb, 0)
 		assert.NoError(t, err)
@@ -983,38 +991,32 @@ func TestCatalog_ListAliasesV2(t *testing.T) {
 
 func Test_batchMultiSaveAndRemove(t *testing.T) {
 	t.Run("failed to save", func(t *testing.T) {
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.MultiSaveFunc = func(ctx context.Context, kvs map[string]string, ts typeutil.Timestamp) error {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, kvs map[string]string) error {
 			return errors.New("error mock MultiSave")
-		}
+		})
 		saves := map[string]string{"k": "v"}
-		err := batchMultiSaveAndRemove(context.TODO(), snapshot, paramtable.Get().MetaStoreCfg.MaxEtcdTxnNum.GetAsInt(), saves, []string{}, 0)
+		err := batchMultiSaveAndRemove(context.TODO(), snapshot, paramtable.Get().MetaStoreCfg.MaxEtcdTxnNum.GetAsInt(), saves, []string{})
 		assert.Error(t, err)
 	})
 	t.Run("failed to remove", func(t *testing.T) {
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.MultiSaveFunc = func(ctx context.Context, kvs map[string]string, ts typeutil.Timestamp) error {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, kvs map[string]string) error {
 			return nil
-		}
-		snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-			return errors.New("error mock MultiSaveAndRemove")
-		}
+		})
+		snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("error mock MultiSaveAndRemove"))
 		saves := map[string]string{"k": "v"}
 		removals := []string{"prefix1", "prefix2"}
-		err := batchMultiSaveAndRemove(context.TODO(), snapshot, paramtable.Get().MetaStoreCfg.MaxEtcdTxnNum.GetAsInt(), saves, removals, 0)
+		err := batchMultiSaveAndRemove(context.TODO(), snapshot, paramtable.Get().MetaStoreCfg.MaxEtcdTxnNum.GetAsInt(), saves, removals)
 		assert.Error(t, err)
 	})
 	t.Run("normal case", func(t *testing.T) {
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.MultiSaveFunc = func(ctx context.Context, kvs map[string]string, ts typeutil.Timestamp) error {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, kvs map[string]string) error {
 			log.Info("multi save", zap.Any("len", len(kvs)), zap.Any("saves", kvs))
 			return nil
-		}
-		snapshot.MultiSaveAndRemoveFunc = func(ctx context.Context, saves map[string]string, removals []string, ts typeutil.Timestamp) error {
-			log.Info("multi save and remove with prefix", zap.Any("len of saves", len(saves)), zap.Any("len of removals", len(removals)),
-				zap.Any("saves", saves), zap.Any("removals", removals))
-			return nil
-		}
+		})
+		snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 		n := 400
 		saves := map[string]string{}
 		removals := make([]string, 0, n)
@@ -1022,40 +1024,36 @@ func Test_batchMultiSaveAndRemove(t *testing.T) {
 			saves[fmt.Sprintf("k%d", i)] = fmt.Sprintf("v%d", i)
 			removals = append(removals, fmt.Sprintf("k%d", i))
 		}
-		err := batchMultiSaveAndRemove(context.TODO(), snapshot, paramtable.Get().MetaStoreCfg.MaxEtcdTxnNum.GetAsInt(), saves, removals, 0)
+		err := batchMultiSaveAndRemove(context.TODO(), snapshot, paramtable.Get().MetaStoreCfg.MaxEtcdTxnNum.GetAsInt(), saves, removals)
 		assert.NoError(t, err)
 	})
 }
 
 func TestCatalog_AlterCollection(t *testing.T) {
 	t.Run("add", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		err := kc.AlterCollection(ctx, nil, nil, metastore.ADD, 0, false)
 		assert.Error(t, err)
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		err := kc.AlterCollection(ctx, nil, nil, metastore.DELETE, 0, false)
 		assert.Error(t, err)
 	})
 
 	t.Run("modify", func(t *testing.T) {
-		snapshot := kv.NewMockSnapshotKV()
+		snapshot := mocks.NewTxnKV(t)
 		kvs := map[string]string{}
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
-			kvs[key] = value
-			return nil
-		}
-		snapshot.MultiSaveFunc = func(ctx context.Context, saveKvs map[string]string, _ typeutil.Timestamp) error {
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, saveKvs map[string]string) error {
 			for k, v := range saveKvs {
 				kvs[k] = v
 			}
 			return nil
-		}
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		})
+		kc := NewCatalog(snapshot).(*Catalog)
 		ctx := context.Background()
 		var collectionID int64 = 1
 		oldC := &model.Collection{CollectionID: collectionID, State: pb.CollectionState_CollectionCreated}
@@ -1074,19 +1072,15 @@ func TestCatalog_AlterCollection(t *testing.T) {
 	})
 
 	t.Run("modify EnableDynamicField and SchemaVersion", func(t *testing.T) {
-		snapshot := kv.NewMockSnapshotKV()
+		snapshot := mocks.NewTxnKV(t)
 		kvs := map[string]string{}
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
-			kvs[key] = value
-			return nil
-		}
-		snapshot.MultiSaveFunc = func(ctx context.Context, saveKvs map[string]string, _ typeutil.Timestamp) error {
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, saveKvs map[string]string) error {
 			for k, v := range saveKvs {
 				kvs[k] = v
 			}
 			return nil
-		}
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		})
+		kc := NewCatalog(snapshot).(*Catalog)
 		ctx := context.Background()
 		var collectionID int64 = 1
 		oldC := &model.Collection{
@@ -1118,7 +1112,7 @@ func TestCatalog_AlterCollection(t *testing.T) {
 	})
 
 	t.Run("modify, tenant id changed", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		var collectionID int64 = 1
 		oldC := &model.Collection{TenantID: "1", CollectionID: collectionID, State: pb.CollectionState_CollectionCreated}
@@ -1129,9 +1123,9 @@ func TestCatalog_AlterCollection(t *testing.T) {
 
 	t.Run("modify db name", func(t *testing.T) {
 		var collectionID int64 = 1
-		snapshot := kv.NewMockSnapshotKV()
+		snapshot := mocks.NewTxnKV(t)
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 		ctx := context.Background()
 		oldC := &model.Collection{DBID: 0, CollectionID: collectionID, State: pb.CollectionState_CollectionCreated}
 		newC := &model.Collection{DBID: 1, CollectionID: collectionID, State: pb.CollectionState_CollectionCreated}
@@ -1141,13 +1135,13 @@ func TestCatalog_AlterCollection(t *testing.T) {
 
 	t.Run("modify 64 fields", func(t *testing.T) {
 		var collectionID int64 = 1
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.MultiSaveFunc = func(ctx context.Context, saves map[string]string, ts typeutil.Timestamp) error {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, saves map[string]string) error {
 			assert.LessOrEqual(t, len(saves), 64)
 			return nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 		ctx := context.Background()
 		// 2 system fields + 64 user fields
 		fields := make([]*model.Field, 66)
@@ -1164,13 +1158,13 @@ func TestCatalog_AlterCollection(t *testing.T) {
 
 	t.Run("modify function", func(t *testing.T) {
 		var collectionID int64 = 1
-		snapshot := kv.NewMockSnapshotKV()
-		snapshot.MultiSaveFunc = func(ctx context.Context, saves map[string]string, ts typeutil.Timestamp) error {
+		snapshot := mocks.NewTxnKV(t)
+		snapshot.EXPECT().MultiSave(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, saves map[string]string) error {
 			assert.LessOrEqual(t, len(saves), 64)
 			return nil
-		}
+		})
 
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		kc := NewCatalog(snapshot).(*Catalog)
 		ctx := context.Background()
 
 		functions := []*model.Function{
@@ -1187,15 +1181,15 @@ func TestCatalog_AlterCollection(t *testing.T) {
 }
 
 func TestCatalog_AlterCollectionDB(t *testing.T) {
-	snapshot := kv.NewMockSnapshotKV()
+	snapshot := mocks.NewTxnKV(t)
 	kvs := map[string]string{}
-	snapshot.MultiSaveFunc = func(ctx context.Context, saveKvs map[string]string, _ typeutil.Timestamp) error {
-		for k, v := range saveKvs {
+	snapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, saves map[string]string, removals []string, preds ...predicates.Predicate) error {
+		for k, v := range saves {
 			kvs[k] = v
 		}
 		return nil
-	}
-	kc := NewCatalog(nil, snapshot).(*Catalog)
+	})
+	kc := NewCatalog(snapshot).(*Catalog)
 	ctx := context.Background()
 	var collectionID int64 = 1
 	t.Run("rename tencentid", func(t *testing.T) {
@@ -1215,27 +1209,27 @@ func TestCatalog_AlterCollectionDB(t *testing.T) {
 
 func TestCatalog_AlterPartition(t *testing.T) {
 	t.Run("add", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		err := kc.AlterPartition(ctx, testDb, nil, nil, metastore.ADD, 0)
 		assert.Error(t, err)
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		err := kc.AlterPartition(ctx, testDb, nil, nil, metastore.DELETE, 0)
 		assert.Error(t, err)
 	})
 
 	t.Run("modify", func(t *testing.T) {
-		snapshot := kv.NewMockSnapshotKV()
+		snapshot := mocks.NewTxnKV(t)
 		kvs := map[string]string{}
-		snapshot.SaveFunc = func(ctx context.Context, key string, value string, ts typeutil.Timestamp) error {
+		snapshot.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, key string, value string) error {
 			kvs[key] = value
 			return nil
-		}
-		kc := NewCatalog(nil, snapshot).(*Catalog)
+		})
+		kc := NewCatalog(snapshot).(*Catalog)
 		ctx := context.Background()
 		var collectionID int64 = 1
 		var partitionID int64 = 2
@@ -1254,7 +1248,7 @@ func TestCatalog_AlterPartition(t *testing.T) {
 	})
 
 	t.Run("modify, tenant id changed", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		var collectionID int64 = 1
 		oldP := &model.Partition{PartitionID: 1, CollectionID: collectionID, State: pb.PartitionState_PartitionCreating}
@@ -1264,10 +1258,10 @@ func TestCatalog_AlterPartition(t *testing.T) {
 	})
 }
 
-type mockSnapshotOpt func(ss *mocks.SnapShotKV)
+type mockSnapshotOpt func(ss *mocks.TxnKV)
 
-func newMockSnapshot(t *testing.T, opts ...mockSnapshotOpt) *mocks.SnapShotKV {
-	ss := mocks.NewSnapShotKV(t)
+func newMockSnapshot(t *testing.T, opts ...mockSnapshotOpt) *mocks.TxnKV {
+	ss := mocks.NewTxnKV(t)
 	for _, opt := range opts {
 		opt(ss)
 	}
@@ -1275,55 +1269,41 @@ func newMockSnapshot(t *testing.T, opts ...mockSnapshotOpt) *mocks.SnapShotKV {
 }
 
 func withMockSave(saveErr error) mockSnapshotOpt {
-	return func(ss *mocks.SnapShotKV) {
+	return func(ss *mocks.TxnKV) {
 		ss.On(
 			"Save",
 			mock.Anything,
 			mock.AnythingOfType("string"),
-			mock.AnythingOfType("string"),
-			mock.AnythingOfType("uint64")).
+			mock.AnythingOfType("string")).
 			Return(saveErr)
 	}
 }
 
 func withMockMultiSave(multiSaveErr error) mockSnapshotOpt {
-	return func(ss *mocks.SnapShotKV) {
+	return func(ss *mocks.TxnKV) {
 		ss.On(
 			"MultiSave",
 			mock.Anything,
-			mock.AnythingOfType("map[string]string"),
-			mock.AnythingOfType("uint64")).
+			mock.AnythingOfType("map[string]string")).
 			Return(multiSaveErr)
 	}
 }
 
 func withMockMultiSaveAndRemoveWithPrefix(err error) mockSnapshotOpt {
-	return func(ss *mocks.SnapShotKV) {
-		ss.On(
-			"MultiSaveAndRemoveWithPrefix",
-			mock.Anything,
-			mock.AnythingOfType("map[string]string"),
-			mock.AnythingOfType("[]string"),
-			mock.AnythingOfType("uint64")).
-			Return(err)
+	return func(ss *mocks.TxnKV) {
+		ss.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, mock.Anything, mock.Anything).Return(err)
 	}
 }
 
 func withMockMultiSaveAndRemove(err error) mockSnapshotOpt {
-	return func(ss *mocks.SnapShotKV) {
-		ss.On(
-			"MultiSaveAndRemove",
-			mock.Anything,
-			mock.AnythingOfType("map[string]string"),
-			mock.AnythingOfType("[]string"),
-			mock.AnythingOfType("uint64")).
-			Return(err)
+	return func(ss *mocks.TxnKV) {
+		ss.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(err)
 	}
 }
 
 func TestCatalog_CreateCollection(t *testing.T) {
 	t.Run("collection not creating", func(t *testing.T) {
-		kc := NewCatalog(nil, nil)
+		kc := NewCatalog(nil)
 		ctx := context.Background()
 		coll := &model.Collection{State: pb.CollectionState_CollectionDropping}
 		err := kc.CreateCollection(ctx, coll, 100)
@@ -1332,7 +1312,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 
 	t.Run("failed to save fields", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSave(errors.New("error mock MultiSave")))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1346,7 +1326,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 
 	t.Run("succeed to save fields but failed to save collection key", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSave(nil), withMockSave(errors.New("error mock Save")))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1360,7 +1340,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 
 	t.Run("no fields or partitions, only collection key", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockSave(nil))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{State: pb.CollectionState_CollectionCreated}
 		err := kc.CreateCollection(ctx, coll, 100)
@@ -1369,7 +1349,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 
 	t.Run("normal case", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSave(nil), withMockSave(nil))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1383,7 +1363,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 
 	t.Run("create collection with function and struct array field", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSave(nil), withMockSave(nil))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1440,7 +1420,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 func TestCatalog_DropCollection(t *testing.T) {
 	t.Run("failed to remove", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSaveAndRemove(errors.New("error mock MultiSaveAndRemove")))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1456,27 +1436,17 @@ func TestCatalog_DropCollection(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t)
 		removeOtherCalled := false
 		removeCollectionCalled := false
-		mockSnapshot.On(
-			"MultiSaveAndRemove",
-			mock.Anything,
-			mock.AnythingOfType("map[string]string"),
-			mock.AnythingOfType("[]string"),
-			mock.AnythingOfType("uint64")).
-			Return(func(context.Context, map[string]string, []string, typeutil.Timestamp) error {
+		mockSnapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(_ context.Context, _ map[string]string, _ []string, _ ...predicates.Predicate) error {
 				removeOtherCalled = true
 				return nil
 			}).Once()
-		mockSnapshot.On(
-			"MultiSaveAndRemove",
-			mock.Anything,
-			mock.AnythingOfType("map[string]string"),
-			mock.AnythingOfType("[]string"),
-			mock.AnythingOfType("uint64")).
-			Return(func(context.Context, map[string]string, []string, typeutil.Timestamp) error {
+		mockSnapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(_ context.Context, _ map[string]string, _ []string, _ ...predicates.Predicate) error {
 				removeCollectionCalled = true
 				return errors.New("error mock MultiSaveAndRemove")
 			}).Once()
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1492,7 +1462,7 @@ func TestCatalog_DropCollection(t *testing.T) {
 
 	t.Run("normal case", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSaveAndRemove(nil))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1506,7 +1476,7 @@ func TestCatalog_DropCollection(t *testing.T) {
 
 	t.Run("drop collection with function", func(t *testing.T) {
 		mockSnapshot := newMockSnapshot(t, withMockMultiSaveAndRemove(nil))
-		kc := NewCatalog(nil, mockSnapshot)
+		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
 			Partitions: []*model.Partition{
@@ -1572,7 +1542,7 @@ func TestRBAC_Credential(t *testing.T) {
 	t.Run("test GetCredential", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			loadFailName    = "invalid"
 			loadFailKey     = fmt.Sprintf("%s/%s", CredentialPrefix, loadFailName)
@@ -1623,7 +1593,7 @@ func TestRBAC_Credential(t *testing.T) {
 	t.Run("test CreateCredential", func(t *testing.T) {
 		var (
 			kvmock      = mocks.NewTxnKV(t)
-			c           = NewCatalog(kvmock, nil)
+			c           = NewCatalog(kvmock)
 			invalidName = "invalid"
 		)
 
@@ -1673,13 +1643,13 @@ func TestRBAC_Credential(t *testing.T) {
 	t.Run("test DropCredential", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			validName              = "user1"
-			validUserRoleKeyPrefix = funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, util.DefaultTenant, validName) + "/"
+			validUserRoleKeyPrefix = funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, util.DefaultTenant, validName)
 
 			dropFailName          = "drop-fail"
-			dropUserRoleKeyPrefix = funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, util.DefaultTenant, dropFailName) + "/"
+			dropUserRoleKeyPrefix = funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, util.DefaultTenant, dropFailName)
 			getFailName           = "get-fail"
 		)
 
@@ -1731,7 +1701,7 @@ func TestRBAC_Credential(t *testing.T) {
 	t.Run("test ListCredentials", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			cmu   sync.RWMutex
 			count = 0
@@ -1813,7 +1783,7 @@ func TestRBAC_Role(t *testing.T) {
 	t.Run("test remove", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil).(*Catalog)
+			c      = NewCatalog(kvmock).(*Catalog)
 
 			notExistKey = "not-exist"
 			errorKey    = "error"
@@ -1856,7 +1826,7 @@ func TestRBAC_Role(t *testing.T) {
 	t.Run("test CreateRole", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 
 		kvmock.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).Call.Return(nil).Once()
@@ -1868,34 +1838,34 @@ func TestRBAC_Role(t *testing.T) {
 	t.Run("test DropRole", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			validName   = "role1"
 			errorName   = "error"
 			getFailName = "get-fail"
 		)
 
-		kvmock.EXPECT().MultiRemove(mock.Anything, []string{funcutil.HandleTenantForEtcdKey(RolePrefix, tenant, errorName)}).Return(errors.New("remove error"))
+		kvmock.EXPECT().MultiRemove(mock.Anything, []string{RolePrefix + "/" + errorName}).Return(errors.New("remove error"))
 		kvmock.EXPECT().MultiRemove(mock.Anything, []string{
-			funcutil.HandleTenantForEtcdKey(RolePrefix, tenant, validName),
-			funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, fmt.Sprintf("%s/%s", "user1", validName)),
-			funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, fmt.Sprintf("%s/%s", "user2", validName)),
+			RolePrefix + "/" + validName,
+			fmt.Sprintf("%s/%s/%s", RoleMappingPrefix, "user1", validName),
+			fmt.Sprintf("%s/%s/%s", RoleMappingPrefix, "user2", validName),
 		}).Return(nil)
 		kvmock.EXPECT().MultiRemove(mock.Anything, mock.Anything).Return(errors.New("mock multi remove error"))
 
 		getRoleMappingKey := func(username, rolename string) string {
-			return funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, fmt.Sprintf("%s/%s", username, rolename))
+			return funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, tenant) + username + "/" + rolename
 		}
 
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, "")).Return(
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, tenant)).Return(
 			[]string{getRoleMappingKey("user1", validName), getRoleMappingKey("user2", validName), getRoleMappingKey("user3", "role3")},
 			[]string{},
 			nil,
 		)
 
-		kvmock.EXPECT().Load(mock.Anything, funcutil.HandleTenantForEtcdKey(RolePrefix, tenant, getFailName)).Return("", errors.New("mock load error"))
-		kvmock.EXPECT().Load(mock.Anything, funcutil.HandleTenantForEtcdKey(RolePrefix, tenant, validName)).Return("", nil)
-		kvmock.EXPECT().Load(mock.Anything, funcutil.HandleTenantForEtcdKey(RolePrefix, tenant, errorName)).Return("", nil)
+		kvmock.EXPECT().Load(mock.Anything, RolePrefix+"/"+getFailName).Return("", errors.New("mock load error"))
+		kvmock.EXPECT().Load(mock.Anything, RolePrefix+"/"+validName).Return("", nil)
+		kvmock.EXPECT().Load(mock.Anything, RolePrefix+"/"+errorName).Return("", nil)
 
 		tests := []struct {
 			description string
@@ -1921,7 +1891,7 @@ func TestRBAC_Role(t *testing.T) {
 	t.Run("test AlterUserRole", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			user = "default-user"
 		)
@@ -1943,10 +1913,10 @@ func TestRBAC_Role(t *testing.T) {
 		t.Run("test entity!=nil", func(t *testing.T) {
 			var (
 				kvmock = mocks.NewTxnKV(t)
-				c      = NewCatalog(kvmock, nil)
+				c      = NewCatalog(kvmock)
 
 				errorLoad     = "error"
-				errorLoadPath = funcutil.HandleTenantForEtcdKey(RolePrefix, tenant, errorLoad)
+				errorLoadPath = RolePrefix + "/" + errorLoad
 			)
 
 			kvmock.EXPECT().Load(mock.Anything, errorLoadPath).Call.Return("", errors.New("mock load error"))
@@ -2019,7 +1989,7 @@ func TestRBAC_Role(t *testing.T) {
 		t.Run("test entity is nil", func(t *testing.T) {
 			var (
 				kvmock = mocks.NewTxnKV(t)
-				c      = NewCatalog(kvmock, nil)
+				c      = NewCatalog(kvmock)
 			)
 
 			// Return valid keys if loadWithPrefixReturn == True
@@ -2076,17 +2046,17 @@ func TestRBAC_Role(t *testing.T) {
 	t.Run("test ListUser", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil).(*Catalog)
+			c      = NewCatalog(kvmock).(*Catalog)
 
 			invalidUser    = "invalid-user"
-			invalidUserKey = funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, invalidUser) + "/"
+			invalidUserKey = funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, tenant, invalidUser)
 		)
 		// returns error for invalidUserKey
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, invalidUserKey).Call.Return(
 			nil, nil, errors.New("Mock load with prefix wrong"))
 
 		// Returns keys for RoleMappingPrefix/tenant/user1/ (with trailing slash after the fix)
-		user1Key := funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, "user1") + "/"
+		user1Key := funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, tenant, "user1")
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, user1Key).Call.Return(
 			func(ctx context.Context, key string) []string {
 				return []string{
@@ -2098,11 +2068,11 @@ func TestRBAC_Role(t *testing.T) {
 
 		// Returns keys for CredentialPrefix
 		var loadCredentialPrefixReturn atomic.Bool
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, CredentialPrefix).Call.Return(
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, CredentialPrefix+"/").Call.Return(
 			func(ctx context.Context, key string) []string {
 				if loadCredentialPrefixReturn.Load() {
 					return []string{
-						fmt.Sprintf("%s/%s/%s", CredentialPrefix, UserSubPrefix, "user1"),
+						fmt.Sprintf("%s/%s", CredentialPrefix, "user1"),
 					}
 				}
 				return nil
@@ -2218,7 +2188,7 @@ func TestRBAC_Role(t *testing.T) {
 		var (
 			loadWithPrefixReturn atomic.Bool
 			kvmock               = mocks.NewTxnKV(t)
-			c                    = NewCatalog(kvmock, nil)
+			c                    = NewCatalog(kvmock)
 		)
 
 		// Return valid keys if loadWithPrefixReturn == True
@@ -2294,21 +2264,21 @@ func TestRBAC_Grant(t *testing.T) {
 	t.Run("test AlterGrant", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 
-		validRoleKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", validRole, object, objName))
+		validRoleKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, validRole, object, objName)
 		validRoleValue := crypto.MD5(validRoleKey)
 
-		invalidRoleKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", invalidRole, object, objName))
-		invalidRoleKeyWithDb := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", invalidRole, object, funcutil.CombineObjectName(util.DefaultDBName, objName)))
+		invalidRoleKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, invalidRole, object, objName)
+		invalidRoleKeyWithDb := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, invalidRole, object, funcutil.CombineObjectName(util.DefaultDBName, objName))
 
-		keyNotExistRoleKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", keyNotExistRole, object, objName))
-		keyNotExistRoleKeyWithDb := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", keyNotExistRole, object, funcutil.CombineObjectName(util.DefaultDBName, objName)))
+		keyNotExistRoleKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, keyNotExistRole, object, objName)
+		keyNotExistRoleKeyWithDb := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, keyNotExistRole, object, funcutil.CombineObjectName(util.DefaultDBName, objName))
 		keyNotExistRoleValueWithDb := crypto.MD5(keyNotExistRoleKeyWithDb)
 
-		errorSaveRoleKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", errorSaveRole, object, objName))
-		errorSaveRoleKeyWithDb := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, fmt.Sprintf("%s/%s/%s", errorSaveRole, object, funcutil.CombineObjectName(util.DefaultDBName, objName)))
+		errorSaveRoleKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, errorSaveRole, object, objName)
+		errorSaveRoleKeyWithDb := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, errorSaveRole, object, funcutil.CombineObjectName(util.DefaultDBName, objName))
 
 		// Mock return in kv_catalog.go:AlterGrant:L815
 		kvmock.EXPECT().Load(mock.Anything, validRoleKey).Call.
@@ -2341,10 +2311,10 @@ func TestRBAC_Grant(t *testing.T) {
 		kvmock.EXPECT().Save(mock.Anything, keyNotExistRoleKeyWithDb, mock.Anything).Return(nil)
 		kvmock.EXPECT().Save(mock.Anything, errorSaveRoleKeyWithDb, mock.Anything).Return(errors.New("mock save error role"))
 
-		validPrivilegeKey := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, fmt.Sprintf("%s/%s", validRoleValue, validPrivilege))
-		invalidPrivilegeKey := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, fmt.Sprintf("%s/%s", validRoleValue, invalidPrivilege))
-		keyNotExistPrivilegeKey := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, fmt.Sprintf("%s/%s", validRoleValue, keyNotExistPrivilege))
-		keyNotExistPrivilegeKey2WithDb := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, fmt.Sprintf("%s/%s", keyNotExistRoleValueWithDb, keyNotExistPrivilege2))
+		validPrivilegeKey := fmt.Sprintf("%s/%s/%s", GranteeIDPrefix, validRoleValue, validPrivilege)
+		invalidPrivilegeKey := fmt.Sprintf("%s/%s/%s", GranteeIDPrefix, validRoleValue, invalidPrivilege)
+		keyNotExistPrivilegeKey := fmt.Sprintf("%s/%s/%s", GranteeIDPrefix, validRoleValue, keyNotExistPrivilege)
+		keyNotExistPrivilegeKey2WithDb := fmt.Sprintf("%s/%s/%s", GranteeIDPrefix, keyNotExistRoleValueWithDb, keyNotExistPrivilege2)
 
 		// Mock return in kv_catalog.go:AlterGrant:L838
 		kvmock.EXPECT().Load(mock.Anything, validPrivilegeKey).Call.Return("", nil)
@@ -2421,7 +2391,7 @@ func TestRBAC_Grant(t *testing.T) {
 
 		t.Run("test Revoke", func(t *testing.T) {
 			invalidPrivilegeRemove := "p-remove"
-			invalidPrivilegeRemoveKey := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, fmt.Sprintf("%s/%s", validRoleValue, invalidPrivilegeRemove))
+			invalidPrivilegeRemoveKey := fmt.Sprintf("%s/%s/%s", GranteeIDPrefix, validRoleValue, invalidPrivilegeRemove)
 
 			kvmock.EXPECT().Load(mock.Anything, invalidPrivilegeRemoveKey).Call.Return("", nil)
 			kvmock.EXPECT().Remove(mock.Anything, invalidPrivilegeRemoveKey).Return(errors.New("mock remove error"))
@@ -2480,14 +2450,14 @@ func TestRBAC_Grant(t *testing.T) {
 	t.Run("test DeleteGrant", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			errorRole           = "error-role"
-			errorRolePrefix     = funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, errorRole+"/")
+			errorRolePrefix     = funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant, errorRole)
 			loadErrorRole       = "load-error-role"
-			loadErrorRolePrefix = funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, loadErrorRole+"/")
+			loadErrorRolePrefix = funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant, loadErrorRole)
 			granteeID           = "123456"
-			granteePrefix       = funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, granteeID+"/")
+			granteePrefix       = funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, granteeID)
 		)
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, loadErrorRolePrefix).Call.Return(nil, nil, errors.New("mock loadWithPrefix error"))
@@ -2520,27 +2490,24 @@ func TestRBAC_Grant(t *testing.T) {
 	t.Run("test ListGrant", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 
 		// Mock Load in kv_catalog.go:L901
-		validGranteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("%s/%s/%s", "role1", "obj1", "obj_name1"))
+		validGranteeKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, "role1", "obj1", "obj_name1")
 		kvmock.EXPECT().Load(mock.Anything, validGranteeKey).Call.
 			Return(func(ctx context.Context, key string) string { return crypto.MD5(key) }, nil)
-		validGranteeKey2 := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("%s/%s/%s", "role1", "obj2", "foo.obj_name2"))
+		validGranteeKey2 := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, "role1", "obj2", "foo.obj_name2")
 		kvmock.EXPECT().Load(mock.Anything, validGranteeKey2).Call.
 			Return(func(ctx context.Context, key string) string { return crypto.MD5(key) }, nil)
-		validGranteeKey3 := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("%s/%s/%s", "role1", "obj3", "*.obj_name3"))
+		validGranteeKey3 := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, "role1", "obj3", "*.obj_name3")
 		kvmock.EXPECT().Load(mock.Anything, validGranteeKey3).Call.
 			Return(func(ctx context.Context, key string) string { return crypto.MD5(key) }, nil)
 
 		kvmock.EXPECT().Load(mock.Anything, mock.Anything).Call.
 			Return("", errors.New("mock Load error"))
 
-		invalidRoleKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, invalidRole) + "/"
+		invalidRoleKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant, invalidRole)
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, invalidRoleKey).Call.Return(nil, nil, errors.New("mock loadWithPrefix error"))
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).Call.Return(
 			func(ctx context.Context, key string) []string {
@@ -2640,7 +2607,7 @@ func TestRBAC_Grant(t *testing.T) {
 	t.Run("test ListPolicy", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 
 			firstLoadWithPrefixReturn  atomic.Bool
 			secondLoadWithPrefixReturn atomic.Bool
@@ -2668,10 +2635,10 @@ func TestRBAC_Grant(t *testing.T) {
 				if contains {
 					if secondLoadWithPrefixReturn.Load() {
 						return []string{
-							fmt.Sprintf("%s/%s", key, "PrivilegeLoad"),
-							fmt.Sprintf("%s/%s", key, "PrivilegeRelease"),
-							fmt.Sprintf("%s/%s", key, "random/a/b/c"),
-							fmt.Sprintf("%s/%s", key, util.AnyWord),
+							fmt.Sprintf("%s%s", key, "PrivilegeLoad"),
+							fmt.Sprintf("%s%s", key, "PrivilegeRelease"),
+							fmt.Sprintf("%s%s", key, "random/a/b/c"),
+							fmt.Sprintf("%s%s", key, util.AnyWord),
 						}
 					}
 					return nil
@@ -2679,8 +2646,8 @@ func TestRBAC_Grant(t *testing.T) {
 
 				if firstLoadWithPrefixReturn.Load() {
 					return []string{
-						fmt.Sprintf("%s/%s", key, "role1/obj1/obj_name1"),
-						fmt.Sprintf("%s/%s", key, "role2/obj2/obj_name2"),
+						fmt.Sprintf("%s%s", key, "role1/obj1/obj_name1"),
+						fmt.Sprintf("%s%s", key, "role2/obj2/obj_name2"),
 						"random",
 					}
 				}
@@ -2765,7 +2732,7 @@ func TestRBAC_Backup(t *testing.T) {
 	metaKV := etcdkv.NewEtcdKV(etcdCli, rootPath)
 	defer metaKV.RemoveWithPrefix(context.TODO(), "")
 	defer metaKV.Close()
-	c := NewCatalog(metaKV, nil)
+	c := NewCatalog(metaKV)
 
 	ctx := context.Background()
 	c.CreateRole(ctx, util.DefaultTenant, &milvuspb.RoleEntity{Name: "role1"})
@@ -2818,7 +2785,7 @@ func TestRBAC_Restore(t *testing.T) {
 	metaKV := etcdkv.NewEtcdKV(etcdCli, rootPath)
 	defer metaKV.RemoveWithPrefix(context.TODO(), "")
 	defer metaKV.Close()
-	c := NewCatalog(metaKV, nil)
+	c := NewCatalog(metaKV)
 
 	ctx := context.Background()
 
@@ -2960,6 +2927,59 @@ func TestRBAC_Restore(t *testing.T) {
 	assert.Len(t, privGroups, 2)
 }
 
+func TestRBAC_Restore_Wildcard(t *testing.T) {
+	etcdCli, _ := etcd.GetEtcdClient(
+		Params.EtcdCfg.UseEmbedEtcd.GetAsBool(),
+		Params.EtcdCfg.EtcdUseSSL.GetAsBool(),
+		Params.EtcdCfg.Endpoints.GetAsStrings(),
+		Params.EtcdCfg.EtcdTLSCert.GetValue(),
+		Params.EtcdCfg.EtcdTLSKey.GetValue(),
+		Params.EtcdCfg.EtcdTLSCACert.GetValue(),
+		Params.EtcdCfg.EtcdTLSMinVersion.GetValue())
+	rootPath := "/test/rbac/wildcard"
+	metaKV := etcdkv.NewEtcdKV(etcdCli, rootPath)
+	defer metaKV.RemoveWithPrefix(context.TODO(), "")
+	defer metaKV.Close()
+	c := NewCatalog(metaKV)
+
+	ctx := context.Background()
+
+	wildcardGrant := &milvuspb.GrantEntity{
+		Role:       &milvuspb.RoleEntity{Name: "wildcard_role"},
+		Object:     &milvuspb.ObjectEntity{Name: commonpb.ObjectType_Global.String()},
+		ObjectName: util.AnyWord,
+		DbName:     util.AnyWord,
+		Grantor: &milvuspb.GrantorEntity{
+			User:      &milvuspb.UserEntity{Name: util.UserRoot},
+			Privilege: &milvuspb.PrivilegeEntity{Name: util.AnyWord},
+		},
+	}
+
+	require.NoError(t, c.CreateRole(ctx, util.DefaultTenant, &milvuspb.RoleEntity{Name: "wildcard_role"}))
+	require.NoError(t, c.AlterGrant(ctx, util.DefaultTenant, wildcardGrant, milvuspb.OperatePrivilegeType_Grant))
+	expectedIDKeys, _, err := metaKV.LoadWithPrefix(ctx, GranteeIDPrefix)
+	require.NoError(t, err)
+	require.Len(t, expectedIDKeys, 1)
+	require.True(t, strings.HasSuffix(expectedIDKeys[0], "/"+util.AnyWord),
+		"OperatePrivilege baseline should store wildcard as '/*', got %q", expectedIDKeys[0])
+
+	require.NoError(t, metaKV.RemoveWithPrefix(ctx, ""))
+
+	rbacMeta := &milvuspb.RBACMeta{
+		Roles:  []*milvuspb.RoleEntity{{Name: "wildcard_role"}},
+		Grants: []*milvuspb.GrantEntity{wildcardGrant},
+	}
+	require.NoError(t, c.RestoreRBAC(ctx, util.DefaultTenant, rbacMeta))
+
+	restoredIDKeys, _, err := metaKV.LoadWithPrefix(ctx, GranteeIDPrefix)
+	require.NoError(t, err)
+	require.Len(t, restoredIDKeys, 1)
+	assert.True(t, strings.HasSuffix(restoredIDKeys[0], "/"+util.AnyWord),
+		"RestoreRBAC must persist wildcard as '/*', got %q", restoredIDKeys[0])
+	assert.False(t, strings.Contains(restoredIDKeys[0], util.PrivilegeGroupWord+util.AnyWord),
+		"RestoreRBAC must not encode wildcard as 'PrivilegeGroup*', got %q", restoredIDKeys[0])
+}
+
 func TestRBAC_PrivilegeGroup(t *testing.T) {
 	ctx := context.TODO()
 	group1 := "group1"
@@ -2974,7 +2994,7 @@ func TestRBAC_PrivilegeGroup(t *testing.T) {
 	t.Run("test GetPrivilegeGroup", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 		kvmock.EXPECT().Load(mock.Anything, key1).Return(string(v1), nil)
 		kvmock.EXPECT().Load(mock.Anything, key2).Return("", merr.ErrIoKeyNotFound)
@@ -3004,7 +3024,7 @@ func TestRBAC_PrivilegeGroup(t *testing.T) {
 	t.Run("test DropPrivilegeGroup", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 
 		kvmock.EXPECT().Remove(mock.Anything, key1).Return(nil)
@@ -3034,7 +3054,7 @@ func TestRBAC_PrivilegeGroup(t *testing.T) {
 	t.Run("test SavePrivilegeGroup", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 
 		kvmock.EXPECT().Save(mock.Anything, key1, mock.Anything).Return(nil)
@@ -3064,10 +3084,10 @@ func TestRBAC_PrivilegeGroup(t *testing.T) {
 	t.Run("test ListPrivilegeGroups", func(t *testing.T) {
 		var (
 			kvmock = mocks.NewTxnKV(t)
-			c      = NewCatalog(kvmock, nil)
+			c      = NewCatalog(kvmock)
 		)
 
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, PrivilegeGroupPrefix).Return(
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, PrivilegeGroupPrefix+"/").Return(
 			[]string{key1, key2},
 			[]string{string(v1), string(v2)},
 			nil,
@@ -3092,12 +3112,37 @@ func getPrivilegeNames(privileges []*milvuspb.PrivilegeEntity) []string {
 	})
 }
 
+func TestCatalog_ListDatabases_SkipsTombstone(t *testing.T) {
+	kvmock := mocks.NewTxnKV(t)
+	c := NewCatalog(kvmock)
+
+	// Simulate: one normal db + one tombstone value left by old SuffixSnapshot DropDatabase
+	normalDB := &pb.DatabaseInfo{
+		TenantId: "",
+		Id:       1,
+		Name:     "test_db",
+	}
+	normalVal, err := proto.Marshal(normalDB)
+	require.NoError(t, err)
+
+	kvmock.EXPECT().LoadWithPrefix(mock.Anything, DBInfoMetaPrefix+"/").Return(
+		[]string{"root-coord/database/db-info/1", "root-coord/database/db-info/2"},
+		[]string{string(normalVal), string(SuffixSnapshotTombstone)},
+		nil,
+	)
+
+	dbs, err := c.ListDatabases(context.Background(), 0)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(dbs), "tombstone value should be skipped")
+	assert.Equal(t, "test_db", dbs[0].Name)
+}
+
 func TestCatalog_AlterDatabase(t *testing.T) {
-	kvmock := mocks.NewSnapShotKV(t)
-	c := NewCatalog(nil, kvmock)
+	kvmock := mocks.NewTxnKV(t)
+	c := NewCatalog(kvmock)
 	db := model.NewDatabase(1, "db", pb.DatabaseState_DatabaseCreated, nil)
 
-	kvmock.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	kvmock.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	ctx := context.Background()
 
 	// test alter database success
@@ -3114,19 +3159,19 @@ func TestCatalog_AlterDatabase(t *testing.T) {
 	// test alter database fail
 	mockErr := errors.New("access kv store error")
 	kvmock.ExpectedCalls = nil
-	kvmock.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(mockErr)
+	kvmock.EXPECT().Save(mock.Anything, mock.Anything, mock.Anything).Return(mockErr)
 	err = c.AlterDatabase(ctx, newDB, typeutil.ZeroTimestamp)
 	assert.ErrorIs(t, err, mockErr)
 }
 
 func TestCatalog_listFunctionError(t *testing.T) {
 	mockSnapshot := newMockSnapshot(t)
-	kc := NewCatalog(nil, mockSnapshot).(*Catalog)
-	mockSnapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything, mock.Anything).Return(nil, nil, errors.New("mock error"))
+	kc := NewCatalog(mockSnapshot).(*Catalog)
+	mockSnapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).Return(nil, nil, errors.New("mock error"))
 	_, err := kc.listFunctions(context.TODO(), 1, 1)
 	assert.Error(t, err)
 
-	mockSnapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything, mock.Anything).Return([]string{"test-key"}, []string{"invalid bytes"}, nil)
+	mockSnapshot.EXPECT().LoadWithPrefix(mock.Anything, mock.Anything).Return([]string{"test-key"}, []string{"invalid bytes"}, nil)
 	_, err = kc.listFunctions(context.TODO(), 1, 1)
 	assert.Error(t, err)
 }
@@ -3141,11 +3186,11 @@ func TestRBACPrefixMatch(t *testing.T) {
 	t.Run("getRolesByUsername should not match similar prefix usernames", func(t *testing.T) {
 		// Scenario: user1 and user10 exist, querying user1 should not return user10's roles
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil).(*Catalog)
+		c := NewCatalog(kvmock).(*Catalog)
 
 		// The fix adds "/" to the prefix, so query for "user1" uses prefix "RoleMappingPrefix/tenant/user1/"
 		// This ensures user10's data won't be matched
-		user1Prefix := funcutil.HandleTenantForEtcdKey(RoleMappingPrefix, tenant, "user1") + "/"
+		user1Prefix := funcutil.HandleTenantForEtcdPrefix(RoleMappingPrefix, tenant, "user1")
 
 		// Mock: return keys that match the prefix correctly
 		// Key format: prefix + roleName (where prefix already ends with "/")
@@ -3168,10 +3213,10 @@ func TestRBACPrefixMatch(t *testing.T) {
 	t.Run("ListGrant should not match similar prefix role names", func(t *testing.T) {
 		// Scenario: role1 and role10 exist, querying role1 should not return role10's grants
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil).(*Catalog)
+		c := NewCatalog(kvmock).(*Catalog)
 
 		// The fix adds "/" to the prefix for role query
-		role1Prefix := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "role1") + "/"
+		role1Prefix := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant, "role1")
 
 		// Mock: return only role1's grants (the fix ensures role10 won't be matched)
 		// Key format: prefix + object + "/" + objectName (prefix already ends with "/")
@@ -3188,8 +3233,8 @@ func TestRBACPrefixMatch(t *testing.T) {
 		)
 
 		// Mock granteeID lookups with "/" suffix
-		granteeID1Prefix := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "grantee_id_1") + "/"
-		granteeID2Prefix := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "grantee_id_2") + "/"
+		granteeID1Prefix := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "grantee_id_1")
+		granteeID2Prefix := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "grantee_id_2")
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeID1Prefix).Return(
 			[]string{granteeID1Prefix + "Load"},
@@ -3217,17 +3262,16 @@ func TestRBACPrefixMatch(t *testing.T) {
 	t.Run("ListGrant granteeID prefix should not match similar prefixes", func(t *testing.T) {
 		// Scenario: granteeID "abc" and "abc123" exist, querying abc should not return abc123's privileges
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil).(*Catalog)
+		c := NewCatalog(kvmock).(*Catalog)
 
 		// Setup for a specific object query that triggers appendGrantEntity
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("%s/%s/%s", "testRole", "Collection", "testCol"))
+		granteeKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, "testRole", "Collection", "testCol")
 
 		// Mock Load to return a granteeID
 		kvmock.EXPECT().Load(mock.Anything, granteeKey).Return("grantee_abc", nil)
 
 		// The fix adds "/" to granteeID prefix query
-		granteeIDPrefix := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "grantee_abc") + "/"
+		granteeIDPrefix := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "grantee_abc")
 
 		// Mock: return only grantee_abc's privileges (not grantee_abc123's)
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeIDPrefix).Return(
@@ -3258,14 +3302,159 @@ func TestRBACPrefixMatch(t *testing.T) {
 	})
 }
 
+func TestCatalog_FileResource(t *testing.T) {
+	ctx := context.Background()
+	mockErr := errors.New("mock error")
+
+	t.Run("BuildFileResourceKey", func(t *testing.T) {
+		key := BuildFileResourceKey(12345)
+		assert.Equal(t, fmt.Sprintf("%s/%d", FileResourceMetaPrefix, 12345), key)
+	})
+
+	t.Run("SaveFileResource success", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		resource := &model.FileResource{
+			ID:   1,
+			Name: "test_resource",
+			Path: "/path/to/resource",
+		}
+
+		kvmock.EXPECT().Save(mock.Anything, BuildFileResourceKey(1), mock.Anything).Return(nil)
+
+		err := c.(*Catalog).SaveFileResource(ctx, resource)
+		assert.NoError(t, err)
+	})
+
+	t.Run("SaveFileResource write error", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		resource := &model.FileResource{
+			ID:   1,
+			Name: "test_resource",
+			Path: "/path/to/resource",
+		}
+
+		kvmock.EXPECT().Save(mock.Anything, BuildFileResourceKey(1), mock.Anything).Return(mockErr)
+
+		err := c.(*Catalog).SaveFileResource(ctx, resource)
+		assert.Error(t, err)
+	})
+
+	t.Run("RemoveFileResource success", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		kvmock.EXPECT().Remove(mock.Anything, BuildFileResourceKey(1)).Return(nil)
+
+		err := c.(*Catalog).RemoveFileResource(ctx, 1)
+		assert.NoError(t, err)
+	})
+
+	t.Run("RemoveFileResource error", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		kvmock.EXPECT().Remove(mock.Anything, BuildFileResourceKey(1)).Return(mockErr)
+
+		err := c.(*Catalog).RemoveFileResource(ctx, 1)
+		assert.Error(t, err)
+	})
+
+	t.Run("ListFileResource success", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		resource := &model.FileResource{
+			ID:   1,
+			Name: "test_resource",
+			Path: "/path/to/resource",
+		}
+		value, err := proto.Marshal(resource.Marshal())
+		assert.NoError(t, err)
+
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, FileResourceMetaPrefix+"/").Return(
+			[]string{BuildFileResourceKey(1)},
+			[]string{string(value)},
+			nil,
+		)
+
+		resources, err := c.(*Catalog).ListFileResource(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, len(resources))
+		assert.Equal(t, int64(1), resources[0].ID)
+		assert.Equal(t, "test_resource", resources[0].Name)
+		assert.Equal(t, "/path/to/resource", resources[0].Path)
+	})
+
+	t.Run("ListFileResource LoadWithPrefix error", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, FileResourceMetaPrefix+"/").Return(nil, nil, mockErr)
+
+		resources, err := c.(*Catalog).ListFileResource(ctx)
+		assert.Error(t, err)
+		assert.Nil(t, resources)
+	})
+
+	t.Run("ListFileResource unmarshal error", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, FileResourceMetaPrefix+"/").Return(
+			[]string{BuildFileResourceKey(1)},
+			[]string{"invalid_proto_data"},
+			nil,
+		)
+
+		resources, err := c.(*Catalog).ListFileResource(ctx)
+		assert.Error(t, err)
+		assert.Nil(t, resources)
+	})
+
+	t.Run("ListFileResource empty", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, FileResourceMetaPrefix+"/").Return([]string{}, []string{}, nil)
+
+		resources, err := c.(*Catalog).ListFileResource(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, len(resources))
+	})
+
+	t.Run("ListFileResource multiple resources", func(t *testing.T) {
+		kvmock := mocks.NewTxnKV(t)
+		c := NewCatalog(kvmock)
+
+		resource1 := &model.FileResource{ID: 1, Name: "resource1", Path: "/path/1"}
+		resource2 := &model.FileResource{ID: 2, Name: "resource2", Path: "/path/2"}
+		value1, _ := proto.Marshal(resource1.Marshal())
+		value2, _ := proto.Marshal(resource2.Marshal())
+
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, FileResourceMetaPrefix+"/").Return(
+			[]string{BuildFileResourceKey(1), BuildFileResourceKey(2)},
+			[]string{string(value1), string(value2)},
+			nil,
+		)
+
+		resources, err := c.(*Catalog).ListFileResource(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(resources))
+	})
+}
+
 func TestDeleteGrantByCollectionName(t *testing.T) {
 	ctx := context.Background()
-	tenant := "test-tenant"
+	tenant := util.DefaultTenant
 
 	t.Run("load error", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(nil, nil, errors.New("load error"))
 
 		err := c.DeleteGrantByCollectionName(ctx, tenant, "default", "col1")
@@ -3274,11 +3463,11 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("no matching grants", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
 		// Only a grant for a different collection
-		key1 := granteeKey + "/role1/Collection/default.other_col"
+		key1 := granteeKey + "role1/Collection/default.other_col"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"granteeID1"}, nil)
 
@@ -3288,13 +3477,13 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("deletes matching grants only", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/default.col1"
-		key2 := granteeKey + "/role2/Collection/default.col1"
-		key3 := granteeKey + "/role1/Collection/default.other_col"
-		key4 := granteeKey + "/role1/Global/default.col1" // different objectType
+		key1 := granteeKey + "role1/Collection/default.col1"
+		key2 := granteeKey + "role2/Collection/default.col1"
+		key3 := granteeKey + "role1/Collection/default.other_col"
+		key4 := granteeKey + "role1/Global/default.col1" // different objectType
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1, key2, key3, key4},
@@ -3302,8 +3491,8 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 			nil)
 
 		// Prefix deletion for granteeID keys (have sub-keys)
-		gid1Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
-		gid2Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid2/")
+		gid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
+		gid2Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid2")
 		kvmock.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, (map[string]string)(nil),
 			[]string{gid1Key, gid2Key}).Return(nil)
 		// Exact deletion for grantee keys (leaf keys, no sub-keys)
@@ -3316,16 +3505,16 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("handles old format without db prefix", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
 		// Old format: objectName without "." is treated as default db
-		key1 := granteeKey + "/role1/Collection/col1"
+		key1 := granteeKey + "role1/Collection/col1"
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
-		gid1Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
+		gid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
 		kvmock.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, (map[string]string)(nil),
 			[]string{gid1Key}).Return(nil)
 		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, (map[string]string)(nil),
@@ -3337,19 +3526,19 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("skips wildcard dbName grants on drop", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
 		// Wildcard grant *.col1 should NOT be deleted when dropping db1.col1,
 		// because it may also protect col1 in other databases.
-		key1 := granteeKey + "/role1/Collection/*.col1"
-		key2 := granteeKey + "/role1/Collection/default.col1"
+		key1 := granteeKey + "role1/Collection/*.col1"
+		key2 := granteeKey + "role1/Collection/default.col1"
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1, key2}, []string{"gid1", "gid2"}, nil)
 
 		// Only key2 (default.col1) should be deleted, not key1 (*.col1)
-		gid2Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid2/")
+		gid2Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid2")
 		kvmock.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, (map[string]string)(nil),
 			[]string{gid2Key}).Return(nil)
 		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, (map[string]string)(nil),
@@ -3361,20 +3550,19 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("handles rootPath prefix in etcd keys", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
 		// Simulate etcd returning keys WITH rootPath prefix (as real etcd does)
 		rootPath := "by-dev/meta/"
-		key1 := rootPath + granteeKey + "/role1/Collection/default.col1"
+		key1 := rootPath + granteeKey + "role1/Collection/default.col1"
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
 		// The logical key (without rootPath) should be used for deletion
-		logicalKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			"role1/Collection/default.col1")
-		gid1Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
+		logicalKey := fmt.Sprintf("%s/%s/%s/%s", GranteePrefix, "role1", "Collection", "default.col1")
+		gid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
 		kvmock.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, (map[string]string)(nil),
 			[]string{gid1Key}).Return(nil)
 		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, (map[string]string)(nil),
@@ -3386,14 +3574,14 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("MultiSaveAndRemoveWithPrefix error", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/default.col1"
+		key1 := granteeKey + "role1/Collection/default.col1"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
-		gid1Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
+		gid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
 		kvmock.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, (map[string]string)(nil),
 			[]string{gid1Key}).Return(errors.New("remove error"))
 
@@ -3403,14 +3591,14 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 	t.Run("MultiSaveAndRemove error", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/default.col1"
+		key1 := granteeKey + "role1/Collection/default.col1"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
-		gid1Key := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
+		gid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
 		kvmock.EXPECT().MultiSaveAndRemoveWithPrefix(mock.Anything, (map[string]string)(nil),
 			[]string{gid1Key}).Return(nil)
 		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, (map[string]string)(nil),
@@ -3423,12 +3611,12 @@ func TestDeleteGrantByCollectionName(t *testing.T) {
 
 func TestMigrateGrantCollectionName(t *testing.T) {
 	ctx := context.Background()
-	tenant := "test-tenant"
+	tenant := util.DefaultTenant
 
 	t.Run("load error", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(nil, nil, errors.New("load error"))
 
 		err := c.MigrateGrantCollectionName(ctx, tenant, "default", "old_col", "default", "new_col")
@@ -3437,10 +3625,10 @@ func TestMigrateGrantCollectionName(t *testing.T) {
 
 	t.Run("no matching grants", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/default.other_col"
+		key1 := granteeKey + "role1/Collection/default.other_col"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
@@ -3448,53 +3636,29 @@ func TestMigrateGrantCollectionName(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("migrates matching grants with grantee id recomputation", func(t *testing.T) {
+	t.Run("migrates matching grants", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/default.old_col"
-		key2 := granteeKey + "/role2/Collection/default.old_col"
-		key3 := granteeKey + "/role1/Collection/default.other_col"
+		key1 := granteeKey + "role1/Collection/default.old_col"
+		key2 := granteeKey + "role2/Collection/default.old_col"
+		key3 := granteeKey + "role1/Collection/default.other_col"
 
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1, key2, key3},
 			[]string{"gid1", "gid2", "gid3"},
 			nil)
 
-		newKey1 := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("role1/Collection/%s", funcutil.CombineObjectName("default", "new_col")))
-		newKey2 := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("role2/Collection/%s", funcutil.CombineObjectName("default", "new_col")))
-		newIdStr1 := crypto.MD5(newKey1)
-		newIdStr2 := crypto.MD5(newKey2)
+		// Mock LoadWithPrefix for GranteeIDPrefix entries of each matching grant
+		oldGid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGid1Key).Return(
+			[]string{oldGid1Key + "Insert"}, []string{"grantor1"}, nil)
+		oldGid2Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid2")
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGid2Key).Return(
+			[]string{oldGid2Key + "Query"}, []string{"grantor2"}, nil)
 
-		// Mock loading GranteeIDPrefix entries for each old idStr
-		oldGranteeIDKey1 := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
-		oldIDEntry1 := oldGranteeIDKey1 + "Insert"
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGranteeIDKey1).Return(
-			[]string{oldIDEntry1}, []string{"root"}, nil)
-
-		oldGranteeIDKey2 := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid2/")
-		oldIDEntry2a := oldGranteeIDKey2 + "Insert"
-		oldIDEntry2b := oldGranteeIDKey2 + "Query"
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGranteeIDKey2).Return(
-			[]string{oldIDEntry2a, oldIDEntry2b}, []string{"root", "admin"}, nil)
-
-		newIDKey1 := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant,
-			fmt.Sprintf("%s/Insert", newIdStr1))
-		newIDKey2a := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant,
-			fmt.Sprintf("%s/Insert", newIdStr2))
-		newIDKey2b := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant,
-			fmt.Sprintf("%s/Query", newIdStr2))
-
-		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything,
-			map[string]string{
-				newKey1:   newIdStr1,
-				newKey2:   newIdStr2,
-				newIDKey1: "root", newIDKey2a: "root", newIDKey2b: "admin",
-			},
-			[]string{key1, oldIDEntry1, key2, oldIDEntry2a, oldIDEntry2b}).Return(nil)
+		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 		err := c.MigrateGrantCollectionName(ctx, tenant, "default", "old_col", "default", "new_col")
 		assert.NoError(t, err)
@@ -3502,25 +3666,18 @@ func TestMigrateGrantCollectionName(t *testing.T) {
 
 	t.Run("cross-db rename", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/db1.col1"
+		key1 := granteeKey + "role1/Collection/db1.col1"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
-		newKey1 := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("role1/Collection/%s", funcutil.CombineObjectName("db2", "col2")))
-		newIdStr1 := crypto.MD5(newKey1)
+		oldGid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGid1Key).Return(
+			[]string{oldGid1Key + "Insert"}, []string{"grantor1"}, nil)
 
-		// Mock loading GranteeIDPrefix entries for old idStr
-		oldGranteeIDKey1 := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGranteeIDKey1).Return(
-			nil, nil, nil)
-
-		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything,
-			map[string]string{newKey1: newIdStr1},
-			[]string{key1}).Return(nil)
+		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 		err := c.MigrateGrantCollectionName(ctx, tenant, "db1", "col1", "db2", "col2")
 		assert.NoError(t, err)
@@ -3528,28 +3685,22 @@ func TestMigrateGrantCollectionName(t *testing.T) {
 
 	t.Run("skips wildcard dbName grants on rename", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
 		// Wildcard grant *.old_col should NOT be migrated when renaming db1.old_col,
 		// because it may also apply to old_col in other databases.
-		key1 := granteeKey + "/role1/Collection/*.old_col"
-		key2 := granteeKey + "/role1/Collection/default.old_col"
+		key1 := granteeKey + "role1/Collection/*.old_col"
+		key2 := granteeKey + "role1/Collection/default.old_col"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1, key2}, []string{"gid1", "gid2"}, nil)
 
 		// Only key2 (default.old_col) should be migrated
-		oldGranteeIDKey2 := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid2/")
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGranteeIDKey2).Return(
-			nil, nil, nil)
+		oldGid2Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid2")
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGid2Key).Return(
+			[]string{oldGid2Key + "Query"}, []string{"grantor2"}, nil)
 
-		newKey2 := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant,
-			fmt.Sprintf("role1/Collection/%s", funcutil.CombineObjectName("default", "new_col")))
-		newIdStr2 := crypto.MD5(newKey2)
-
-		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything,
-			map[string]string{newKey2: newIdStr2},
-			[]string{key2}).Return(nil)
+		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 		err := c.MigrateGrantCollectionName(ctx, tenant, "default", "old_col", "default", "new_col")
 		assert.NoError(t, err)
@@ -3557,16 +3708,16 @@ func TestMigrateGrantCollectionName(t *testing.T) {
 
 	t.Run("save error", func(t *testing.T) {
 		kvmock := mocks.NewTxnKV(t)
-		c := NewCatalog(kvmock, nil)
-		granteeKey := funcutil.HandleTenantForEtcdKey(GranteePrefix, tenant, "")
+		c := NewCatalog(kvmock)
+		granteeKey := funcutil.HandleTenantForEtcdPrefix(GranteePrefix, tenant)
 
-		key1 := granteeKey + "/role1/Collection/default.old_col"
+		key1 := granteeKey + "role1/Collection/default.old_col"
 		kvmock.EXPECT().LoadWithPrefix(mock.Anything, granteeKey).Return(
 			[]string{key1}, []string{"gid1"}, nil)
 
-		oldGranteeIDKey1 := funcutil.HandleTenantForEtcdKey(GranteeIDPrefix, tenant, "gid1/")
-		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGranteeIDKey1).Return(
-			nil, nil, nil)
+		oldGid1Key := funcutil.HandleTenantForEtcdPrefix(GranteeIDPrefix, tenant, "gid1")
+		kvmock.EXPECT().LoadWithPrefix(mock.Anything, oldGid1Key).Return(
+			[]string{oldGid1Key + "Insert"}, []string{"grantor1"}, nil)
 
 		kvmock.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).
 			Return(errors.New("save error"))

@@ -37,6 +37,7 @@ constexpr const char* BITMAP_INDEX_DATA = "bitmap_index_data";
 constexpr const char* BITMAP_INDEX_META = "bitmap_index_meta";
 constexpr const char* BITMAP_INDEX_LENGTH = "bitmap_index_length";
 constexpr const char* BITMAP_INDEX_NUM_ROWS = "bitmap_index_num_rows";
+constexpr const char* BITMAP_INDEX_VALID_BITSET = "valid_bitset";
 
 constexpr const char* INDEX_TYPE = "index_type";
 constexpr const char* METRIC_TYPE = "metric_type";
@@ -72,6 +73,10 @@ constexpr const char* INDEX_VERSION = "index_version";
 constexpr const char* INDEX_ENGINE_VERSION = "index_engine_version";
 constexpr const char* BITMAP_INDEX_CARDINALITY_LIMIT =
     "bitmap_cardinality_limit";
+constexpr const char* HYBRID_LOW_CARDINALITY_INDEX_TYPE =
+    "hybrid_low_cardinality_index_type";
+constexpr const char* HYBRID_HIGH_CARDINALITY_INDEX_TYPE =
+    "hybrid_high_cardinality_index_type";
 
 // index config key
 constexpr const char* MMAP_FILE_PATH = "mmap_filepath";

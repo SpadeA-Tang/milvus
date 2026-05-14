@@ -114,14 +114,20 @@ func CheckSegmentDataReady(ctx context.Context, collectionID int64, distManager 
 	return nil
 }
 
-func checkLoadStatus(ctx context.Context, m *meta.Meta, collectionID int64) error {
-	percentage := m.CollectionManager.CalculateLoadPercentage(ctx, collectionID)
+func checkLoadStatus(ctx context.Context, m *meta.Meta, collectionID int64, withUnserviceableShards bool) error {
+	percentage := m.CalculateLoadPercentage(ctx, collectionID)
 	if percentage < 0 {
 		err := merr.WrapErrCollectionNotLoaded(collectionID)
 		log.Ctx(ctx).Warn("failed to GetShardLeaders", zap.Error(err))
 		return err
 	}
-	collection := m.CollectionManager.GetCollection(ctx, collectionID)
+	// When the caller accepts unserviceable shards (e.g. proxy refreshing its
+	// shard-leader cache during replica reconfig), skip the full-load gate so
+	// the caller can route by the per-leader Serviceable flag instead.
+	if withUnserviceableShards {
+		return nil
+	}
+	collection := m.GetCollection(ctx, collectionID)
 	if collection != nil && collection.GetStatus() == querypb.LoadStatus_Loaded {
 		// when collection is loaded, regard collection as readable, set percentage == 100
 		percentage = 100
@@ -145,9 +151,22 @@ func GetShardLeadersWithChannels(
 	channels map[string]*meta.DmChannel,
 	withUnserviceableShards bool,
 ) ([]*querypb.ShardLeadersList, error) {
+	return GetShardLeadersWithChannelsAndReplicaFilter(ctx, m, dist, nodeMgr, collectionID, channels, withUnserviceableShards, nil)
+}
+
+func GetShardLeadersWithChannelsAndReplicaFilter(
+	ctx context.Context,
+	m *meta.Meta,
+	dist *meta.DistributionManager,
+	nodeMgr *session.NodeManager,
+	collectionID int64,
+	channels map[string]*meta.DmChannel,
+	withUnserviceableShards bool,
+	replicaFilter func(*meta.Replica) bool,
+) ([]*querypb.ShardLeadersList, error) {
 	ret := make([]*querypb.ShardLeadersList, 0)
 
-	replicas := m.ReplicaManager.GetByCollection(ctx, collectionID)
+	replicas := m.GetByCollection(ctx, collectionID)
 	for _, channel := range channels {
 		log := log.Ctx(ctx).With(zap.String("channel", channel.GetChannelName()))
 
@@ -155,6 +174,9 @@ func GetShardLeadersWithChannels(
 		addrs := make([]string, 0, len(replicas))
 		serviceable := make([]bool, 0, len(replicas))
 		for _, replica := range replicas {
+			if replicaFilter != nil && !replicaFilter(replica) {
+				continue
+			}
 			leader := dist.ChannelDistManager.GetShardLeader(channel.GetChannelName(), replica)
 			if leader == nil || (!withUnserviceableShards && !leader.IsServiceable()) {
 				log.WithRateGroup("util.GetShardLeaders", 1, 60).
@@ -195,8 +217,19 @@ func GetShardLeaders(ctx context.Context,
 	collectionID int64,
 	withUnserviceableShards bool,
 ) ([]*querypb.ShardLeadersList, error) {
-	// skip check load status if withUnserviceableShards is true
-	if err := checkLoadStatus(ctx, m, collectionID); err != nil {
+	return GetShardLeadersWithReplicaFilter(ctx, m, targetMgr, dist, nodeMgr, collectionID, withUnserviceableShards, nil)
+}
+
+func GetShardLeadersWithReplicaFilter(ctx context.Context,
+	m *meta.Meta,
+	targetMgr meta.TargetManagerInterface,
+	dist *meta.DistributionManager,
+	nodeMgr *session.NodeManager,
+	collectionID int64,
+	withUnserviceableShards bool,
+	replicaFilter func(*meta.Replica) bool,
+) ([]*querypb.ShardLeadersList, error) {
+	if err := checkLoadStatus(ctx, m, collectionID, withUnserviceableShards); err != nil {
 		return nil, err
 	}
 
@@ -207,7 +240,7 @@ func GetShardLeaders(ctx context.Context,
 		log.Ctx(ctx).Warn("failed to get channels", zap.Error(err))
 		return nil, err
 	}
-	return GetShardLeadersWithChannels(ctx, m, dist, nodeMgr, collectionID, channels, withUnserviceableShards)
+	return GetShardLeadersWithChannelsAndReplicaFilter(ctx, m, dist, nodeMgr, collectionID, channels, withUnserviceableShards, replicaFilter)
 }
 
 // CheckCollectionsQueryable check all channels are watched and all segments are loaded for this collection
@@ -234,7 +267,7 @@ func CheckCollectionsQueryable(ctx context.Context, m *meta.Meta, targetMgr meta
 // checkCollectionQueryable check all channels are watched and all segments are loaded for this collection
 func checkCollectionQueryable(ctx context.Context, m *meta.Meta, targetMgr meta.TargetManagerInterface, dist *meta.DistributionManager, nodeMgr *session.NodeManager, coll *meta.Collection) error {
 	collectionID := coll.GetCollectionID()
-	if err := checkLoadStatus(ctx, m, collectionID); err != nil {
+	if err := checkLoadStatus(ctx, m, collectionID, false); err != nil {
 		return err
 	}
 

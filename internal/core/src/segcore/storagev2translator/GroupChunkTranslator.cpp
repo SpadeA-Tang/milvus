@@ -125,7 +125,8 @@ GroupChunkTranslator::GroupChunkTranslator(
             fs,
             file,
             milvus_storage::DEFAULT_READ_BUFFER_SIZE,
-            storage::GetReaderProperties());
+            storage::GetReaderProperties(),
+            storage::GetArrowReaderProperties());
         AssertInfo(result.ok(),
                    "[StorageV2] Failed to create file row group reader: " +
                        result.status().ToString());
@@ -328,7 +329,8 @@ GroupChunkTranslator::get_cells(milvus::OpContext* ctx,
         cell_specs.push_back({cid,
                               file_idx,
                               static_cast<int64_t>(local_off),
-                              static_cast<int64_t>(rg_end - rg_start)});
+                              static_cast<int64_t>(rg_end - rg_start),
+                              meta_.chunk_memory_size_[cid]});
     }
 
     // Submit cell-batch loading tasks
@@ -377,6 +379,20 @@ GroupChunkTranslator::get_cells(milvus::OpContext* ctx,
             }
         } catch (...) {
             LOG_WARN("drain channel exception swallowed");
+        }
+        try {
+            storage::WaitAllFutures(load_futures);
+        } catch (const std::exception& e) {
+            LOG_WARN(
+                "[StorageV2] translator {} cleanup ignored background load "
+                "exception after cancellation: {}",
+                key_,
+                e.what());
+        } catch (...) {
+            LOG_WARN(
+                "[StorageV2] translator {} cleanup ignored unknown background "
+                "load exception after cancellation",
+                key_);
         }
         throw;
     }

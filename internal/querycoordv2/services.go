@@ -85,9 +85,9 @@ func (s *Server) ShowLoadCollections(ctx context.Context, req *querypb.ShowColle
 	for _, collectionID := range collections {
 		log := log.With(zap.Int64("collectionID", collectionID))
 
-		collection := s.meta.CollectionManager.GetCollection(ctx, collectionID)
-		percentage := s.meta.CollectionManager.CalculateLoadPercentage(ctx, collectionID)
-		loadFields := s.meta.CollectionManager.GetLoadFields(ctx, collectionID)
+		collection := s.meta.GetCollection(ctx, collectionID)
+		percentage := s.meta.CalculateLoadPercentage(ctx, collectionID)
+		loadFields := s.meta.GetLoadFields(ctx, collectionID)
 		refreshProgress := int64(0)
 		if percentage < 0 {
 			if isGetAll {
@@ -97,11 +97,10 @@ func (s *Server) ShowLoadCollections(ctx context.Context, req *querypb.ShowColle
 			}
 			err := meta.GlobalFailedLoadCache.Get(collectionID)
 			if err != nil {
-				msg := "show collection failed"
-				log.Warn(msg, zap.Error(err))
-				status := merr.Status(errors.Wrap(err, msg))
+				err = merr.WrapErrCollectionNotLoaded(collectionID, err.Error())
+				log.Warn("show collection failed", zap.Error(err))
 				return &querypb.ShowCollectionsResponse{
-					Status: status,
+					Status: merr.Status(err),
 				}, nil
 			}
 
@@ -498,7 +497,7 @@ func (s *Server) SyncNewCreatedPartition(ctx context.Context, req *querypb.SyncN
 // Note that a collection's loading progress always stays at 100% after a successful load and will not get updated
 // during refreshCollection.
 func (s *Server) refreshCollection(ctx context.Context, collectionID int64) error {
-	collection := s.meta.CollectionManager.GetCollection(ctx, collectionID)
+	collection := s.meta.GetCollection(ctx, collectionID)
 	if collection == nil {
 		return merr.WrapErrCollectionNotLoaded(collectionID)
 	}
@@ -513,7 +512,7 @@ func (s *Server) refreshCollection(ctx context.Context, collectionID int64) erro
 	// see the new segments in next target, but think IsRefreshed() is true (because the notifier
 	// hasn't been set yet), and incorrectly assign LOW priority to import segments.
 	placeholderCh := make(chan struct{})
-	if err := s.meta.CollectionManager.UpdateCollection(ctx, collectionID, meta.SetNotifierCollectionOp(placeholderCh)); err != nil {
+	if err := s.meta.UpdateCollection(ctx, collectionID, meta.SetNotifierCollectionOp(placeholderCh)); err != nil {
 		if errors.Is(err, merr.ErrCollectionNotFound) {
 			return nil
 		}
@@ -529,7 +528,7 @@ func (s *Server) refreshCollection(ctx context.Context, collectionID int64) erro
 	}
 
 	// Replace the placeholder with the real readyCh from target observer
-	err = s.meta.CollectionManager.UpdateCollection(ctx, collectionID, meta.SetNotifierCollectionOp(readyCh))
+	err = s.meta.UpdateCollection(ctx, collectionID, meta.SetNotifierCollectionOp(readyCh))
 	// Close the placeholder channel (no one is waiting on it, but good practice)
 	close(placeholderCh)
 
@@ -632,15 +631,15 @@ func (s *Server) LoadBalance(ctx context.Context, req *querypb.LoadBalanceReques
 		log.Warn(msg, zap.Int("source-nodes-num", len(req.GetSourceNodeIDs())))
 		return merr.Status(err), nil
 	}
-	if s.meta.CollectionManager.CalculateLoadPercentage(ctx, req.GetCollectionID()) < 100 {
+	if s.meta.CalculateLoadPercentage(ctx, req.GetCollectionID()) < 100 {
 		err := merr.WrapErrCollectionNotFullyLoaded(req.GetCollectionID())
 		msg := "can't balance segments of not fully loaded collection"
 		log.Warn(msg)
 		return merr.Status(err), nil
 	}
 	srcNode := req.GetSourceNodeIDs()[0]
-	replica := s.meta.ReplicaManager.GetByCollectionAndNode(ctx, req.GetCollectionID(), srcNode)
-	if replica == nil {
+	replica := s.meta.GetByCollectionAndNode(ctx, req.GetCollectionID(), srcNode)
+	if replica == nil || !replica.ContainRWNode(srcNode) {
 		err := merr.WrapErrNodeNotFound(srcNode, fmt.Sprintf("source node not found in any replica of collection %d", req.GetCollectionID()))
 		msg := "source node not found in any replica"
 		log.Warn(msg)
@@ -789,7 +788,7 @@ func (s *Server) GetReplicas(ctx context.Context, req *milvuspb.GetReplicasReque
 		Replicas: make([]*milvuspb.ReplicaInfo, 0),
 	}
 
-	replicas := s.meta.ReplicaManager.GetByCollection(ctx, req.GetCollectionID())
+	replicas := s.meta.GetByCollection(ctx, req.GetCollectionID())
 	if len(replicas) == 0 {
 		return resp, nil
 	}
@@ -814,7 +813,16 @@ func (s *Server) GetShardLeaders(ctx context.Context, req *querypb.GetShardLeade
 		}, nil
 	}
 
-	leaders, err := utils.GetShardLeaders(ctx, s.meta, s.targetMgr, s.dist, s.nodeMgr, req.GetCollectionID(), req.GetWithUnserviceableShards())
+	leaders, err := utils.GetShardLeadersWithReplicaFilter(ctx,
+		s.meta,
+		s.targetMgr,
+		s.dist,
+		s.nodeMgr,
+		req.GetCollectionID(),
+		req.GetWithUnserviceableShards(),
+		func(replica *meta.Replica) bool {
+			return replica.IsQueryVisible()
+		})
 	return &querypb.GetShardLeadersResponse{
 		Status: merr.Status(err),
 		Shards: leaders,
@@ -989,7 +997,7 @@ func (s *Server) ListResourceGroups(ctx context.Context, req *milvuspb.ListResou
 		return resp, nil
 	}
 
-	resp.ResourceGroups = s.meta.ResourceManager.ListResourceGroups(ctx)
+	resp.ResourceGroups = s.meta.ListResourceGroups(ctx)
 	return resp, nil
 }
 
@@ -1008,7 +1016,7 @@ func (s *Server) DescribeResourceGroup(ctx context.Context, req *querypb.Describ
 		return resp, nil
 	}
 
-	rg := s.meta.ResourceManager.GetResourceGroup(ctx, req.GetResourceGroup())
+	rg := s.meta.GetResourceGroup(ctx, req.GetResourceGroup())
 	if rg == nil {
 		err := merr.WrapErrResourceGroupNotFound(req.GetResourceGroup())
 		resp.Status = merr.Status(err)
@@ -1094,7 +1102,7 @@ func (s *Server) UpdateLoadConfig(ctx context.Context, req *querypb.UpdateLoadCo
 	return merr.Success(), nil
 }
 
-func (s *Server) updateLoadConfig(ctx context.Context, collectionIDs []int64, newReplicaNum int32, newRGs []string) error {
+func (s *Server) updateLoadConfig(ctx context.Context, collectionIDs []int64, newReplicaNum int32, newRGs []string, needWaitRGReady ...bool) error {
 	jobs := make([]job.Job, 0, len(collectionIDs))
 	for _, collectionID := range collectionIDs {
 		collection := s.meta.GetCollection(ctx, collectionID)
@@ -1129,6 +1137,7 @@ func (s *Server) updateLoadConfig(ctx context.Context, collectionIDs []int64, ne
 			continue
 		}
 
+		waitRG := len(needWaitRGReady) > 0 && needWaitRGReady[0]
 		updateJob := job.NewUpdateLoadConfigJob(
 			ctx,
 			subReq,
@@ -1136,7 +1145,9 @@ func (s *Server) updateLoadConfig(ctx context.Context, collectionIDs []int64, ne
 			s.targetMgr,
 			s.targetObserver,
 			s.collectionObserver,
+			s.proxyClientManager,
 			false,
+			waitRG,
 		)
 
 		jobs = append(jobs, updateJob)
@@ -1244,7 +1255,7 @@ func (s *Server) ManualUpdateCurrentTarget(ctx context.Context, collectionID int
 	}
 
 	// Check if collection is loaded
-	percentage := s.meta.CollectionManager.CalculateLoadPercentage(ctx, collectionID)
+	percentage := s.meta.CalculateLoadPercentage(ctx, collectionID)
 	if percentage < 0 {
 		log.Info("collection not loaded, skip ManualUpdateCurrentTarget")
 		return nil

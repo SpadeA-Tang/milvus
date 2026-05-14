@@ -214,6 +214,7 @@ func retrieveByPKs(ctx context.Context, t *upsertTask, ids *schemapb.IDs, output
 			ReqID:            paramtable.GetNodeID(),
 			PartitionIDs:     partitionIDs,
 			ConsistencyLevel: commonpb.ConsistencyLevel_Strong,
+			QueryLabel:       metrics.UpsertQueryLabel,
 		},
 		request:        queryReq,
 		plan:           plan,
@@ -306,10 +307,13 @@ func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 		fieldData.FieldId = fieldSchema.GetFieldID()
 		fieldData.FieldName = fieldName
 
-		// Ensure dynamic field has ValidData before merge logic.
-		// SDK doesn't set ValidData on $meta; without it, AppendFieldDataByColumn
-		// won't propagate ValidData for insert rows, causing length mismatch.
-		if fieldData.GetIsDynamic() && len(fieldData.GetValidData()) == 0 {
+		// Ensure dynamic field has ValidData before merge logic, but only when
+		// the field schema actually requires it (nullable or has default value).
+		// For 2.5 collections where $meta is non-nullable with no default,
+		// ValidData must remain empty — CheckValidData expects len==0 for
+		// non-nullable fields.
+		if fieldData.GetIsDynamic() && len(fieldData.GetValidData()) == 0 &&
+			(fieldSchema.GetNullable() || fieldSchema.GetDefaultValue() != nil) {
 			nRows := int(it.upsertMsg.InsertMsg.NRows())
 			validData := make([]bool, nRows)
 			for i := range validData {
@@ -380,6 +384,7 @@ func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 	it.insertFieldData = typeutil.PrepareResultFieldData(existFieldData, int64(upsertIDSize))
 
 	if len(updateIdxInUpsert) > 0 {
+		fieldOpMap := buildFieldOpMap(it.req)
 		// Note: For fields containing default values, default values need to be set according to valid data during insertion,
 		// but query results fields do not set valid data when returning default value fields,
 		// therefore valid data needs to be manually set to true
@@ -407,6 +412,26 @@ func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 			existPKToIndex[pk] = j
 		}
 
+		// Index upsert FieldData by name once, so per-row Array-op application
+		// can locate the matching payload in O(1).
+		upsertByName := lo.SliceToMap(it.upsertMsg.InsertMsg.GetFieldsData(), func(f *schemapb.FieldData) (string, *schemapb.FieldData) {
+			return f.GetFieldName(), f
+		})
+		existByName := lo.SliceToMap(existFieldData, func(f *schemapb.FieldData) (string, *schemapb.FieldData) {
+			return f.GetFieldName(), f
+		})
+		genericUpdateFieldData := it.upsertMsg.InsertMsg.GetFieldsData()
+		if fieldOpMap != nil {
+			genericUpdateFieldData = make([]*schemapb.FieldData, 0, len(genericUpdateFieldData))
+			for _, fieldData := range it.upsertMsg.InsertMsg.GetFieldsData() {
+				op, ok := fieldOpMap[fieldData.GetFieldName()]
+				if ok && op != schemapb.FieldPartialUpdateOp_REPLACE {
+					continue
+				}
+				genericUpdateFieldData = append(genericUpdateFieldData, fieldData)
+			}
+		}
+
 		baseIdx := 0
 		for _, idx := range updateIdxInUpsert {
 			typeutil.AppendIDs(it.deletePKs, upsertIDs, idx)
@@ -416,12 +441,43 @@ func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 				return merr.WrapErrParameterInvalidMsg("primary key not found in exist data mapping")
 			}
 			typeutil.AppendFieldData(it.insertFieldData, existFieldData, int64(existIndex))
-			err := typeutil.UpdateFieldData(it.insertFieldData, it.upsertMsg.InsertMsg.GetFieldsData(), int64(baseIdx), int64(idx))
-			baseIdx += 1
-			if err != nil {
+			if err := typeutil.UpdateFieldData(it.insertFieldData, genericUpdateFieldData, int64(baseIdx), int64(idx)); err != nil {
 				log.Info("update field data failed", zap.Error(err))
 				return err
 			}
+			// Per-row Array partial-op: generic REPLACE intentionally
+			// skipped non-REPLACE op fields, so dstField still carries the
+			// existing row appended above. Overwrite it with
+			// ApplyArrayRowOp(existing row, upsert row).
+			if fieldOpMap != nil {
+				for _, dstField := range it.insertFieldData {
+					op, ok := fieldOpMap[dstField.GetFieldName()]
+					if !ok || op == schemapb.FieldPartialUpdateOp_REPLACE {
+						continue
+					}
+					fieldSchema, schemaErr := it.schema.schemaHelper.GetFieldFromName(dstField.GetFieldName())
+					if schemaErr != nil {
+						return schemaErr
+					}
+					existField, ok := existByName[dstField.GetFieldName()]
+					if !ok {
+						continue
+					}
+					upsertField, ok := upsertByName[dstField.GetFieldName()]
+					if !ok {
+						return merr.WrapErrParameterInvalidMsg(
+							fmt.Sprintf("partial-update op field %q missing from upsert payload", dstField.GetFieldName()))
+					}
+					if err := applyArrayPartialOpOnRow(
+						dstField, existField, upsertField,
+						int64(baseIdx), int64(existIndex), int64(idx),
+						op, fieldSchema.GetElementType(), readMaxCapacity(fieldSchema),
+					); err != nil {
+						return err
+					}
+				}
+			}
+			baseIdx++
 		}
 	}
 
@@ -440,7 +496,7 @@ func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 		upsertFieldMap := lo.SliceToMap(it.upsertMsg.InsertMsg.GetFieldsData(), func(field *schemapb.FieldData) (string, *schemapb.FieldData) {
 			return field.GetFieldName(), field
 		})
-		for _, fieldSchema := range it.schema.CollectionSchema.Fields {
+		for _, fieldSchema := range it.schema.Fields {
 			if fieldData, ok := upsertFieldMap[fieldSchema.Name]; !ok {
 				if fieldSchema.GetNullable() || fieldSchema.GetDefaultValue() != nil {
 					fieldData, err := GenNullableFieldData(fieldSchema, upsertIDSize)
@@ -858,7 +914,7 @@ func (it *upsertTask) insertPreExecute(ctx context.Context) error {
 	tr := timerecord.NewTimeRecorder("applyPK")
 	clusterID := Params.CommonCfg.ClusterID.GetAsUint64()
 	rowIDBegin, rowIDEnd, _ := common.AllocAutoID(it.idAllocator.Alloc, rowNums, clusterID)
-	metrics.ProxyApplyPrimaryKeyLatency.WithLabelValues(strconv.FormatInt(paramtable.GetNodeID(), 10)).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	metrics.ProxyApplyPrimaryKeyLatency.WithLabelValues(strconv.FormatInt(paramtable.GetNodeID(), 10)).Observe(float64(tr.ElapseSpan().Microseconds()) / 1000.0)
 
 	it.upsertMsg.InsertMsg.RowIDs = make([]UniqueID, rowNums)
 	it.rowIDs = make([]UniqueID, rowNums)
@@ -1062,6 +1118,19 @@ func (it *upsertTask) PreExecute(ctx context.Context) error {
 		return err
 	}
 	it.schema = schema
+
+	// Validate any FieldPartialUpdateOp directives attached to
+	// UpsertRequest.field_ops. A non-REPLACE op implicitly promotes the
+	// request to partial_update=true so users do not need to set both
+	// fields explicitly.
+	nonReplaceSeen, err := validateFieldPartialUpdateOps(it.req, schema.CollectionSchema)
+	if err != nil {
+		log.Warn("validate field partial update ops failed", zap.Error(err))
+		return err
+	}
+	if nonReplaceSeen && !it.req.GetPartialUpdate() {
+		it.req.PartialUpdate = true
+	}
 
 	it.partitionKeyMode, err = isPartitionKeyMode(ctx, it.req.GetDbName(), collectionName)
 	if err != nil {

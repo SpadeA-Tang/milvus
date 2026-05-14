@@ -13,16 +13,26 @@ import (
 
 // UpdateReplicateConfiguration updates the replicate configuration to the Milvus cluster.
 // Use ReplicateConfigurationBuilder to build the configuration.
-func (c *Client) UpdateReplicateConfiguration(ctx context.Context, config *commonpb.ReplicateConfiguration, opts ...grpc.CallOption) error {
-	req := &milvuspb.UpdateReplicateConfigurationRequest{
-		ReplicateConfiguration: config,
-	}
-
+func (c *Client) UpdateReplicateConfiguration(ctx context.Context, req *milvuspb.UpdateReplicateConfigurationRequest, opts ...grpc.CallOption) error {
 	err := c.callService(func(milvusService milvuspb.MilvusServiceClient) error {
 		resp, err := milvusService.UpdateReplicateConfiguration(ctx, req, opts...)
 		return merr.CheckRPCCall(resp, err)
 	})
 	return err
+}
+
+// GetReplicateConfiguration gets the current replicate configuration from the Milvus cluster.
+func (c *Client) GetReplicateConfiguration(ctx context.Context, opts ...grpc.CallOption) (*commonpb.ReplicateConfiguration, error) {
+	var config *commonpb.ReplicateConfiguration
+	err := c.callService(func(milvusService milvuspb.MilvusServiceClient) error {
+		resp, err := milvusService.GetReplicateConfiguration(ctx, &milvuspb.GetReplicateConfigurationRequest{}, opts...)
+		if err := merr.CheckRPCCall(resp, err); err != nil {
+			return err
+		}
+		config = resp.GetConfiguration()
+		return nil
+	})
+	return config, err
 }
 
 // GetReplicateInfo gets replicate information from the Milvus cluster

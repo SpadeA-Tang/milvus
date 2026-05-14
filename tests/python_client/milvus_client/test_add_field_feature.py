@@ -17,7 +17,7 @@ default_float_field_name = "float"
 default_new_field_name = "field_new"
 default_dynamic_field_name = "field_new"
 exp_res = "exp_res"
-default_nb = 2000
+default_nb = ct.default_nb
 default_dim = 128
 default_limit = 10
 
@@ -99,9 +99,10 @@ class TestMilvusClientAddFieldFeature(TestMilvusClientV2Base):
         vectors = cf.gen_vectors(default_nb, dim, vector_data_type=DataType.FLOAT_VECTOR)
         vectors_to_search = [vectors[0]]
         # 4. insert new field after add field
-        rows_new = [{default_primary_key_field_name: i, default_vector_field_name: list(rng.random((1, default_dim))[0]),
-                     default_string_field_name: str(i), default_new_field_name: random.randint(default_value + 1, 1000)}
-                     for i in range(10*default_nb, 11*default_nb)]
+        rows_new = [
+            {default_primary_key_field_name: i, default_vector_field_name: list(rng.random((1, default_dim))[0]),
+             default_string_field_name: str(i), default_new_field_name: random.randint(default_value + 1, 1000)}
+            for i in range(10 * default_nb, 11 * default_nb)]
         self.insert(client, collection_name, rows_new)
         # 5. compact
         compact_id = self.compact(client, collection_name)[0]
@@ -701,6 +702,6 @@ class TestMilvusClientAddFieldFeatureInvalid(TestMilvusClientV2Base):
             }
         )
 
-        error = {ct.err_code: 65535, ct.err_msg: "Function input field cannot be nullable: field reranker_field"}
+        error = {ct.err_code: 65535, ct.err_msg: "function input field cannot be nullable: field reranker_field"}
         self.search(client, collection_name, [vectors[0]], ranker=my_rerank_fn,
                     check_task=CheckTasks.err_res, check_items=error)

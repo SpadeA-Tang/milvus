@@ -97,6 +97,11 @@ type recoveryStorageImpl struct {
 	truncator              walimpls.WALImpls
 	metrics                *recoveryMetrics
 	pendingPersistSnapshot *RecoverySnapshot
+	// used to mark switch MQ msg found
+	alterWALInfo *AlterWALInfo
+	// pendingSalvageCheckpoint holds the salvage checkpoint captured during force promote.
+	// Set under r.mu; consumed and persisted by the background task to avoid holding the lock.
+	pendingSalvageCheckpoint *utility.ReplicateCheckpoint
 }
 
 // Metrics gets the metrics of the wal.
@@ -179,7 +184,7 @@ func (r *recoveryStorageImpl) notifyPersist() {
 func (r *recoveryStorageImpl) consumeDirtySnapshot() *RecoverySnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.dirtyCounter == 0 {
+	if r.dirtyCounter == 0 && r.pendingSalvageCheckpoint == nil {
 		return nil
 	}
 
@@ -203,12 +208,17 @@ func (r *recoveryStorageImpl) consumeDirtySnapshot() *RecoverySnapshot {
 			vchannels[vchannel.meta.Vchannel] = dirtySnapshot
 		}
 	}
+	// Atomically capture the salvage checkpoint alongside other dirty state.
+	// Clearing it here (under r.mu) ensures it is only consumed once.
+	salvageCP := r.pendingSalvageCheckpoint
+	r.pendingSalvageCheckpoint = nil
 	// clear the dirty counter.
 	r.dirtyCounter = 0
 	return &RecoverySnapshot{
 		VChannels:          vchannels,
 		SegmentAssignments: segments,
 		Checkpoint:         r.checkpoint.Clone(),
+		SalvageCheckpoint:  salvageCP,
 	}
 }
 
@@ -243,27 +253,49 @@ func (r *recoveryStorageImpl) observeMessage(msg message.ImmutableMessage) {
 func (r *recoveryStorageImpl) updateCheckpoint(msg message.ImmutableMessage) {
 	if msg.MessageType() == message.MessageTypeAlterReplicateConfig {
 		cfg := message.MustAsImmutableAlterReplicateConfigMessageV2(msg)
-		r.checkpoint.ReplicateConfig = cfg.Header().ReplicateConfiguration
-		clusterRole := replicateutil.MustNewConfigHelper(r.currentClusterID, cfg.Header().ReplicateConfiguration).GetCurrentCluster()
-		switch clusterRole.Role() {
-		case replicateutil.RolePrimary:
-			r.checkpoint.ReplicateCheckpoint = nil
-		case replicateutil.RoleSecondary:
-			// Update the replicate checkpoint if the cluster role is secondary.
-			sourceClusterID := clusterRole.SourceCluster().GetClusterId()
-			sourcePChannel := clusterRole.MustGetSourceChannel(r.channel.Name)
-			if r.checkpoint.ReplicateCheckpoint == nil || r.checkpoint.ReplicateCheckpoint.ClusterID != sourceClusterID {
-				r.checkpoint.ReplicateCheckpoint = &utility.ReplicateCheckpoint{
-					ClusterID: sourceClusterID,
-					PChannel:  sourcePChannel,
-					MessageID: nil,
-					TimeTick:  0,
+		header := cfg.Header()
+
+		// Check ignore field - if true, skip updating ReplicateConfig and ReplicateCheckpoint
+		// This is used for incomplete switchover messages that should be ignored after force promote
+		if header.Ignore {
+			r.Logger().Info("AlterReplicateConfig message has ignore flag set, skipping checkpoint update",
+				zap.Bool("forcePromote", header.ForcePromote))
+		} else {
+			r.checkpoint.ReplicateConfig = header.ReplicateConfiguration
+			clusterRole := replicateutil.MustNewConfigHelper(r.currentClusterID, header.ReplicateConfiguration).GetCurrentCluster()
+			switch clusterRole.Role() {
+			case replicateutil.RolePrimary:
+				if header.GetForcePromote() && r.checkpoint.ReplicateCheckpoint != nil {
+					// Store for background task to persist; never call etcd while holding r.mu.
+					r.pendingSalvageCheckpoint = r.checkpoint.ReplicateCheckpoint
+					r.notifyPersist()
+				}
+				r.checkpoint.ReplicateCheckpoint = nil
+			case replicateutil.RoleSecondary:
+				// Update the replicate checkpoint if the cluster role is secondary.
+				sourceClusterID := clusterRole.SourceCluster().GetClusterId()
+				sourcePChannel := clusterRole.MustGetSourceChannel(r.channel.Name)
+				if r.checkpoint.ReplicateCheckpoint == nil || r.checkpoint.ReplicateCheckpoint.ClusterID != sourceClusterID {
+					r.checkpoint.ReplicateCheckpoint = &utility.ReplicateCheckpoint{
+						ClusterID: sourceClusterID,
+						PChannel:  sourcePChannel,
+						MessageID: nil,
+						TimeTick:  0,
+					}
 				}
 			}
 		}
 	}
 	r.checkpoint.MessageID = msg.LastConfirmedMessageID()
 	r.checkpoint.TimeTick = msg.TimeTick()
+	if r.alterWALInfo != nil && r.alterWALInfo.FoundAlterWALMsg && (r.checkpoint.AlterWalState == nil || r.checkpoint.AlterWalState.Stage == streamingpb.AlterWALStage_NONE) {
+		r.checkpoint.AlterWalState = &streamingpb.AlterWALState{
+			TargetWalName: r.alterWALInfo.TargetWALName,
+			TimeTick:      r.alterWALInfo.AlterWALTs,
+			Configs:       r.alterWALInfo.AlterWALConfig,
+			Stage:         streamingpb.AlterWALStage_FLUSHING,
+		}
+	}
 
 	// update the replicate checkpoint.
 	replicateHeader := msg.ReplicateHeader()
@@ -346,6 +378,50 @@ func (r *recoveryStorageImpl) handleMessage(msg message.ImmutableMessage) {
 		r.handleTruncateCollection(immutableMsg)
 	case message.MessageTypeTimeTick:
 		// nothing, the time tick message make no recovery operation.
+	case message.MessageTypeAlterWAL:
+		immutableMsg := message.MustAsImmutableAlterWALMessageV2(msg)
+		r.handleAlterWAL(immutableMsg)
+	}
+}
+
+// handleAlterWAL handles the alter WAL message.
+// Flushes all growing segments to ensure segment data does not span across different WAL implementations.
+func (r *recoveryStorageImpl) handleAlterWAL(msg message.ImmutableAlterWALMessageV2) {
+	header := msg.Header()
+
+	segmentIDs := make([]int64, 0)
+	rows := make([]uint64, 0)
+	binarySize := make([]uint64, 0)
+
+	// Flush all growing segments before WAL switch
+	for segmentID, segment := range r.segments {
+		if segment.IsGrowing() {
+			segment.ObserveFlush(msg.TimeTick())
+			segmentIDs = append(segmentIDs, segmentID)
+			rows = append(rows, segment.Rows())
+			binarySize = append(binarySize, segment.BinarySize())
+		}
+	}
+
+	if len(segmentIDs) > 0 {
+		r.Logger().Info("flush all growing segments for WAL switch",
+			log.FieldMessage(msg),
+			zap.Stringer("targetWALName", header.TargetWalName),
+			zap.Int64s("segmentIDs", segmentIDs),
+			zap.Uint64s("rows", rows),
+			zap.Uint64s("binarySize", binarySize))
+	} else {
+		r.Logger().Info("no growing segments to flush for WAL switch",
+			log.FieldMessage(msg),
+			zap.Stringer("targetWALName", header.TargetWalName))
+	}
+
+	// Record alter WAL information for snapshot persistence
+	r.alterWALInfo = &AlterWALInfo{
+		FoundAlterWALMsg: true,
+		TargetWALName:    header.TargetWalName,
+		AlterWALConfig:   header.Config,
+		AlterWALTs:       msg.TimeTick(),
 	}
 }
 
@@ -561,6 +637,30 @@ func (r *recoveryStorageImpl) detectInconsistency(msg message.ImmutableMessage, 
 	// because our meta is not atomic-updated, so these error may be logged if crashes when meta updated partially.
 	r.Logger().Warn("inconsistency detected", fields...)
 	r.metrics.ObserveInconsitentEvent()
+}
+
+// GetFlusherCheckpointByTimeTick returns the minimum flush checkpoint among all vchannels based on time tick.
+// This method is used to determine the earliest checkpoint that can be safely flushed.
+func (r *recoveryStorageImpl) GetFlusherCheckpointByTimeTick(ctx context.Context) *WALCheckpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.vchannels) == 0 {
+		r.Logger().Info("get flush checkpoint fast return pChan cp, due to no vChan", zap.String("pChannel", r.channel.String()))
+		return r.checkpoint
+	}
+
+	var minimumCheckpoint *WALCheckpoint
+	for _, vchannel := range r.vchannels {
+		if vchannel.GetFlushCheckpoint() == nil {
+			// If any flush checkpoint is not set, not ready.
+			return nil
+		}
+		if minimumCheckpoint == nil || vchannel.GetFlushCheckpoint().TimeTick < minimumCheckpoint.TimeTick {
+			minimumCheckpoint = vchannel.GetFlushCheckpoint()
+		}
+	}
+	return minimumCheckpoint
 }
 
 // getFlusherCheckpoint returns flusher checkpoint concurrent-safe

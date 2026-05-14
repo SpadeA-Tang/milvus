@@ -84,7 +84,7 @@ DiskFileManagerImpl::GetRemoteIndexPath(const std::string& file_name,
 
 std::string
 DiskFileManagerImpl::GetRemoteIndexPathV2(const std::string& file_name) const {
-    std::string remote_prefix = GetRemoteIndexFilePrefixV2();
+    std::string remote_prefix = GetRemoteIndexObjectPrefix();
     return remote_prefix + "/" + file_name;
 }
 
@@ -179,42 +179,6 @@ DiskFileManagerImpl::AddFileInternal(
 
     return true;
 }  // namespace knowhere
-
-// Opens an input stream with fs_
-// note that `fs_` must not be nullptr.
-std::shared_ptr<InputStream>
-DiskFileManagerImpl::OpenInputStream(const std::string& filename) {
-    auto local_file_name = GetFileName(filename);
-    auto remote_file_path = GetRemoteIndexPathV2(local_file_name);
-
-    auto fs = fs_;
-    AssertInfo(fs, "fs is nullptr");
-
-    auto remote_file = fs->OpenInputFile(remote_file_path);
-    AssertInfo(remote_file.ok(), "failed to open remote file");
-    return std::static_pointer_cast<milvus::InputStream>(
-        std::make_shared<milvus::storage::RemoteInputStream>(
-            std::move(remote_file.ValueOrDie())));
-}
-
-// Opens an output stream with fs_
-// note that `fs_` must not be nullptr.
-std::shared_ptr<OutputStream>
-DiskFileManagerImpl::OpenOutputStream(const std::string& filename) {
-    auto local_file_name = GetFileName(filename);
-    auto remote_file_path = GetRemoteIndexPathV2(local_file_name);
-
-    auto fs = fs_;
-    AssertInfo(fs, "fs is nullptr");
-
-    auto remote_stream = fs->OpenOutputStream(remote_file_path);
-    AssertInfo(remote_stream.ok(),
-               "failed to open remote stream, reason: {}",
-               remote_stream.status().ToString());
-
-    return std::make_shared<milvus::storage::RemoteOutputStream>(
-        std::move(remote_stream.ValueOrDie()));
-}
 
 bool
 DiskFileManagerImpl::AddFile(const std::string& file) noexcept {
@@ -560,6 +524,12 @@ DiskFileManagerImpl::cache_raw_data_to_disk_internal(const Config& config) {
         FetchRawData();
     }
 
+    // For vector arrays, num_rows should be the total flattened vector count,
+    // not the number of emb_lists, because DiskANN reads this from the data file header.
+    if (is_vector_array) {
+        num_rows = static_cast<uint32_t>(offsets.back());
+    }
+
     // write num_rows and dim value to file header
     write_offset = 0;
     local_chunk_manager->Write(
@@ -570,23 +540,23 @@ DiskFileManagerImpl::cache_raw_data_to_disk_internal(const Config& config) {
 
     // Write offsets file for VECTOR_ARRAY
     if (is_vector_array) {
-        AssertInfo(offsets.size() == num_rows + 1,
-                   "offsets size is not equal to num_rows + 1: offset size {}, "
-                   "num_rows {}",
-                   offsets.size(),
-                   num_rows);
+        AssertInfo(
+            offsets.size() >= 2 && offsets.front() == 0,
+            "invalid emb_list offsets: size {}, front {}",
+            offsets.size(),
+            offsets.empty() ? -1 : static_cast<int64_t>(offsets.front()));
         // Get offsets path from config if provided, otherwise use default
         auto offsets_path = index::GetValueFromConfig<std::string>(
                                 config, index::EMB_LIST_OFFSETS_PATH)
                                 .value();
         local_chunk_manager->CreateFile(offsets_path);
 
-        uint32_t num_offsets = offsets.size();
+        size_t num_offsets = offsets.size();
         int64_t offsets_write_pos = 0;
 
         local_chunk_manager->Write(
-            offsets_path, offsets_write_pos, &num_offsets, sizeof(uint32_t));
-        offsets_write_pos += sizeof(uint32_t);
+            offsets_path, offsets_write_pos, &num_offsets, sizeof(size_t));
+        offsets_write_pos += sizeof(size_t);
 
         local_chunk_manager->Write(offsets_path,
                                    offsets_write_pos,
@@ -768,6 +738,12 @@ DiskFileManagerImpl::cache_raw_data_to_disk_storage_v2(const Config& config) {
                                          is_vector_array ? &offsets : nullptr);
     }
 
+    // For vector arrays, num_rows should be the total flattened vector count,
+    // not the number of emb_lists, because DiskANN reads this from the data file header.
+    if (is_vector_array) {
+        num_rows = static_cast<uint32_t>(offsets.back());
+    }
+
     // write num_rows and dim value to file header
     write_offset = 0;
     local_chunk_manager->Write(
@@ -778,11 +754,11 @@ DiskFileManagerImpl::cache_raw_data_to_disk_storage_v2(const Config& config) {
 
     // Write offsets file for VECTOR_ARRAY
     if (is_vector_array) {
-        AssertInfo(offsets.size() == num_rows + 1,
-                   "offsets size is not equal to num_rows + 1: offset size {}, "
-                   "num_rows {}",
-                   offsets.size(),
-                   num_rows);
+        AssertInfo(
+            offsets.size() >= 2 && offsets.front() == 0,
+            "invalid emb_list offsets: size {}, front {}",
+            offsets.size(),
+            offsets.empty() ? -1 : static_cast<int64_t>(offsets.front()));
         // Get offsets path from config if provided, otherwise use default
         auto offsets_path = index::GetValueFromConfig<std::string>(
                                 config, index::EMB_LIST_OFFSETS_PATH)
@@ -790,12 +766,12 @@ DiskFileManagerImpl::cache_raw_data_to_disk_storage_v2(const Config& config) {
 
         local_chunk_manager->CreateFile(offsets_path);
 
-        uint32_t num_offsets = offsets.size();
+        size_t num_offsets = offsets.size();
         int64_t offsets_write_pos = 0;
 
         local_chunk_manager->Write(
-            offsets_path, offsets_write_pos, &num_offsets, sizeof(uint32_t));
-        offsets_write_pos += sizeof(uint32_t);
+            offsets_path, offsets_write_pos, &num_offsets, sizeof(size_t));
+        offsets_write_pos += sizeof(size_t);
 
         local_chunk_manager->Write(offsets_path,
                                    offsets_write_pos,
@@ -1249,10 +1225,5 @@ template std::string
 DiskFileManagerImpl::CacheRawDataToDisk<sparse_u32_f32>(const Config& config);
 template std::string
 DiskFileManagerImpl::CacheRawDataToDisk<int8_t>(const Config& config);
-
-std::string
-DiskFileManagerImpl::GetRemoteIndexFilePrefixV2() const {
-    return FileManagerImpl::GetRemoteIndexFilePrefixV2();
-}
 
 }  // namespace milvus::storage

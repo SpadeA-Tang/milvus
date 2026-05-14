@@ -4,7 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/cockroachdb/errors"
+
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
+	"github.com/milvus-io/milvus-proto/go-api/v2/milvuspb"
 	"github.com/milvus-io/milvus/internal/streamingnode/server/wal"
 	kvfactory "github.com/milvus-io/milvus/internal/util/dependency/kv"
 	"github.com/milvus-io/milvus/internal/util/hookutil"
@@ -15,6 +18,11 @@ import (
 )
 
 var singleton WALAccesser = nil
+
+var (
+	ErrWALReleaseTimeout = errors.New("wal release timeout")
+	releaseTimeout       = 5 * time.Second
+)
 
 // Init initializes the wal accesser with the given etcd client.
 // should be called before any other operations.
@@ -30,10 +38,26 @@ func Init() {
 }
 
 // Release releases the resources of the wal accesser.
-func Release() {
+func Release() error {
 	if w, ok := singleton.(*walAccesserImpl); ok && w != nil {
-		w.Close()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			w.Close()
+		}()
+
+		if releaseTimeout <= 0 {
+			<-done
+			return nil
+		}
+		select {
+		case <-done:
+			return nil
+		case <-time.After(releaseTimeout):
+			return errors.Wrapf(ErrWALReleaseTimeout, "timeout=%s", releaseTimeout)
+		}
 	}
+	return nil
 }
 
 // WAL is the entrance to interact with the milvus write ahead log.
@@ -100,7 +124,7 @@ type ReplicateService interface {
 	Append(ctx context.Context, msg message.ReplicateMutableMessage) (*types.AppendResult, error)
 
 	// UpdateReplicateConfiguration updates the replicate configuration to the milvus cluster.
-	UpdateReplicateConfiguration(ctx context.Context, config *commonpb.ReplicateConfiguration) error
+	UpdateReplicateConfiguration(ctx context.Context, req *milvuspb.UpdateReplicateConfigurationRequest) error
 
 	// GetReplicateConfiguration returns the current replication configuration
 	// with sensitive fields (tokens) sanitized.
@@ -109,6 +133,10 @@ type ReplicateService interface {
 	// GetReplicateCheckpoint returns the WAL checkpoint that will be used to create scanner
 	// from the correct position, ensuring no duplicate or missing messages.
 	GetReplicateCheckpoint(ctx context.Context, channelName string) (*wal.ReplicateCheckpoint, error)
+
+	// GetSalvageCheckpoint returns all salvage checkpoints captured during force promote.
+	// Returns an empty slice if no force promote has occurred.
+	GetSalvageCheckpoint(ctx context.Context, channelName string) ([]*wal.ReplicateCheckpoint, error)
 }
 
 // Balancer is the interface for managing the balancer of the wal.
@@ -199,13 +227,6 @@ type Local interface {
 
 // Broadcast is the interface for writing broadcast message into the wal.
 type Broadcast interface {
-	// Append of Broadcast sends a broadcast message to all target vchannels.
-	// Guarantees the atomicity written of the messages and eventual consistency.
-	// The resource-key bound at the message will be held as a mutex until the message is broadcasted to all vchannels,
-	// so the other append operation with the same resource-key will be searialized with a deterministic order on every vchannel.
-	// The Append operation will be blocked until the message is consumed and acknowledged by the flusher at streamingnode.
-	Append(ctx context.Context, msg message.BroadcastMutableMessage) (*types.BroadcastAppendResult, error)
-
 	// Ack acknowledges a broadcast message at the specified vchannel.
 	// It must be called after the message is comsumed by the unique-consumer.
 	// It will only return error when the ctx is canceled.

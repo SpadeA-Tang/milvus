@@ -301,15 +301,15 @@ func buildFieldBM25StatslogPath(collectionID typeutil.UniqueID, partitionID type
 }
 
 func buildFieldBinlogPathPrefix(collectionID typeutil.UniqueID, partitionID typeutil.UniqueID, segmentID typeutil.UniqueID) string {
-	return fmt.Sprintf("%s/%d/%d/%d", SegmentBinlogPathPrefix, collectionID, partitionID, segmentID)
+	return fmt.Sprintf("%s/%d/%d/%d/", SegmentBinlogPathPrefix, collectionID, partitionID, segmentID)
 }
 
 func buildFieldDeltalogPathPrefix(collectionID typeutil.UniqueID, partitionID typeutil.UniqueID, segmentID typeutil.UniqueID) string {
-	return fmt.Sprintf("%s/%d/%d/%d", SegmentDeltalogPathPrefix, collectionID, partitionID, segmentID)
+	return fmt.Sprintf("%s/%d/%d/%d/", SegmentDeltalogPathPrefix, collectionID, partitionID, segmentID)
 }
 
 func buildFieldStatslogPathPrefix(collectionID typeutil.UniqueID, partitionID typeutil.UniqueID, segmentID typeutil.UniqueID) string {
-	return fmt.Sprintf("%s/%d/%d/%d", SegmentStatslogPathPrefix, collectionID, partitionID, segmentID)
+	return fmt.Sprintf("%s/%d/%d/%d/", SegmentStatslogPathPrefix, collectionID, partitionID, segmentID)
 }
 
 // buildChannelRemovePath builds vchannel remove flag path
@@ -329,12 +329,16 @@ func BuildSegmentIndexKey(collectionID, partitionID, segmentID, buildID int64) s
 	return fmt.Sprintf("%s/%d/%d/%d/%d", util.SegmentIndexPrefix, collectionID, partitionID, segmentID, buildID)
 }
 
+func buildSegmentIndexCollectionPrefix(collectionID typeutil.UniqueID) string {
+	return fmt.Sprintf("%s/%d/", util.SegmentIndexPrefix, collectionID)
+}
+
 func buildCollectionPrefix(collectionID typeutil.UniqueID) string {
-	return fmt.Sprintf("%s/%d", SegmentPrefix, collectionID)
+	return fmt.Sprintf("%s/%d/", SegmentPrefix, collectionID)
 }
 
 func buildPartitionPrefix(collectionID, partitionID typeutil.UniqueID) string {
-	return fmt.Sprintf("%s/%d/%d", SegmentPrefix, collectionID, partitionID)
+	return fmt.Sprintf("%s/%d/%d/", SegmentPrefix, collectionID, partitionID)
 }
 
 func buildImportJobKey(jobID int64) string {

@@ -219,7 +219,8 @@ ManifestGroupTranslator::get_cells(
         cell_specs.push_back({cid,
                               /*file_idx=*/0,
                               static_cast<int64_t>(start),
-                              static_cast<int64_t>(end - start)});
+                              static_cast<int64_t>(end - start),
+                              meta_.chunk_memory_size_[cid]});
     }
 
     // Create factory using ChunkReader — reads a batch of row groups at once
@@ -270,6 +271,20 @@ ManifestGroupTranslator::get_cells(
             }
         } catch (...) {
             LOG_WARN("drain channel exception swallowed");
+        }
+        try {
+            storage::WaitAllFutures(load_futures);
+        } catch (const std::exception& e) {
+            LOG_WARN(
+                "[StorageV2] translator {} cleanup ignored background load "
+                "exception after cancellation: {}",
+                key_,
+                e.what());
+        } catch (...) {
+            LOG_WARN(
+                "[StorageV2] translator {} cleanup ignored unknown background "
+                "load exception after cancellation",
+                key_);
         }
         throw;
     }

@@ -17,11 +17,17 @@ import (
 	"github.com/milvus-io/milvus/internal/distributed/streaming"
 	management "github.com/milvus-io/milvus/internal/http"
 	"github.com/milvus-io/milvus/internal/json"
+	"github.com/milvus-io/milvus/internal/streamingcoord/server/balancer/balance"
+	"github.com/milvus-io/milvus/internal/streamingcoord/server/balancer/channel"
+	"github.com/milvus-io/milvus/internal/streamingcoord/server/broadcaster/broadcast"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/proto/datapb"
 	"github.com/milvus-io/milvus/pkg/v2/proto/querypb"
+	"github.com/milvus-io/milvus/pkg/v2/streaming/util/message"
 	"github.com/milvus-io/milvus/pkg/v2/util/commonpbutil"
+	"github.com/milvus-io/milvus/pkg/v2/util/funcutil"
 	"github.com/milvus-io/milvus/pkg/v2/util/merr"
+	"github.com/milvus-io/milvus/pkg/v2/util/paramtable"
 )
 
 // this file contains proxy management restful API handler
@@ -48,6 +54,13 @@ func RegisterMgrRoute(s *mixCoordImpl) {
 			{management.StreamingNodeDistributionPath, s.GetStreamingNodeDistribution},
 			{management.StreamingTransferPath, s.TransferStreamingChannel},
 			{management.DataGCPath, s.HandleDatacoordGC}, // This route is unique, so it's included here.
+			// WAL
+			{management.WALAlterPath, s.HandleAlterWAL},
+			// config
+			{management.ConfigAlterPath, s.HandleAlterConfig},
+			{management.ConfigGetPath, s.HandleGetConfig},
+			// ops
+			{management.ReplicaLoadConfigCompliancePath, s.HandleReplicaLoadConfigCompliance},
 		}
 
 		// Loop through the slice and register each route.
@@ -301,7 +314,7 @@ func (s *mixCoordImpl) ListBatchQueryNodes(w http.ResponseWriter, req *http.Requ
 	if err != nil {
 		logger.Info("ListBatchQueryNodes failed to list query nodes", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"msg": "failed to list query node, %s"}`, err.Error())))
+		fmt.Fprintf(w, `{"msg": "failed to list query node, %s"}`, err.Error())
 		return
 	}
 
@@ -312,7 +325,7 @@ func (s *mixCoordImpl) ListBatchQueryNodes(w http.ResponseWriter, req *http.Requ
 	if err != nil {
 		logger.Info("ListBatchQueryNodes failed to encode response", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"msg": "failed to list query node, %s"}`, err.Error())))
+		fmt.Fprintf(w, `{"msg": "failed to list query node, %s"}`, err.Error())
 		return
 	}
 	logger.Info("ListBatchQueryNodes success", zap.Any("response", string(bytes)))
@@ -322,13 +335,13 @@ func (s *mixCoordImpl) ListBatchQueryNodes(w http.ResponseWriter, req *http.Requ
 // GetStreamingNodeDistribution handles GET requests to retrieve streaming node distribution.
 func (s *mixCoordImpl) GetStreamingNodeDistribution(w http.ResponseWriter, req *http.Request) {
 	logger := log.With(zap.String("Scope", "Rolling"))
-	if err := req.ParseForm(); err != nil {
+	if err := req.ParseForm(); err != nil { //nolint:gosec // internal admin endpoint
 		logger.Info("GetStreamingNodeDistribution failed to parse form", zap.Error(err))
 		http.Error(w, fmt.Sprintf(`{"msg": "failed to parse form data, %s"}`, err.Error()), http.StatusBadRequest)
 		return
 	}
 
-	nodeID, err := strconv.ParseInt(req.FormValue("node_id"), 10, 64)
+	nodeID, err := strconv.ParseInt(req.FormValue("node_id"), 10, 64) //nolint:gosec // internal admin endpoint
 	if err != nil {
 		logger.Info("GetStreamingNodeDistribution failed to parse form", zap.Error(err))
 		http.Error(w, fmt.Sprintf(`{"msg": "failed to get streaming node distribution, invalid node_id: %s"}`, err.Error()), http.StatusBadRequest)
@@ -429,13 +442,13 @@ func (s *mixCoordImpl) GetStreamingNodeDistribution(w http.ResponseWriter, req *
 // This handler should be registered to the new path.
 func (s *mixCoordImpl) GetBatchNodeDistribution(w http.ResponseWriter, req *http.Request) {
 	logger := log.With(zap.String("Scope", "Rolling"))
-	if err := req.ParseForm(); err != nil {
+	if err := req.ParseForm(); err != nil { //nolint:gosec // internal admin endpoint
 		logger.Info("GetBatchNodeDistribution failed to parse form", zap.Error(err))
 		http.Error(w, fmt.Sprintf(`{"msg": "failed to parse form data, %s"}`, err.Error()), http.StatusBadRequest)
 		return
 	}
 
-	nodeID, err := strconv.ParseInt(req.FormValue("node_id"), 10, 64)
+	nodeID, err := strconv.ParseInt(req.FormValue("node_id"), 10, 64) //nolint:gosec // internal admin endpoint
 	if err != nil {
 		logger.Info("GetBatchNodeDistribution failed to parse form", zap.Error(err))
 		http.Error(w, fmt.Sprintf(`{"msg": "failed to get query node distribution, invalid node_id: %s"}`, err.Error()), http.StatusBadRequest)
@@ -540,7 +553,7 @@ func (s *mixCoordImpl) getBatchBalanceStatus(w http.ResponseWriter, req *http.Re
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf(`{"msg": "OK", "status": "%v"}`, balanceStatus)))
+	fmt.Fprintf(w, `{"msg": "OK", "status": "%v"}`, balanceStatus)
 }
 
 func (s *mixCoordImpl) controlQueryCoordChannelBalanceStatus(ctx context.Context, status string) error {
@@ -740,7 +753,7 @@ func (s *mixCoordImpl) HandleStreamingNodeStatus(w http.ResponseWriter, req *htt
 func (s *mixCoordImpl) handleGetStreamingNodeStatus(w http.ResponseWriter, req *http.Request) {
 	logger := log.With(zap.String("Scope", "Rolling"))
 	// Parse the request form to access URL query parameters.
-	if err := req.ParseForm(); err != nil {
+	if err := req.ParseForm(); err != nil { //nolint:gosec // internal admin endpoint
 		logger.Info("handleGetStreamingNodeStatus parse form failed", zap.Error(err))
 		http.Error(w, fmt.Sprintf(`{"msg": "failed to parse form, %s"}`, err.Error()), http.StatusBadRequest)
 		return
@@ -880,7 +893,7 @@ func (s *mixCoordImpl) HandleBatchNodeStatus(w http.ResponseWriter, req *http.Re
 func (s *mixCoordImpl) handleGetBatchNodeStatus(w http.ResponseWriter, req *http.Request) {
 	logger := log.With(zap.String("Scope", "Rolling"))
 	// Parse the request form to access URL query parameters.
-	if err := req.ParseForm(); err != nil {
+	if err := req.ParseForm(); err != nil { //nolint:gosec // internal admin endpoint
 		logger.Warn("handleGetBatchNodeStatus", zap.Error(err))
 		http.Error(w, fmt.Sprintf(`{"msg": "failed to parse form, %s"}`, err.Error()), http.StatusBadRequest)
 		return
@@ -1119,4 +1132,352 @@ func (s *mixCoordImpl) TransferStreamingChannel(w http.ResponseWriter, req *http
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"msg": "OK"}`))
+}
+
+// HandleAlterWAL handles POST requests to alter the Write-Ahead Log (WAL) implementation.
+// This endpoint broadcasts an AlterWALMessage to all active pChannels to switch WAL across the cluster.
+func (s *mixCoordImpl) HandleAlterWAL(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, `{"msg": "Method not allowed, use POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	logger := log.With(zap.String("Scope", "WAL"))
+
+	var requestBody struct {
+		TargetWALName string            `json:"target_wal_name"`  // e.g., "woodpecker", "kafka", "pulsar", "rocksmq"
+		Config        map[string]string `json:"config,omitempty"` // Optional config for target WAL
+	}
+
+	if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
+		logger.Info("HandleAlterWAL failed to decode request body", zap.Error(err))
+		http.Error(w, `{"msg": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if requestBody.TargetWALName == "" {
+		logger.Info("HandleAlterWAL missing target_wal_name")
+		http.Error(w, `{"msg": "target_wal_name is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	targetWAL := message.NewWALName(strings.ToLower(requestBody.TargetWALName))
+	if targetWAL == message.WALNameUnknown {
+		logger.Info("HandleAlterWAL unknown target_wal_name")
+		http.Error(w, `{"msg": "unknown target_wal_name"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Check if targetWALName is the same as current mq.type
+	// GetValue() will automatically resolve from all config sources including etcd
+	currentMQType := paramtable.Get().MQCfg.Type.GetValue()
+	if currentMQType != "" && currentMQType != "default" {
+		// Convert persisted mq.type string to WALName
+		currentWALFromConfig := message.NewWALName(strings.ToLower(currentMQType))
+		if currentWALFromConfig != message.WALNameUnknown && currentWALFromConfig == targetWAL {
+			logger.Info("HandleAlterWAL target WAL is same as current mq.type",
+				zap.String("currentMQType", currentMQType),
+				zap.String("targetWAL", requestBody.TargetWALName))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"msg": "target WAL type '%s' is already configured, no change needed"}`, currentMQType)
+			return
+		}
+	}
+
+	logger.Info("HandleAlterWAL start",
+		zap.String("targetWAL", requestBody.TargetWALName),
+		zap.Any("config", requestBody.Config))
+
+	if err := s.broadcastAlterWALMessage(req.Context(), commonpb.WALName(targetWAL), requestBody.Config); err != nil {
+		logger.Info("HandleAlterWAL failed to broadcast AlterWALMessage",
+			zap.String("targetWAL", requestBody.TargetWALName),
+			zap.Error(err))
+		http.Error(w, fmt.Sprintf(`{"msg": "failed to broadcast AlterWALMessage, %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	logger.Info("HandleAlterWAL success", zap.String("targetWAL", requestBody.TargetWALName))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"msg": "OK"}`))
+}
+
+// broadcastAlterWALMessage broadcasts an AlterWALMessage to all active pChannels.
+func (s *mixCoordImpl) broadcastAlterWALMessage(ctx context.Context, targetWALName commonpb.WALName, config map[string]string) error {
+	logger := log.With(zap.String("Scope", "WAL"), zap.Stringer("targetWAL", targetWALName))
+
+	// Start broadcast with an exclusive cluster resource key to ensure only one WAL switch operation at a time
+	broadcaster, err := broadcast.StartBroadcastWithResourceKeys(ctx, message.NewExclusiveClusterResourceKey())
+	if err != nil {
+		if errors.Is(err, broadcast.ErrNotPrimary) {
+			logger.Info("broadcastAlterWALMessage failed, current cluster is not primary", zap.Error(err))
+			return errors.Wrap(err, "current cluster is not primary, cannot perform WAL switch")
+		}
+		logger.Info("broadcastAlterWALMessage failed to start broadcast", zap.Error(err))
+		return errors.Wrap(err, "failed to start broadcast")
+	}
+	defer broadcaster.Close()
+
+	// Get balancer to access channel assignments
+	balancer, err := balance.GetWithContext(ctx)
+	if err != nil {
+		logger.Info("broadcastAlterWALMessage failed to get balancer", zap.Error(err))
+		return errors.Wrap(err, "failed to get balancer")
+	}
+
+	// Get all pChannels from the latest channel assignment
+	latestAssignment, err := balancer.GetLatestChannelAssignment()
+	if err != nil {
+		logger.Info("broadcastAlterWALMessage failed to get latest channel assignment", zap.Error(err))
+		return errors.Wrap(err, "failed to get channel assignment")
+	}
+
+	controlChannel := streaming.WAL().ControlChannel()
+	pChannels := lo.MapToSlice(latestAssignment.PChannelView.Channels, func(_ channel.ChannelID, channel *channel.PChannelMeta) string {
+		return channel.Name()
+	})
+	broadcastPChannels := lo.Map(pChannels, func(pChannel string, _ int) string {
+		if funcutil.IsOnPhysicalChannel(controlChannel, pChannel) {
+			// return control channel if the control channel is on the pChannel.
+			return controlChannel
+		}
+		return pChannel
+	})
+
+	if len(broadcastPChannels) == 0 {
+		logger.Info("broadcastAlterWALMessage failed, no active pChannel found")
+		return errors.New("no active pChannels found")
+	}
+
+	logger.Info("broadcastAlterWALMessage preparing",
+		zap.Int("pChannelCount", len(broadcastPChannels)),
+		zap.Strings("pChannels", broadcastPChannels),
+		zap.Any("config", config))
+
+	// Create AlterWAL broadcast message
+	broadcastMsg, err := message.NewAlterWALMessageBuilderV2().
+		WithHeader(&message.AlterWALMessageHeader{
+			TargetWalName: targetWALName,
+			Config:        config,
+		}).
+		WithBody(&message.AlterWALMessageBody{}).
+		WithClusterLevelBroadcast(channel.GetClusterChannels()).
+		BuildBroadcast()
+	if err != nil {
+		logger.Info("broadcastAlterWALMessage failed to build broadcast message", zap.Error(err))
+		return errors.Wrap(err, "failed to build broadcast message")
+	}
+
+	// Broadcast the message to all pChannels
+	result, err := broadcaster.Broadcast(ctx, broadcastMsg)
+	if err != nil {
+		logger.Info("broadcastAlterWALMessage failed to broadcast message", zap.Error(err))
+		return errors.Wrap(err, "failed to broadcast message")
+	}
+
+	logger.Info("broadcastAlterWALMessage success",
+		zap.Int("pChannelCount", len(result.AppendResults)),
+		zap.Uint64("broadcastID", result.BroadcastID))
+
+	return nil
+}
+
+// HandleAlterConfig handles POST requests to alter configuration items.
+// Immutable configurations cannot be modified through this endpoint.
+// For mqtype modifications, use the alterWAL endpoint instead.
+//
+// Each config entry has a key and an optional value pointer:
+//   - value present (including empty string): set the config
+//   - value absent (null/omitted): reset the config (delete from etcd, revert to default)
+//
+// Supported request formats:
+//
+//	Batch format: {"configs": [{"key": "k1", "value": "v1"}, {"key": "k2"}]}
+//	Legacy single format: {"key": "config.key", "value": "value"}
+func (s *mixCoordImpl) HandleAlterConfig(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeJSONError(writer, "Method not allowed, use POST", http.StatusMethodNotAllowed)
+		return
+	}
+
+	logger := log.With(zap.String("Scope", "Config"))
+	paramMgr := paramtable.GetBaseTable().Manager()
+
+	type ConfigPair struct {
+		Key   string  `json:"key"`
+		Value *string `json:"value"` // nil means reset (delete from etcd)
+	}
+
+	var requestBody struct {
+		// Batch format
+		Configs []ConfigPair `json:"configs"`
+		// Legacy single-key format (backward compatibility)
+		Key   string  `json:"key"`
+		Value *string `json:"value"`
+	}
+
+	if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+		logger.Info("HandleAlterConfig failed to decode request body", zap.Error(err))
+		writeJSONError(writer, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Backward compatibility: if "configs" is empty but "key" is set, convert legacy format.
+	if len(requestBody.Configs) == 0 && requestBody.Key != "" {
+		requestBody.Configs = []ConfigPair{{Key: requestBody.Key, Value: requestBody.Value}}
+	}
+
+	if len(requestBody.Configs) == 0 {
+		logger.Info("HandleAlterConfig no configs provided")
+		writeJSONError(writer, "configs array is required and cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Classify into updates and deletes, and validate.
+	seen := make(map[string]struct{}, len(requestBody.Configs))
+	configsToUpdate := make(map[string]string)
+	keysToDelete := make([]string, 0)
+
+	for _, config := range requestBody.Configs {
+		if config.Key == "" {
+			logger.Info("HandleAlterConfig config missing key")
+			writeJSONError(writer, "all configs must have a non-empty key", http.StatusBadRequest)
+			return
+		}
+
+		// Check for duplicate keys
+		if _, exists := seen[config.Key]; exists {
+			logger.Info("HandleAlterConfig duplicate key found", zap.String("key", config.Key))
+			writeJSONError(writer, fmt.Sprintf("duplicate key found: %s", config.Key), http.StatusBadRequest)
+			return
+		}
+		seen[config.Key] = struct{}{}
+
+		// Check if it's mqtype configuration
+		normalizedKey := strings.ToLower(strings.ReplaceAll(config.Key, "/", "."))
+		if strings.Contains(normalizedKey, "mqtype") || strings.Contains(normalizedKey, "mq.type") {
+			logger.Info("HandleAlterConfig attempted to modify mqtype",
+				zap.String("key", config.Key))
+			writeJSONError(writer, fmt.Sprintf("mqtype configuration cannot be modified through this endpoint. Please use the alterWAL endpoint instead. Invalid key: %s", config.Key), http.StatusBadRequest)
+			return
+		}
+
+		// Check if the configuration is immutable - immutable keys cannot be modified
+		if paramMgr.IsImmutable(config.Key) {
+			logger.Info("HandleAlterConfig attempted to modify immutable config",
+				zap.String("key", config.Key))
+			writeJSONError(writer, fmt.Sprintf("immutable configuration cannot be modified through this endpoint. Invalid key: %s", config.Key), http.StatusBadRequest)
+			return
+		}
+
+		if config.Value != nil {
+			configsToUpdate[config.Key] = *config.Value
+		} else {
+			keysToDelete = append(keysToDelete, config.Key)
+		}
+	}
+
+	// Get EtcdSource to save the configuration
+	etcdSource, ok := paramMgr.GetEtcdSource()
+	if !ok {
+		logger.Info("HandleAlterConfig failed, etcd source not enabled")
+		writeJSONError(writer, "etcd source is not enabled", http.StatusInternalServerError)
+		return
+	}
+
+	// Alter configuration(s) in etcd atomically (updates + deletes in one transaction).
+	// AlterConfigsInEtcd also proactively refreshes the local EtcdSource so that the write
+	// is immediately visible in this process before we return.
+	if err := paramMgr.AlterConfigsInEtcd(etcdSource, configsToUpdate, keysToDelete); err != nil {
+		logger.Info("HandleAlterConfig failed to atomically alter configs in etcd",
+			zap.Any("updates", configsToUpdate),
+			zap.Strings("deletes", keysToDelete),
+			zap.Error(err))
+		writeJSONError(writer, fmt.Sprintf("failed to atomically alter configurations in etcd: %s", err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	logger.Info("HandleAlterConfig success",
+		zap.Int("updates", len(configsToUpdate)),
+		zap.Int("deletes", len(keysToDelete)),
+		zap.Any("updated", configsToUpdate),
+		zap.Strings("deleted", keysToDelete))
+
+	writeJSONResponse(writer, http.StatusOK, map[string]string{"msg": "OK"})
+}
+
+// HandleGetConfig handles GET requests to retrieve paramtable configuration.
+//
+// Query parameters:
+//   - keys: comma-separated config keys to retrieve (required)
+//
+// Response: ordered list matching the input keys order.
+//
+//	{"configs": [{"key": "k1", "value": "v1", "source": "EtcdSource"}, {"key": "k2", "error": "key not found"}]}
+func (s *mixCoordImpl) HandleGetConfig(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSONError(writer, "Method not allowed, use GET", http.StatusMethodNotAllowed)
+		return
+	}
+
+	keysParam := request.URL.Query().Get("keys")
+	if keysParam == "" {
+		writeJSONError(writer, "query parameter 'keys' is required", http.StatusBadRequest)
+		return
+	}
+
+	paramMgr := paramtable.GetBaseTable().Manager()
+
+	type configResult struct {
+		Key    string `json:"key"`
+		Value  string `json:"value,omitempty"`
+		Source string `json:"source,omitempty"`
+		Error  string `json:"error,omitempty"`
+	}
+
+	keys := strings.Split(keysParam, ",")
+	results := make([]configResult, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		// Redact sensitive config keys (passwords, secrets, tokens).
+		normalizedKey := strings.ToLower(key)
+		if strings.Contains(normalizedKey, "password") || strings.Contains(normalizedKey, "secret") ||
+			strings.Contains(normalizedKey, "token") || strings.Contains(normalizedKey, "credential") {
+			results = append(results, configResult{Key: key, Error: "access to sensitive config key is denied"})
+			continue
+		}
+		source, value, err := paramMgr.GetConfig(key)
+		if err != nil {
+			results = append(results, configResult{Key: key, Error: err.Error()})
+		} else {
+			results = append(results, configResult{Key: key, Value: value, Source: source})
+		}
+	}
+
+	if len(results) == 0 {
+		writeJSONError(writer, "no valid keys provided", http.StatusBadRequest)
+		return
+	}
+
+	writeJSONResponse(writer, http.StatusOK, map[string]interface{}{
+		"configs": results,
+	})
+}
+
+// writeJSONError writes a JSON error response with proper escaping.
+func writeJSONError(w http.ResponseWriter, msg string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]string{"msg": msg})
+}
+
+// writeJSONResponse writes a JSON response with proper escaping.
+func writeJSONResponse(w http.ResponseWriter, statusCode int, resp interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(resp)
 }

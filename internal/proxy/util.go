@@ -177,7 +177,7 @@ func validateRunAnalyzer(req *milvuspb.RunAnalyzerRequest) error {
 	return nil
 }
 
-func validateMaxQueryResultWindow(offset int64, limit int64, bigTopKEnabled bool) error {
+func validateMaxQueryResultWindow(offset int64, limit int64, largeTopKEnabled bool) error {
 	if offset < 0 {
 		return fmt.Errorf("%s [%d] is invalid, should be gte than 0", OffsetKey, offset)
 	}
@@ -187,8 +187,8 @@ func validateMaxQueryResultWindow(offset int64, limit int64, bigTopKEnabled bool
 
 	depth := offset + limit
 	maxQueryResultWindow := Params.QuotaConfig.MaxQueryResultWindow.GetAsInt64()
-	if bigTopKEnabled {
-		maxQueryResultWindow = Params.QuotaConfig.BigMaxQueryResultWindow.GetAsInt64()
+	if largeTopKEnabled {
+		maxQueryResultWindow = Params.QuotaConfig.LargeMaxQueryResultWindow.GetAsInt64()
 	}
 	if depth <= 0 || depth > maxQueryResultWindow {
 		return fmt.Errorf("(offset+limit) should be in range [1, %d], but got %d", maxQueryResultWindow, depth)
@@ -196,10 +196,10 @@ func validateMaxQueryResultWindow(offset int64, limit int64, bigTopKEnabled bool
 	return nil
 }
 
-func validateLimit(limit int64, bigTopKEnabled bool) error {
+func validateLimit(limit int64, largeTopKEnabled bool) error {
 	topKLimit := Params.QuotaConfig.TopKLimit.GetAsInt64()
-	if bigTopKEnabled {
-		topKLimit = Params.QuotaConfig.BigTopKLimit.GetAsInt64()
+	if largeTopKEnabled {
+		topKLimit = Params.QuotaConfig.LargeTopKLimit.GetAsInt64()
 	}
 	if limit <= 0 || limit > topKLimit {
 		return fmt.Errorf("it should be in range [1, %d], but got %d", topKLimit, limit)
@@ -654,12 +654,12 @@ func ValidateFieldsInStruct(field *schemapb.FieldSchema, schema *schemapb.Collec
 	}
 
 	if field.DataType != schemapb.DataType_Array && field.DataType != schemapb.DataType_ArrayOfVector {
-		return fmt.Errorf("Fields in StructArrayField can only be array or array of struct, but field %s is %s", field.Name, field.DataType.String())
+		return fmt.Errorf("fields in StructArrayField can only be array or array of struct, but field %s is %s", field.Name, field.DataType.String())
 	}
 
 	if field.ElementType == schemapb.DataType_ArrayOfStruct || field.ElementType == schemapb.DataType_ArrayOfVector ||
 		field.ElementType == schemapb.DataType_Array {
-		return fmt.Errorf("Nested array is not supported %s", field.Name)
+		return fmt.Errorf("nested array is not supported %s", field.Name)
 	}
 
 	if field.DataType == schemapb.DataType_Array {
@@ -669,7 +669,7 @@ func ValidateFieldsInStruct(field *schemapb.FieldSchema, schema *schemapb.Collec
 	} else {
 		// TODO(SpadeA): only support float vector now
 		if field.GetElementType() != schemapb.DataType_FloatVector {
-			return fmt.Errorf("Unsupported element type of array field %s, now only float vector is supported", field.Name)
+			return fmt.Errorf("unsupported element type of array field %s, now only float vector is supported", field.Name)
 		}
 
 		// if !typeutil.IsVectorType(field.GetElementType()) {
@@ -1173,12 +1173,8 @@ func autoGenPrimaryFieldData(fieldSchema *schemapb.FieldSchema, data interface{}
 	return &fieldData, nil
 }
 
-func autoGenDynamicFieldData(data [][]byte) *schemapb.FieldData {
-	validData := make([]bool, len(data))
-	for i := range validData {
-		validData[i] = true
-	}
-	return &schemapb.FieldData{
+func autoGenDynamicFieldData(schema *schemapb.CollectionSchema, data [][]byte) *schemapb.FieldData {
+	fd := &schemapb.FieldData{
 		FieldName: common.MetaFieldName,
 		Type:      schemapb.DataType_JSON,
 		Field: &schemapb.FieldData_Scalars{
@@ -1191,8 +1187,23 @@ func autoGenDynamicFieldData(data [][]byte) *schemapb.FieldData {
 			},
 		},
 		IsDynamic: true,
-		ValidData: validData,
 	}
+
+	// Only set ValidData when the $meta field is nullable or has a default value.
+	// For 2.5 collections (non-nullable, no default), CheckValidData expects
+	// len(ValidData)==0, so we must NOT set it.
+	for _, f := range schema.Fields {
+		if f.GetIsDynamic() && (f.GetNullable() || f.GetDefaultValue() != nil) {
+			validData := make([]bool, len(data))
+			for i := range validData {
+				validData[i] = true
+			}
+			fd.ValidData = validData
+			break
+		}
+	}
+
+	return fd
 }
 
 // validateFieldDataColumns validates that all required fields are present and no unknown fields exist.
@@ -1204,12 +1215,12 @@ func validateFieldDataColumns(columns []*schemapb.FieldData, schema *schemaInfo)
 	expectColumnNum := 0
 
 	// Count expected columns
-	for _, field := range schema.CollectionSchema.GetFields() {
+	for _, field := range schema.GetFields() {
 		if !typeutil.IsBM25FunctionOutputField(field, schema.CollectionSchema) {
 			expectColumnNum++
 		}
 	}
-	for _, structField := range schema.CollectionSchema.GetStructArrayFields() {
+	for _, structField := range schema.GetStructArrayFields() {
 		expectColumnNum += len(structField.GetFields())
 	}
 
@@ -1245,14 +1256,15 @@ func fillFieldPropertiesOnly(columns []*schemapb.FieldData, schema *schemaInfo) 
 		fieldData.Type = fieldSchema.DataType
 
 		// Set the ElementType because it may not be set in the insert request.
-		if fieldData.Type == schemapb.DataType_Array {
+		switch fieldData.Type {
+		case schemapb.DataType_Array:
 			fd, ok := fieldData.Field.(*schemapb.FieldData_Scalars)
 			if !ok || fd.Scalars.GetArrayData() == nil {
 				return fmt.Errorf("field convert FieldData_Scalars fail in fieldData, fieldName: %s, collectionName: %s",
 					fieldData.FieldName, schema.Name)
 			}
 			fd.Scalars.GetArrayData().ElementType = fieldSchema.ElementType
-		} else if fieldData.Type == schemapb.DataType_ArrayOfVector {
+		case schemapb.DataType_ArrayOfVector:
 			fd, ok := fieldData.Field.(*schemapb.FieldData_Vectors)
 			if !ok || fd.Vectors.GetVectorArray() == nil {
 				return fmt.Errorf("field convert FieldData_Vectors fail in fieldData, fieldName: %s, collectionName: %s",
@@ -2406,7 +2418,7 @@ func checkDynamicFieldData(schema *schemapb.CollectionSchema, insertMsg *msgstre
 	for i := range defaultData {
 		defaultData[i] = []byte("{}")
 	}
-	dynamicData := autoGenDynamicFieldData(defaultData)
+	dynamicData := autoGenDynamicFieldData(schema, defaultData)
 	insertMsg.FieldsData = append(insertMsg.FieldsData, dynamicData)
 	return nil
 }
@@ -2416,7 +2428,7 @@ func addNamespaceData(schema *schemapb.CollectionSchema, insertMsg *msgstream.In
 	if err != nil {
 		return err
 	}
-	namespaceIsSet := insertMsg.InsertRequest.Namespace != nil
+	namespaceIsSet := insertMsg.Namespace != nil
 
 	if namespaceEnabeld != namespaceIsSet {
 		if namespaceIsSet {
@@ -2443,7 +2455,7 @@ func addNamespaceData(schema *schemapb.CollectionSchema, insertMsg *msgstream.In
 
 	// set namespace field data
 	namespaceData := make([]string, insertMsg.NRows())
-	namespace := *insertMsg.InsertRequest.Namespace
+	namespace := *insertMsg.Namespace
 	for i := range namespaceData {
 		namespaceData[i] = namespace
 	}
@@ -3005,7 +3017,7 @@ func genFunctionFields(ctx context.Context, insertMsg *msgstream.InsertMsg, sche
 		return err
 	}
 
-	if embedding.HasNonBM25Functions(schema.CollectionSchema.Functions, []int64{}) {
+	if embedding.HasNonBM25Functions(schema.Functions, []int64{}) {
 		ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-genFunctionFields-call-function-udf")
 		defer sp.End()
 		exec, err := embedding.NewFunctionExecutor(schema.CollectionSchema, needProcessFunctions, &models.ModelExtraInfo{ClusterID: paramtable.Get().CommonCfg.ClusterPrefix.GetValue(), DBName: insertMsg.GetDbName()})

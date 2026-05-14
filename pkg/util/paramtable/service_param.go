@@ -510,12 +510,10 @@ It is recommended to change this parameter before starting Milvus for the first 
 }
 
 type MetaStoreConfig struct {
-	MetaStoreType              ParamItem `refreshable:"false"`
-	SnapshotTTLSeconds         ParamItem `refreshable:"true"`
-	SnapshotReserveTimeSeconds ParamItem `refreshable:"true"`
-	PaginationSize             ParamItem `refreshable:"true"`
-	ReadConcurrency            ParamItem `refreshable:"true"`
-	MaxEtcdTxnNum              ParamItem `refreshable:"true"`
+	MetaStoreType   ParamItem `refreshable:"false"`
+	PaginationSize  ParamItem `refreshable:"true"`
+	ReadConcurrency ParamItem `refreshable:"true"`
+	MaxEtcdTxnNum   ParamItem `refreshable:"true"`
 }
 
 func (p *MetaStoreConfig) Init(base *BaseTable) {
@@ -527,24 +525,6 @@ func (p *MetaStoreConfig) Init(base *BaseTable) {
 		Export:       true,
 	}
 	p.MetaStoreType.Init(base.mgr)
-
-	p.SnapshotTTLSeconds = ParamItem{
-		Key:          "metastore.snapshot.ttl",
-		Version:      "2.4.14",
-		DefaultValue: "86400",
-		Doc:          `snapshot ttl in seconds`,
-		Export:       true,
-	}
-	p.SnapshotTTLSeconds.Init(base.mgr)
-
-	p.SnapshotReserveTimeSeconds = ParamItem{
-		Key:          "metastore.snapshot.reserveTime",
-		Version:      "2.4.14",
-		DefaultValue: "3600",
-		Doc:          `snapshot reserve time in seconds`,
-		Export:       true,
-	}
-	p.SnapshotReserveTimeSeconds.Init(base.mgr)
 
 	p.PaginationSize = ParamItem{
 		Key:          "metastore.paginationSize",
@@ -606,7 +586,8 @@ func (p *MQConfig) Init(base *BaseTable) {
 		DefaultValue: "default",
 		Doc: `Default value: "default"
 Valid values: [default, pulsar, kafka, rocksmq, woodpecker]`,
-		Export: true,
+		Export:    true,
+		Immutable: true,
 	}
 	p.Type.Init(base.mgr)
 
@@ -740,8 +721,9 @@ type WoodpeckerConfig struct {
 	FencePolicyConditionWrite      ParamItem `refreshable:"true"`
 
 	// storage
-	StorageType ParamItem `refreshable:"false"`
-	RootPath    ParamItem `refreshable:"false"`
+	StorageType       ParamItem `refreshable:"false"`
+	ForceLocalStorage ParamItem `refreshable:"false"`
+	RootPath          ParamItem `refreshable:"false"`
 }
 
 func (p *WoodpeckerConfig) Init(base *BaseTable) {
@@ -962,6 +944,15 @@ Valid values: [auto, enable, disable]`,
 		Export:       true,
 	}
 	p.StorageType.Init(base.mgr)
+
+	p.ForceLocalStorage = ParamItem{
+		Key:          "woodpecker.storage.forceLocalStorage",
+		Version:      "2.6.14",
+		DefaultValue: "false",
+		Doc:          "Force using local storage in cluster mode. Not recommended unless you know what you are doing.",
+		Export:       false,
+	}
+	p.ForceLocalStorage.Init(base.mgr)
 
 	p.RootPath = ParamItem{
 		Key:          "woodpecker.storage.rootPath",
@@ -1394,6 +1385,7 @@ type MinioConfig struct {
 	RequestTimeoutMs   ParamItem `refreshable:"false"`
 	MaxConnections     ParamItem `refreshable:"false"`
 	ListObjectsMaxKeys ParamItem `refreshable:"true"`
+	UseCRC32C          ParamItem `refreshable:"false"`
 }
 
 func (p *MinioConfig) Init(base *BaseTable) {
@@ -1621,10 +1613,19 @@ Leave it empty if you want to use AWS default endpoint`,
 		Version:      "2.4.1",
 		DefaultValue: "0",
 		Doc: `The maximum number of objects requested per batch in minio ListObjects rpc, 
-0 means using oss client by default, decrease these configration if ListObjects timeout`,
+0 means using oss client by default, decrease these configuration if ListObjects timeout`,
 		Export: true,
 	}
 	p.ListObjectsMaxKeys.Init(base.mgr)
+
+	p.UseCRC32C = ParamItem{
+		Key:          "minio.ssl.useCRC32C",
+		Version:      "2.6.11",
+		DefaultValue: "false",
+		Doc:          "Whether to use CRC32C checksum for data integrity validation on MinIO/S3 PutObject requests.",
+		Export:       true,
+	}
+	p.UseCRC32C.Init(base.mgr)
 }
 
 // profile config

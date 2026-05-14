@@ -18,6 +18,7 @@
 package datacoord
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -29,6 +30,7 @@ import (
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
@@ -162,78 +164,113 @@ type dbInfo struct {
 	Properties []*commonpb.KeyValuePair
 }
 
-// NewMeta creates meta from provided `kv.TxnKV`
-func newMeta(ctx context.Context, catalog metastore.DataCoordCatalog, chunkManager storage.ChunkManager, broker broker.Broker) (*meta, error) {
-	im, err := newIndexMeta(ctx, catalog)
-	if err != nil {
-		return nil, err
-	}
-
-	am, err := newAnalyzeMeta(ctx, catalog)
-	if err != nil {
-		return nil, err
-	}
-
-	psm, err := newPartitionStatsMeta(ctx, catalog)
-	if err != nil {
-		return nil, err
-	}
-
-	ctm, err := newCompactionTaskMeta(ctx, catalog)
-	if err != nil {
-		return nil, err
-	}
-
-	stm, err := newStatsTaskMeta(ctx, catalog)
-	if err != nil {
-		return nil, err
-	}
-	mt := &meta{
-		ctx:                ctx,
-		catalog:            catalog,
-		collections:        typeutil.NewConcurrentMap[UniqueID, *collectionInfo](),
-		segments:           NewSegmentsInfo(),
-		channelCPs:         newChannelCps(),
-		indexMeta:          im,
-		analyzeMeta:        am,
-		chunkManager:       chunkManager,
-		partitionStatsMeta: psm,
-		compactionTaskMeta: ctm,
-		statsTaskMeta:      stm,
-		resourceMeta:       make(map[string]*model.FileResource),
-	}
-	err = mt.reloadFromKV(ctx, broker)
-	if err != nil {
-		return nil, err
-	}
-	return mt, nil
-}
-
-// reloadFromKV loads meta from KV storage
-func (m *meta) reloadFromKV(ctx context.Context, broker broker.Broker) error {
-	record := timerecord.NewTimeRecorder("datacoord")
-
+// showCollectionIDs retrieves all collection IDs from RootCoord with retry on ErrServiceUnimplemented.
+func showCollectionIDs(ctx context.Context, broker broker.Broker) ([]int64, error) {
 	var (
 		err  error
 		resp *rootcoordpb.ShowCollectionIDsResponse
 	)
-	// retry on un implemented for compatibility
 	retryErr := retry.Handle(ctx, func() (bool, error) {
-		resp, err = broker.ShowCollectionIDs(m.ctx)
+		resp, err = broker.ShowCollectionIDs(ctx)
 		if errors.Is(err, merr.ErrServiceUnimplemented) {
 			return true, err
 		}
 		return false, err
 	})
 	if retryErr != nil {
-		return retryErr
+		return nil, retryErr
 	}
-	log.Ctx(ctx).Info("datacoord show collections done", zap.Duration("dur", record.RecordSpan()))
 
 	collectionIDs := make([]int64, 0, 4096)
 	for _, collections := range resp.GetDbCollections() {
 		collectionIDs = append(collectionIDs, collections.GetCollectionIDs()...)
 	}
+	return collectionIDs, nil
+}
+
+// NewMeta creates meta from provided `kv.TxnKV`
+func newMeta(ctx context.Context, catalog metastore.DataCoordCatalog, chunkManager storage.ChunkManager, broker broker.Broker) (*meta, error) {
+	// Fetch collection IDs first so both reloadFromKV and indexMeta can use them for per-collection loading.
+	collectionIDs, err := showCollectionIDs(ctx, broker)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		im  *indexMeta
+		am  *analyzeMeta
+		psm *partitionStatsMeta
+		ctm *compactionTaskMeta
+		stm *statsTaskMeta
+	)
+
+	// Construct meta struct first so reloadFromKV can run in parallel with sub-meta loading.
+	// reloadFromKV uses m.catalog/m.segments/m.channelCPs which are independent of sub-metas.
+	mt := &meta{
+		ctx:          ctx,
+		catalog:      catalog,
+		collections:  typeutil.NewConcurrentMap[UniqueID, *collectionInfo](),
+		segments:     NewSegmentsInfo(),
+		channelCPs:   newChannelCps(),
+		chunkManager: chunkManager,
+		resourceMeta: make(map[string]*model.FileResource),
+	}
+
+	g, _ := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		var err error
+		im, err = newIndexMeta(ctx, catalog, collectionIDs)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		am, err = newAnalyzeMeta(ctx, catalog)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		psm, err = newPartitionStatsMeta(ctx, catalog)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		ctm, err = newCompactionTaskMeta(ctx, catalog)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		stm, err = newStatsTaskMeta(ctx, catalog)
+		return err
+	})
+
+	// reloadFromKV (ListSegments, ListChannelCheckpoint) runs in parallel with sub-meta loading.
+	// It only uses mt.catalog/mt.segments/mt.channelCPs, which are independent of sub-metas.
+	g.Go(func() error {
+		return mt.reloadFromKV(ctx, collectionIDs)
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Assign sub-metas after all goroutines complete
+	mt.indexMeta = im
+	mt.analyzeMeta = am
+	mt.partitionStatsMeta = psm
+	mt.compactionTaskMeta = ctm
+	mt.statsTaskMeta = stm
+
+	return mt, nil
+}
+
+// reloadFromKV loads meta from KV storage
+func (m *meta) reloadFromKV(ctx context.Context, collectionIDs []int64) error {
+	record := timerecord.NewTimeRecorder("datacoord")
 
 	pool := conc.NewPool[any](paramtable.Get().MetaStoreCfg.ReadConcurrency.GetAsInt())
 	defer pool.Release()
@@ -251,8 +288,7 @@ func (m *meta) reloadFromKV(ctx context.Context, broker broker.Broker) error {
 			return nil, nil
 		}))
 	}
-	err = conc.AwaitAll(futures...)
-	if err != nil {
+	if err := conc.AwaitAll(futures...); err != nil {
 		return err
 	}
 
@@ -443,9 +479,7 @@ func GetSegmentsChanPart(m *meta, collectionID int64, filters ...SegmentFilter) 
 // GetNumRowsOfCollection returns total rows count of segments belongs to provided collection
 func (m *meta) GetNumRowsOfCollection(ctx context.Context, collectionID UniqueID) int64 {
 	var ret int64
-	segments := m.SelectSegments(ctx, WithCollection(collectionID), SegmentFilterFunc(func(si *SegmentInfo) bool {
-		return isSegmentHealthy(si)
-	}))
+	segments := m.SelectSegments(ctx, WithCollection(collectionID), SegmentFilterFunc(isSegmentHealthy))
 	for _, segment := range segments {
 		ret += segment.GetNumOfRows()
 	}
@@ -1701,6 +1735,37 @@ func getMinPosition(positions []*msgpb.MsgPosition) *msgpb.MsgPosition {
 	return minPos
 }
 
+func getMaxPosition(positions []*msgpb.MsgPosition) *msgpb.MsgPosition {
+	var maxPos *msgpb.MsgPosition
+	for _, pos := range positions {
+		if maxPos == nil ||
+			pos != nil && pos.GetTimestamp() > maxPos.GetTimestamp() {
+			maxPos = pos
+		}
+	}
+	return maxPos
+}
+
+// recalculateSegmentPosition recalculates StartPosition and DmlPosition from
+// actual binlog timestamps on the compaction result segment. This makes compaction
+// self-healing: wrong positions from import or prior compaction are corrected.
+// Also fixes the DmlPosition bug where getMinPosition was used instead of max.
+// Falls back to the provided fallback positions if binlog timestamps are unavailable
+// (e.g., legacy segments without TimestampFrom/TimestampTo populated).
+func recalculateSegmentPosition(binlogs []*datapb.FieldBinlog, channel string, fallbackStart, fallbackDml *msgpb.MsgPosition) (startPos, dmlPos *msgpb.MsgPosition) {
+	minTs, maxTs := extractTimestampFromBinlogs(binlogs)
+	if minTs > 0 && minTs != math.MaxUint64 && maxTs > 0 {
+		return &msgpb.MsgPosition{
+				ChannelName: channel,
+				Timestamp:   minTs,
+			}, &msgpb.MsgPosition{
+				ChannelName: channel,
+				Timestamp:   maxTs,
+			}
+	}
+	return fallbackStart, fallbackDml
+}
+
 func (m *meta) completeClusterCompactionMutation(t *datapb.CompactionTask, result *datapb.CompactionPlanResult) ([]*SegmentInfo, *segMetricMutation, error) {
 	log := log.Ctx(context.TODO()).With(zap.Int64("planID", t.GetPlanID()),
 		zap.String("type", t.GetType().String()),
@@ -1736,7 +1801,16 @@ func (m *meta) completeClusterCompactionMutation(t *datapb.CompactionTask, resul
 		compactFromSegIDs = append(compactFromSegIDs, cloned.GetID())
 	}
 
+	// Compute fallback positions from source segments (used when binlog timestamps unavailable)
+	fallbackStart := getMinPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
+		return info.GetStartPosition()
+	}))
+	fallbackDml := getMaxPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
+		return info.GetDmlPosition()
+	}))
+
 	for _, seg := range result.GetSegments() {
+		startPos, dmlPos := recalculateSegmentPosition(seg.GetInsertLogs(), t.GetChannel(), fallbackStart, fallbackDml)
 		segmentInfo := &datapb.SegmentInfo{
 			ID:                  seg.GetSegmentID(),
 			CollectionID:        compactFromSegInfos[0].CollectionID,
@@ -1751,12 +1825,8 @@ func (m *meta) completeClusterCompactionMutation(t *datapb.CompactionTask, resul
 			CompactionFrom:      compactFromSegIDs,
 			LastExpireTime:      tsoutil.ComposeTSByTime(time.Unix(t.GetStartTime(), 0), 0),
 			Level:               datapb.SegmentLevel_L2,
-			StartPosition: getMinPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
-				return info.GetStartPosition()
-			})),
-			DmlPosition: getMinPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
-				return info.GetDmlPosition()
-			})),
+			StartPosition:       startPos,
+			DmlPosition:         dmlPos,
 			// visible after stats and index
 			IsInvisible:    true,
 			StorageVersion: seg.GetStorageVersion(),
@@ -1841,8 +1911,17 @@ func (m *meta) completeMixCompactionMutation(
 
 	log = log.With(zap.Int64s("compactFrom", compactFromSegIDs))
 
+	// Compute fallback positions from source segments (used when binlog timestamps unavailable)
+	fallbackStart := getMinPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
+		return info.GetStartPosition()
+	}))
+	fallbackDml := getMaxPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
+		return info.GetDmlPosition()
+	}))
+
 	compactToSegments := make([]*SegmentInfo, 0)
 	for _, compactToSegment := range result.GetSegments() {
+		startPos, dmlPos := recalculateSegmentPosition(compactToSegment.GetInsertLogs(), t.GetChannel(), fallbackStart, fallbackDml)
 		compactToSegmentInfo := NewSegmentInfo(
 			&datapb.SegmentInfo{
 				ID:            compactToSegment.GetSegmentID(),
@@ -1863,14 +1942,10 @@ func (m *meta) completeMixCompactionMutation(
 				LastExpireTime:      tsoutil.ComposeTSByTime(time.Unix(t.GetStartTime(), 0), 0),
 				Level:               datapb.SegmentLevel_L1,
 				StorageVersion:      compactToSegment.GetStorageVersion(),
-				StartPosition: getMinPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
-					return info.GetStartPosition()
-				})),
-				DmlPosition: getMinPosition(lo.Map(compactFromSegInfos, func(info *SegmentInfo, _ int) *msgpb.MsgPosition {
-					return info.GetDmlPosition()
-				})),
-				IsSorted:     compactToSegment.GetIsSorted(),
-				ManifestPath: compactToSegment.GetManifest(),
+				StartPosition:       startPos,
+				DmlPosition:         dmlPos,
+				IsSorted:            compactToSegment.GetIsSorted(),
+				ManifestPath:        compactToSegment.GetManifest(),
 			})
 
 		if compactToSegmentInfo.GetNumOfRows() == 0 {
@@ -2012,7 +2087,7 @@ func (m *meta) UpdateChannelCheckpoint(ctx context.Context, vChannel string, pos
 	defer m.channelCPs.Unlock()
 
 	oldPosition, ok := m.channelCPs.checkpoints[vChannel]
-	if !ok || oldPosition.Timestamp < pos.Timestamp {
+	if !ok || oldPosition.Timestamp < pos.Timestamp || (oldPosition.Timestamp == pos.Timestamp && !bytes.Equal(oldPosition.MsgID, pos.MsgID)) {
 		err := m.catalog.SaveChannelCheckpoint(ctx, vChannel, pos)
 		if err != nil {
 			return err
@@ -2023,6 +2098,7 @@ func (m *meta) UpdateChannelCheckpoint(ctx context.Context, vChannel string, pos
 			zap.String("vChannel", vChannel),
 			zap.Uint64("ts", pos.GetTimestamp()),
 			zap.ByteString("msgID", pos.GetMsgID()),
+			zap.Stringer("walName", pos.WALName),
 			zap.Time("time", ts))
 		metrics.DataCoordCheckpointUnixSeconds.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), vChannel).
 			Set(float64(ts.Unix()))
@@ -2058,13 +2134,13 @@ func (m *meta) UpdateChannelCheckpoints(ctx context.Context, positions []*msgpb.
 	m.channelCPs.Lock()
 	defer m.channelCPs.Unlock()
 	toUpdates := lo.Filter(positions, func(pos *msgpb.MsgPosition, _ int) bool {
-		if pos == nil || pos.GetMsgID() == nil || pos.GetChannelName() == "" {
+		if pos == nil || (pos.GetMsgID() == nil && pos.GetWALName() != commonpb.WALName_WoodPecker) || pos.GetChannelName() == "" {
 			log.Warn("illegal channel cp", zap.Any("pos", pos))
 			return false
 		}
 		vChannel := pos.GetChannelName()
 		oldPosition, ok := m.channelCPs.checkpoints[vChannel]
-		return !ok || oldPosition.Timestamp < pos.Timestamp
+		return !ok || oldPosition.Timestamp < pos.Timestamp || (oldPosition.Timestamp == pos.Timestamp && !bytes.Equal(oldPosition.MsgID, pos.MsgID))
 	})
 	err := m.catalog.SaveChannelCheckpoints(ctx, toUpdates)
 	if err != nil {
@@ -2074,6 +2150,7 @@ func (m *meta) UpdateChannelCheckpoints(ctx context.Context, positions []*msgpb.
 		channel := pos.GetChannelName()
 		m.channelCPs.checkpoints[channel] = pos
 		log.Info("UpdateChannelCheckpoint done", zap.String("channel", channel),
+			zap.Stringer("walName", pos.WALName),
 			zap.Uint64("ts", pos.GetTimestamp()),
 			zap.Time("time", tsoutil.PhysicalTime(pos.GetTimestamp())))
 		ts, _ := tsoutil.ParseTS(pos.Timestamp)
@@ -2346,14 +2423,17 @@ func (m *meta) completeSortCompactionMutation(
 
 	resultSegment := result.GetSegments()[0]
 
+	startPos, dmlPos := recalculateSegmentPosition(resultSegment.GetInsertLogs(), oldSegment.GetInsertChannel(),
+		oldSegment.GetStartPosition(), oldSegment.GetDmlPosition())
+
 	segmentInfo := &datapb.SegmentInfo{
 		CollectionID:              oldSegment.GetCollectionID(),
 		PartitionID:               oldSegment.GetPartitionID(),
 		InsertChannel:             oldSegment.GetInsertChannel(),
 		MaxRowNum:                 oldSegment.GetMaxRowNum(),
 		LastExpireTime:            oldSegment.GetLastExpireTime(),
-		StartPosition:             oldSegment.GetStartPosition(),
-		DmlPosition:               oldSegment.GetDmlPosition(),
+		StartPosition:             startPos,
+		DmlPosition:               dmlPos,
 		IsImporting:               oldSegment.GetIsImporting(),
 		State:                     commonpb.SegmentState_Flushed,
 		Level:                     oldSegment.GetLevel(),

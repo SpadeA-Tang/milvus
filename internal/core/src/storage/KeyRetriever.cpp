@@ -1,10 +1,21 @@
 #include "storage/KeyRetriever.h"
+
+#include <exception>
+#include <mutex>
+
+#include "arrow/io/caching.h"
 #include "common/EasyAssert.h"
+#include "fmt/format.h"
 #include "log/Log.h"
 #include "parquet/properties.h"
 #include "storage/PluginLoader.h"
 
 namespace milvus::storage {
+namespace {
+std::mutex arrow_reader_properties_mutex;
+parquet::ArrowReaderProperties arrow_reader_properties =
+    parquet::default_arrow_reader_properties();
+}  // namespace
 
 std::string
 KeyRetriever::GetKey(const std::string& key_metadata) {
@@ -31,14 +42,41 @@ GetReaderProperties() {
     return reader_properties;
 }
 
+parquet::ArrowReaderProperties
+GetArrowReaderProperties() {
+    std::lock_guard<std::mutex> lock(arrow_reader_properties_mutex);
+    return arrow_reader_properties;
+}
+
+void
+ConfigureArrowReaderProperties(int64_t hole_size_limit_bytes,
+                               int64_t range_size_limit_bytes) {
+    auto properties = parquet::default_arrow_reader_properties();
+    auto cache_options = properties.cache_options();
+    if (hole_size_limit_bytes > 0) {
+        cache_options.hole_size_limit = hole_size_limit_bytes;
+    }
+    if (range_size_limit_bytes > 0) {
+        cache_options.range_size_limit = range_size_limit_bytes;
+    }
+    AssertInfo(cache_options.range_size_limit > cache_options.hole_size_limit,
+               "arrow reader range size limit must be greater than hole size "
+               "limit, range_size_limit={}, hole_size_limit={}",
+               cache_options.range_size_limit,
+               cache_options.hole_size_limit);
+    properties.set_cache_options(cache_options);
+
+    std::lock_guard<std::mutex> lock(arrow_reader_properties_mutex);
+    arrow_reader_properties = properties;
+}
+
 std::string
 EncodeKeyMetadata(int64_t ez_id, int64_t collection_id, std::string key) {
-    return std::to_string(ez_id) + "_" + std::to_string(collection_id) + "_" +
-           key;
+    return fmt::format("{}_{}_{}", ez_id, collection_id, key);
 }
 
 std::shared_ptr<CPluginContext>
-DecodeKeyMetadata(std::string key_metadata) {
+DecodeKeyMetadata(const std::string& key_metadata) {
     auto context = std::make_shared<CPluginContext>();
     try {
         auto first_pos = key_metadata.find("_");

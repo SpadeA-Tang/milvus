@@ -140,6 +140,9 @@ class SegmentInterface {
     virtual int64_t
     get_deleted_count() const = 0;
 
+    virtual Timestamp
+    get_max_timestamp() const = 0;
+
     virtual int64_t
     get_real_count() const = 0;
 
@@ -236,7 +239,8 @@ class SegmentInterface {
     Reopen(SchemaPtr sch) = 0;
 
     virtual void
-    Reopen(const milvus::proto::segcore::SegmentLoadInfo& new_load_info) = 0;
+    Reopen(milvus::OpContext* op_ctx,
+           const milvus::proto::segcore::SegmentLoadInfo& new_load_info) = 0;
 
     // FinishLoad notifies the segment that all load operation are done
     // currently it's used to sync field data list with updated schema.
@@ -244,7 +248,7 @@ class SegmentInterface {
     FinishLoad() = 0;
 
     virtual void
-    SetLoadInfo(const milvus::proto::segcore::SegmentLoadInfo& load_info) = 0;
+    SetLoadInfo(milvus::proto::segcore::SegmentLoadInfo load_info) = 0;
 
     virtual void
     Load(milvus::tracer::TraceContext& trace_ctx,
@@ -440,9 +444,8 @@ class SegmentInternalInterface : public SegmentInterface {
                          const std::string& nested_path) const override;
 
     virtual void
-    SetLoadInfo(
-        const milvus::proto::segcore::SegmentLoadInfo& load_info) override {
-        load_info_ = load_info;
+    SetLoadInfo(milvus::proto::segcore::SegmentLoadInfo load_info) override {
+        load_info_ = std::move(load_info);
     }
 
  public:

@@ -1084,8 +1084,11 @@ func TestAddFieldTask(t *testing.T) {
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, merr.ErrParameterInvalid)
 
-		// more ClusteringKey field
+		// more ClusteringKey field — use a valid type so the duplicate-key check is the gate
 		fSchema = &schemapb.FieldSchema{
+			Name:            "ck_field",
+			DataType:        schemapb.DataType_Int64,
+			Nullable:        true,
 			IsClusteringKey: true,
 		}
 		bytes, err = proto.Marshal(fSchema)
@@ -1098,6 +1101,46 @@ func TestAddFieldTask(t *testing.T) {
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, merr.ErrParameterInvalid)
+
+		// unsupported clustering key type (JSON, Bool, Array)
+		// Use a fresh schema (no existing clustering key) so the type check is the only gate
+		freshSchema := constructCollectionSchemaByDataType(collectionName, fieldName2Type, int64Field, false)
+		task.oldSchema = freshSchema
+		for _, unsupportedType := range []schemapb.DataType{
+			schemapb.DataType_JSON,
+			schemapb.DataType_Bool,
+			schemapb.DataType_Array,
+		} {
+			fSchema = &schemapb.FieldSchema{
+				Name:            "ck_field",
+				DataType:        unsupportedType,
+				Nullable:        true,
+				IsClusteringKey: true,
+			}
+			if unsupportedType == schemapb.DataType_Array {
+				fSchema.ElementType = schemapb.DataType_Int64
+			}
+			bytes, err = proto.Marshal(fSchema)
+			assert.NoError(t, err)
+			task.Schema = bytes
+			err = task.PreExecute(ctx)
+			assert.Error(t, err, "expected error for unsupported clustering key type %v", unsupportedType)
+			assert.ErrorIs(t, err, merr.ErrParameterInvalid)
+		}
+
+		// valid clustering key type (Int64) should be accepted
+		fSchema = &schemapb.FieldSchema{
+			Name:            "valid_ck",
+			DataType:        schemapb.DataType_Int64,
+			Nullable:        true,
+			IsClusteringKey: true,
+		}
+		bytes, err = proto.Marshal(fSchema)
+		assert.NoError(t, err)
+		task.Schema = bytes
+		task.oldSchema = freshSchema // no existing clustering key
+		err = task.PreExecute(ctx)
+		assert.NoError(t, err)
 
 		// fieldName invalid
 		fSchema = &schemapb.FieldSchema{
@@ -1238,7 +1281,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		marshaledSchemaWithTooManyFields, err := proto.Marshal(schemaWithTooManyFields)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = marshaledSchemaWithTooManyFields
+		task.Schema = marshaledSchemaWithTooManyFields
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1264,7 +1307,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		tooManyVectorFieldsSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = tooManyVectorFieldsSchema
+		task.Schema = tooManyVectorFieldsSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1283,7 +1326,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		noVectorSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = noVectorSchema
+		task.Schema = noVectorSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1294,7 +1337,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		schema.Name = " " // empty
 		emptyNameSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = emptyNameSchema
+		task.Schema = emptyNameSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1304,14 +1347,14 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		tooLongNameSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = tooLongNameSchema
+		task.Schema = tooLongNameSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
 		schema.Name = "$" // invalid first char
 		invalidFirstCharSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = invalidFirstCharSchema
+		task.Schema = invalidFirstCharSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1320,7 +1363,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		schema.Fields = append(schema.Fields, schema.Fields[0])
 		duplicatedFieldsSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = duplicatedFieldsSchema
+		task.Schema = duplicatedFieldsSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1331,7 +1374,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		noPrimaryFieldsSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = noPrimaryFieldsSchema
+		task.Schema = noPrimaryFieldsSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1342,7 +1385,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		invalidFieldNameSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = invalidFieldNameSchema
+		task.Schema = invalidFieldNameSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1355,7 +1398,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		noTypeParamsSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = noTypeParamsSchema
+		task.Schema = noTypeParamsSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1369,7 +1412,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		noDimSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = noDimSchema
+		task.Schema = noDimSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1385,7 +1428,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		// Validate default load list
 		skipLoadSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = skipLoadSchema
+		task.Schema = skipLoadSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1403,7 +1446,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		dimNotIntSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = dimNotIntSchema
+		task.Schema = dimNotIntSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1421,7 +1464,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		tooLargeDimSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = tooLargeDimSchema
+		task.Schema = tooLargeDimSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1435,7 +1478,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		}
 		binaryTooLargeDimSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = binaryTooLargeDimSchema
+		task.Schema = binaryTooLargeDimSchema
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1458,7 +1501,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		})
 		twoVecFieldsSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = twoVecFieldsSchema
+		task.Schema = twoVecFieldsSchema
 		err = task.PreExecute(ctx)
 		if enableMultipleVectorFields {
 			assert.NoError(t, err)
@@ -1474,7 +1517,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		// Test valid StructArrayField
 		validStructSchema, err := proto.Marshal(structArrayFieldSchema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = validStructSchema
+		task.Schema = validStructSchema
 		err = task.PreExecute(ctx)
 		assert.NoError(t, err)
 
@@ -1483,7 +1526,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		invalidStructSchema.StructArrayFields[0].Fields = []*schemapb.FieldSchema{} // Empty fields
 		invalidStructSchemaBytes, err := proto.Marshal(invalidStructSchema)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = invalidStructSchemaBytes
+		task.Schema = invalidStructSchemaBytes
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1492,7 +1535,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		invalidStructSchema2.StructArrayFields[0].Fields[0].Name = "$invalid" // Invalid field name
 		invalidStructSchema2Bytes, err := proto.Marshal(invalidStructSchema2)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = invalidStructSchema2Bytes
+		task.Schema = invalidStructSchema2Bytes
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -1501,7 +1544,7 @@ func TestCreateCollectionTask(t *testing.T) {
 		invalidStructSchema3.StructArrayFields[0].Fields[0].DataType = schemapb.DataType_Int64 // Should be Array or ArrayOfVector
 		invalidStructSchema3Bytes, err := proto.Marshal(invalidStructSchema3)
 		assert.NoError(t, err)
-		task.CreateCollectionRequest.Schema = invalidStructSchema3Bytes
+		task.Schema = invalidStructSchema3Bytes
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
@@ -3070,11 +3113,11 @@ func Test_dropCollectionTask_Execute(t *testing.T) {
 	err := dct.Execute(ctx)
 	assert.NoError(t, err)
 
-	dct.DropCollectionRequest.CollectionName = "c1"
+	dct.CollectionName = "c1"
 	err = dct.Execute(ctx)
 	assert.Error(t, err)
 
-	dct.DropCollectionRequest.CollectionName = "c2"
+	dct.CollectionName = "c2"
 	err = dct.Execute(ctx)
 	assert.Error(t, err)
 	assert.Equal(t, commonpb.ErrorCode_Success, dct.result.GetErrorCode())
@@ -3125,11 +3168,11 @@ func Test_truncateCollectionTask_Execute(t *testing.T) {
 	err := tct.Execute(ctx)
 	assert.NoError(t, err)
 
-	tct.TruncateCollectionRequest.CollectionName = "c1"
+	tct.CollectionName = "c1"
 	err = tct.Execute(ctx)
 	assert.Error(t, err)
 
-	tct.TruncateCollectionRequest.CollectionName = "c2"
+	tct.CollectionName = "c2"
 	err = tct.Execute(ctx)
 	assert.Error(t, err)
 	assert.Equal(t, commonpb.ErrorCode_Success, tct.result.GetStatus().GetErrorCode())
@@ -4157,7 +4200,8 @@ func TestPartitionKey(t *testing.T) {
 		queryTask := &queryTask{
 			ctx: ctx,
 			RetrieveRequest: &internalpb.RetrieveRequest{
-				Base: &commonpb.MsgBase{},
+				QueryLabel: "query",
+				Base:       &commonpb.MsgBase{},
 			},
 			request: &milvuspb.QueryRequest{
 				CollectionName: collectionName,
@@ -4806,12 +4850,12 @@ func TestTaskPartitionKeyIsolation(t *testing.T) {
 	})
 }
 
-func TestAlterCollectionBigTopKOptimization(t *testing.T) {
+func TestAlterCollectionQueryMode(t *testing.T) {
 	qc := NewMixCoordMock()
 	ctx := context.Background()
 	err := InitMetaCache(ctx, qc)
 	assert.NoError(t, err)
-	prefix := "TestBigTopKOptimization"
+	prefix := "TestQueryMode"
 
 	getSchema := func(colName string) *schemapb.CollectionSchema {
 		fieldName2Type := make(map[string]schemapb.DataType)
@@ -4820,13 +4864,13 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 		return constructCollectionSchemaByDataType(colName, fieldName2Type, "int64_field", false)
 	}
 
-	createCollection := func(colName string, bigTopKEnabled bool) {
+	createCollection := func(colName string, largeTopKEnabled bool) {
 		schema := getSchema(colName)
 		marshaledSchema, err := proto.Marshal(schema)
 		assert.NoError(t, err)
 		props := []*commonpb.KeyValuePair{}
-		if bigTopKEnabled {
-			props = append(props, &commonpb.KeyValuePair{Key: common.BigTopKOptimizationEnabledKey, Value: "true"})
+		if largeTopKEnabled {
+			props = append(props, &commonpb.KeyValuePair{Key: common.QueryModeKey, Value: common.QueryModeLargeTopK})
 		}
 		createColReq := &milvuspb.CreateCollectionRequest{
 			Base: &commonpb.MsgBase{
@@ -4845,14 +4889,14 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 		assert.Equal(t, commonpb.ErrorCode_Success, stats.ErrorCode)
 	}
 
-	t.Run("alter bigTopK from false to true without vector index", func(t *testing.T) {
+	t.Run("set query_mode to large_topk without vector index", func(t *testing.T) {
 		colName := prefix + funcutil.GenRandomStr()
 		createCollection(colName, false)
 		alterTask := &alterCollectionTask{
 			AlterCollectionRequest: &milvuspb.AlterCollectionRequest{
 				Base:           &commonpb.MsgBase{},
 				CollectionName: colName,
-				Properties:     []*commonpb.KeyValuePair{{Key: common.BigTopKOptimizationEnabledKey, Value: "true"}},
+				Properties:     []*commonpb.KeyValuePair{{Key: common.QueryModeKey, Value: common.QueryModeLargeTopK}},
 			},
 			mixCoord: qc,
 		}
@@ -4860,14 +4904,14 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("alter bigTopK from true to false without vector index", func(t *testing.T) {
+	t.Run("delete query_mode from collection without vector index", func(t *testing.T) {
 		colName := prefix + funcutil.GenRandomStr()
 		createCollection(colName, true)
 		alterTask := &alterCollectionTask{
 			AlterCollectionRequest: &milvuspb.AlterCollectionRequest{
 				Base:           &commonpb.MsgBase{},
 				CollectionName: colName,
-				Properties:     []*commonpb.KeyValuePair{{Key: common.BigTopKOptimizationEnabledKey, Value: "false"}},
+				DeleteKeys:     []string{common.QueryModeKey},
 			},
 			mixCoord: qc,
 		}
@@ -4875,7 +4919,7 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("alter bigTopK from false to true with vector index should fail", func(t *testing.T) {
+	t.Run("set query_mode to large_topk with vector index should fail", func(t *testing.T) {
 		colName := prefix + funcutil.GenRandomStr()
 		createCollection(colName, false)
 		mockVectorIndexForCollection(t, ctx, qc, colName)
@@ -4883,16 +4927,16 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 			AlterCollectionRequest: &milvuspb.AlterCollectionRequest{
 				Base:           &commonpb.MsgBase{},
 				CollectionName: colName,
-				Properties:     []*commonpb.KeyValuePair{{Key: common.BigTopKOptimizationEnabledKey, Value: "true"}},
+				Properties:     []*commonpb.KeyValuePair{{Key: common.QueryModeKey, Value: common.QueryModeLargeTopK}},
 			},
 			mixCoord: qc,
 		}
 		err = alterTask.PreExecute(ctx)
 		assert.ErrorContains(t, err,
-			"can not alter bigtopk_optimization.enabled if the collection already has a vector index. Please drop the index first")
+			"can not alter query_mode if the collection already has a vector index. Please drop the index first")
 	})
 
-	t.Run("alter bigTopK from true to false with vector index should fail", func(t *testing.T) {
+	t.Run("delete query_mode with vector index should fail", func(t *testing.T) {
 		colName := prefix + funcutil.GenRandomStr()
 		createCollection(colName, true)
 		mockVectorIndexForCollection(t, ctx, qc, colName)
@@ -4900,40 +4944,23 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 			AlterCollectionRequest: &milvuspb.AlterCollectionRequest{
 				Base:           &commonpb.MsgBase{},
 				CollectionName: colName,
-				Properties:     []*commonpb.KeyValuePair{{Key: common.BigTopKOptimizationEnabledKey, Value: "false"}},
+				DeleteKeys:     []string{common.QueryModeKey},
 			},
 			mixCoord: qc,
 		}
 		err = alterTask.PreExecute(ctx)
 		assert.ErrorContains(t, err,
-			"can not alter bigtopk_optimization.enabled if the collection already has a vector index. Please drop the index first")
+			"can not alter query_mode if the collection already has a vector index. Please drop the index first")
 	})
 
-	t.Run("delete bigTopK property with vector index should fail", func(t *testing.T) {
-		colName := prefix + funcutil.GenRandomStr()
-		createCollection(colName, true)
-		mockVectorIndexForCollection(t, ctx, qc, colName)
-		alterTask := &alterCollectionTask{
-			AlterCollectionRequest: &milvuspb.AlterCollectionRequest{
-				Base:           &commonpb.MsgBase{},
-				CollectionName: colName,
-				DeleteKeys:     []string{common.BigTopKOptimizationEnabledKey},
-			},
-			mixCoord: qc,
-		}
-		err = alterTask.PreExecute(ctx)
-		assert.ErrorContains(t, err,
-			"can not alter bigtopk_optimization.enabled if the collection already has a vector index. Please drop the index first")
-	})
-
-	t.Run("delete bigTopK property without vector index should succeed", func(t *testing.T) {
+	t.Run("delete query_mode property without vector index should succeed", func(t *testing.T) {
 		colName := prefix + funcutil.GenRandomStr()
 		createCollection(colName, true)
 		alterTask := &alterCollectionTask{
 			AlterCollectionRequest: &milvuspb.AlterCollectionRequest{
 				Base:           &commonpb.MsgBase{},
 				CollectionName: colName,
-				DeleteKeys:     []string{common.BigTopKOptimizationEnabledKey},
+				DeleteKeys:     []string{common.QueryModeKey},
 			},
 			mixCoord: qc,
 		}
@@ -4941,7 +4968,7 @@ func TestAlterCollectionBigTopKOptimization(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("alter unrelated property with bigTopK enabled should not check index", func(t *testing.T) {
+	t.Run("alter unrelated property with large_topk query mode should not check index", func(t *testing.T) {
 		colName := prefix + funcutil.GenRandomStr()
 		createCollection(colName, true)
 		mockVectorIndexForCollection(t, ctx, qc, colName)
@@ -5888,7 +5915,7 @@ func TestHighlightTask(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, task.result)
 		assert.Equal(t, expectedResp, task.result)
-		assert.Equal(t, "test_channel", task.GetHighlightRequest.Channel)
+		assert.Equal(t, "test_channel", task.Channel)
 	})
 
 	t.Run("getHighlightOnShardleader rpc error", func(t *testing.T) {

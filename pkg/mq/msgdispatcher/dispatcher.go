@@ -111,7 +111,8 @@ func NewDispatcher(
 	if err != nil {
 		return nil, err
 	}
-	if position != nil && len(position.MsgID) != 0 {
+	// Note: Only the earliest msgId of WP can be empty bytes
+	if position != nil && (len(position.MsgID) != 0 || position.WALName == commonpb.WALName_WoodPecker) {
 		position = typeutil.Clone(position)
 		position.ChannelName = funcutil.ToPhysicalChannel(position.ChannelName)
 		err = stream.AsConsumer(ctx, []string{pchannel}, subName, common.SubscriptionPositionUnknown)
@@ -210,7 +211,7 @@ func (d *Dispatcher) Handle(signal signal) {
 	log.Debug("get signal")
 	switch signal {
 	case start:
-		d.ctx, d.cancel = context.WithCancel(context.Background())
+		d.ctx, d.cancel = context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is stored in d.cancel and called in pause/terminate cases
 		d.wg.Add(1)
 		go d.work()
 	case pause:
@@ -218,7 +219,7 @@ func (d *Dispatcher) Handle(signal signal) {
 		d.cancel()
 		d.wg.Wait()
 	case resume:
-		d.ctx, d.cancel = context.WithCancel(context.Background())
+		d.ctx, d.cancel = context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is stored in d.cancel and called in pause/terminate cases
 		d.wg.Add(1)
 		go d.work()
 	case terminate:

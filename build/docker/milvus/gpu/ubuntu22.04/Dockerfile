@@ -7,6 +7,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     sed -i 's/http:/https:/g' /etc/apt/sources.list && \
     apt-get update && \
+    apt-get upgrade -y --no-install-recommends gnupg2 gnupg gnupg-l10n gnupg-utils gpg gpg-agent gpg-wks-client gpg-wks-server gpgconf gpgsm gpgv dirmngr && \
     apt-get install -y --no-install-recommends curl libaio-dev libgomp1 libopenblas-dev && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata && \
         ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime && \
@@ -27,6 +28,11 @@ ENV PATH=/milvus/bin:$PATH
 ENV LD_LIBRARY_PATH=/milvus/lib:$LD_LIBRARY_PATH:/usr/lib
 ENV LD_PRELOAD=/milvus/lib/libjemalloc.so
 ENV MALLOC_CONF=background_thread:true
+ENV OPENSSL_MODULES=/milvus/lib/ossl-modules
+
+# Generate fipsmodule.cnf for FIPS module integrity self-test.
+# FIPS activation is handled programmatically at startup — no OPENSSL_CONF needed.
+RUN openssl fipsinstall -out /milvus/configs/ssl/fipsmodule.cnf -module /milvus/lib/ossl-modules/fips.so
 
 ENTRYPOINT ["/tini", "--"]
 

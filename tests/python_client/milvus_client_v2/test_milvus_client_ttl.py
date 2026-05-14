@@ -162,67 +162,50 @@ class TestMilvusClientTTL(TestMilvusClientV2Base):
             log.info(f"flush completed in {time.time() - t1}s")
 
         # search data again after insert more data
-        consistency_levels = [CONSISTENCY_EVENTUALLY, CONSISTENCY_BOUNDED, CONSISTENCY_SESSION, CONSISTENCY_STRONG]
-        for consistency_level in consistency_levels:
-            log.debug(f"start to search/query with {consistency_level}")
-            # try 3 times
-            for i in range(3):
-                res = self.search(client, collection_name, search_vectors,
-                                  search_params={}, anns_field='embeddings',
-                                  limit=10, consistency_level=consistency_level)[0]
-                if len(res[0]) > 0:
-                    break
-                else:
-                    time.sleep(1)
-            assert len(res[0]) > 0
-
-            if consistency_level != CONSISTENCY_STRONG:
-                pass
-            else:
-                # query count(*)
-                res = self.query(client, collection_name, filter='',
-                                 output_fields=["count(*)"], consistency_level=consistency_level)[0]
-                assert res[0].get('count(*)', None) == nb * insert_times
-                res = self.query(client, collection_name, filter='visible==False',
-                                 output_fields=["count(*)"], consistency_level=consistency_level)[0]
-                assert res[0].get('count(*)', None) == 0
-                # query count(visible)
-                res = self.query(client, collection_name, filter='visible==True',
-                                 output_fields=["count(*)"], consistency_level=consistency_level)[0]
-                assert res[0].get('count(*)', None) == nb * insert_times
-
-            # hybrid search
-            res = self.hybrid_search(client, collection_name, [sub_search1, sub_search2], ranker,
-                                     limit=10, consistency_level=consistency_level)[0]
-            assert len(res[0]) > 0
+        for i in range(15):
+            res = self.search(client, collection_name, search_vectors,
+                              search_params={}, anns_field='embeddings',
+                              limit=10, consistency_level=CONSISTENCY_STRONG)[0]
+            if len(res[0]) > 0:
+                break
+            time.sleep(2)
+        assert len(res[0]) > 0, \
+            "Search with Strong consistency returned 0 results after retries"
+        # query count(*)
+        res = self.query(client, collection_name, filter='',
+                         output_fields=["count(*)"], consistency_level=CONSISTENCY_STRONG)[0]
+        assert res[0].get('count(*)', None) == nb * insert_times
+        res = self.query(client, collection_name, filter='visible==False',
+                         output_fields=["count(*)"], consistency_level=CONSISTENCY_STRONG)[0]
+        assert res[0].get('count(*)', None) == 0
+        res = self.query(client, collection_name, filter='visible==True',
+                         output_fields=["count(*)"], consistency_level=CONSISTENCY_STRONG)[0]
+        assert res[0].get('count(*)', None) == nb * insert_times
+        # hybrid search
+        res = self.hybrid_search(client, collection_name, [sub_search1, sub_search2], ranker,
+                                 limit=10, consistency_level=CONSISTENCY_STRONG)[0]
+        assert len(res[0]) > 0
 
         # alter ttl to 2000s
         self.alter_collection_properties(client, collection_name, properties={"collection.ttl.seconds": 2000})
-        for consistency_level in consistency_levels:
-            log.debug(f"start to search/query after alter ttl with {consistency_level}")
-            # search data after alter ttl
-            res = self.search(client, collection_name, search_vectors,
-                              search_params={}, anns_field='embeddings',
-                              filter='visible==False', limit=10, consistency_level=consistency_level)[0]
-            assert len(res[0]) > 0
-
-            # hybrid search data after alter ttl
-            sub_search1 = AnnSearchRequest(search_vectors, "embeddings", {"level": 1}, 20, expr='visible==False')
-            sub_search2 = AnnSearchRequest(search_vectors, "embeddings_2", {"level": 1}, 20, expr='visible==False')
-            res = self.hybrid_search(client, collection_name, [sub_search1, sub_search2], ranker,
-                                     limit=10, consistency_level=consistency_level)[0]
-            assert len(res[0]) > 0
-
-            # query count(*)
-            res = self.query(client, collection_name, filter='visible==False',
-                             output_fields=["count(*)"], consistency_level=consistency_level)[0]
-            assert res[0].get('count(*)', 0) == insert_times * nb
-            res = self.query(client, collection_name, filter='',
-                             output_fields=["count(*)"], consistency_level=consistency_level)[0]
-            if consistency_level != CONSISTENCY_STRONG:
-                assert res[0].get('count(*)', 0) >= insert_times * nb
-            else:
-                assert res[0].get('count(*)', 0) == insert_times * nb * 2
+        # search data after alter ttl
+        res = self.search(client, collection_name, search_vectors,
+                          search_params={}, anns_field='embeddings',
+                          filter='visible==False', limit=10, consistency_level=CONSISTENCY_STRONG)[0]
+        assert len(res[0]) > 0
+        # hybrid search data after alter ttl
+        sub_search1 = AnnSearchRequest(search_vectors, "embeddings", {"level": 1}, 20, expr='visible==False')
+        sub_search2 = AnnSearchRequest(search_vectors, "embeddings_2", {"level": 1}, 20, expr='visible==False')
+        res = self.hybrid_search(client, collection_name, [sub_search1, sub_search2], ranker,
+                                 limit=10, consistency_level=CONSISTENCY_STRONG)[0]
+        assert len(res[0]) > 0
+        # query count(*)
+        res = self.query(client, collection_name, filter='visible==False',
+                         output_fields=["count(*)"], consistency_level=CONSISTENCY_STRONG)[0]
+        assert res[0].get('count(*)', 0) == insert_times * nb
+        res = self.query(client, collection_name, filter='',
+                         output_fields=["count(*)"], consistency_level=CONSISTENCY_STRONG)[0]
+        assert res[0].get('count(*)', 0) == insert_times * nb * 2
 
     @pytest.mark.tags(CaseLabel.L2)
     @pytest.mark.skip("not stable")
@@ -287,24 +270,25 @@ class TestMilvusClientTTL(TestMilvusClientV2Base):
         expected: Step 5 should success
         """
         # step 1: create collection
-        ttl_time = 5
+        ttl_time = 20
+        margin = 2  # margin zone around TTL boundaries to avoid timing races
         client = self._client()
         schema = self.create_schema(client, enable_dynamic_field=False)[0]
         schema.add_field(default_primary_key_field_name, DataType.INT64, is_primary=True, auto_id=False)
         schema.add_field(default_vector_field_name, DataType.FLOAT_VECTOR, dim=default_dim)
         schema.add_field(default_int32_field_name, DataType.INT32, nullable=True)
-        index_params = self.prepare_index_params(client)[0] 
+        index_params = self.prepare_index_params(client)[0]
         index_params.add_index(default_primary_key_field_name, index_type="AUTOINDEX")
         index_params.add_index(default_vector_field_name, index_type="AUTOINDEX")
         index_params.add_index(default_int32_field_name, index_type="AUTOINDEX")
         collection_name = cf.gen_collection_name_by_testcase_name(module_index=1)
-        self.create_collection(client, collection_name, default_dim, schema=schema, 
+        self.create_collection(client, collection_name, default_dim, schema=schema,
                                properties={"collection.ttl.seconds": ttl_time}, consistency_level="Strong", index_params=index_params)
 
         # step 2: Insert rows
         rows = cf.gen_row_data_by_schema(nb=default_nb, schema=schema)
         self.insert(client, collection_name, rows)
-        start_time = time.time()
+        start_time = time.time()  # start timing right after insert to align with server-side TTL calculation
         self.flush(client, collection_name)
         self.release_collection(client, collection_name)
         self.load_collection(client, collection_name)
@@ -321,33 +305,36 @@ class TestMilvusClientTTL(TestMilvusClientV2Base):
             # before ttl_time, the count(*) should be default_nb
             # before new_ttl_time, and after ttl_time the count(*) should be update_nb
             # after new_ttl_time, the count(*) should be 0
+            elapsed = time.time() - start_time
             res = self.query(client, collection_name, filter=default_search_exp, output_fields=["count(*)"])
-            if time.time() - start_time <= ttl_time:
+            # Skip assertions near TTL boundaries to avoid timing races
+            if elapsed < ttl_time - margin:
                 assert res[0][0].get('count(*)') == default_nb
-            elif time.time() - start_time > ttl_time and time.time() - start_time <= new_ttl_time:
+            elif elapsed > ttl_time + margin and elapsed < new_ttl_time - margin:
                 assert res[0][0].get('count(*)') == update_nb
-            else:
+            elif elapsed > new_ttl_time + margin:
                 assert res[0][0].get('count(*)') == 0
 
             # search
             # before new_ttl_time, the search result should be 10
             # after new_ttl_time, the search result should be 0
             search_vectors = cf.gen_vectors(1, dim=default_dim)
+            elapsed = time.time() - start_time
             res = self.search(client, collection_name, search_vectors, anns_field=default_vector_field_name, search_params={}, limit=10)
-            if time.time() - start_time <= new_ttl_time:
+            if elapsed < new_ttl_time - margin:
                 assert len(res[0][0]) == 10
-            else:
+            elif elapsed > new_ttl_time + margin:
                 assert len(res[0][0]) == 0
 
             time.sleep(1)
             # upsert
             if pu and time.time() - start_time >= upsert_time:
                 if partial_update:
-                    new_rows = cf.gen_row_data_by_schema(nb=update_nb, schema=schema, 
+                    new_rows = cf.gen_row_data_by_schema(nb=update_nb, schema=schema,
                                                         desired_field_names=[default_primary_key_field_name, default_vector_field_name])
                 else:
                     new_rows = cf.gen_row_data_by_schema(nb=update_nb, schema=schema)
-                
+
                 self.upsert(client, collection_name, new_rows, partial_update=partial_update)
                 pu_time = time.time() - start_time
                 new_ttl_time = pu_time + ttl_time

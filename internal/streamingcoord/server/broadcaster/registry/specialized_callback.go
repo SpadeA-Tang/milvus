@@ -10,16 +10,8 @@ import (
 func init() {
 	resetMessageAckOnceCallbacks()
 	resetMessageAckCallbacks()
-	resetMessageCheckCallbacks()
-}
-
-var RegisterImportV1CheckCallback = registerMessageCheckCallback[*message.ImportMessageHeader, *msgpb.ImportMsg]
-
-// resetMessageCheckCallbacks resets the message check callbacks.
-func resetMessageCheckCallbacks() {
-	messageCheckCallbacks = map[message.MessageTypeWithVersion]*syncutil.Future[messageInnerCheckCallback]{
-		message.MessageTypeImportV1: syncutil.NewFuture[messageInnerCheckCallback](),
-	}
+	// CheckCallback mechanism has been removed as part of import refactoring
+	// All validation is now done before broadcasting in the respective coordinators
 }
 
 var (
@@ -28,6 +20,7 @@ var (
 	// Cluster
 	RegisterAlterReplicateConfigV2AckCallback = registerMessageAckCallback[*message.AlterReplicateConfigMessageHeader, *message.AlterReplicateConfigMessageBody]
 	RegisterFlushAllV2AckCallback             = registerMessageAckCallback[*message.FlushAllMessageHeader, *message.FlushAllMessageBody]
+	RegisterAlterWALV2AckCallback             = registerMessageAckCallback[*message.AlterWALMessageHeader, *message.AlterWALMessageBody]
 
 	// Collection
 	RegisterAlterCollectionV2AckCallback    = registerMessageAckCallback[*message.AlterCollectionMessageHeader, *message.AlterCollectionMessageBody]
@@ -75,12 +68,15 @@ var (
 
 // resetMessageAckCallbacks resets the message ack callbacks.
 func resetMessageAckCallbacks() {
+	messageAckCallbacksMu.Lock()
+	defer messageAckCallbacksMu.Unlock()
 	messageAckCallbacks = map[message.MessageTypeWithVersion]*syncutil.Future[messageInnerAckCallback]{
 		message.MessageTypeImportV1: syncutil.NewFuture[messageInnerAckCallback](),
 
 		// Cluster
 		message.MessageTypeAlterReplicateConfigV2: syncutil.NewFuture[messageInnerAckCallback](),
 		message.MessageTypeFlushAllV2:             syncutil.NewFuture[messageInnerAckCallback](),
+		message.MessageTypeAlterWALV2:             syncutil.NewFuture[messageInnerAckCallback](),
 
 		// Collection
 		message.MessageTypeAlterCollectionV2:    syncutil.NewFuture[messageInnerAckCallback](),

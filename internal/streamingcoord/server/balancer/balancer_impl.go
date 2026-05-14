@@ -100,22 +100,65 @@ func (b *balancerImpl) ReplicateRole() replicateutil.Role {
 	return b.channelMetaManager.ReplicateRole()
 }
 
-// GetAllStreamingNodes fetches all streaming node info.
-// Filter out frozen nodes to prevent downstream consumers (e.g., ReplicaObserver)
-// from treating frozen nodes as available.
-func (b *balancerImpl) GetAllStreamingNodes(ctx context.Context) (map[int64]*types.StreamingNodeInfo, error) {
+// GetAllStreamingNodes fetches all streaming node info with resource group (including frozen nodes).
+func (b *balancerImpl) GetAllStreamingNodes(ctx context.Context) (map[int64]*types.StreamingNodeInfoWithResourceGroup, error) {
+	return resource.Resource().StreamingNodeManagerClient().GetAllStreamingNodes(ctx)
+}
+
+// GetAvailableStreamingNodes fetches streaming node info with resource group excluding frozen nodes.
+func (b *balancerImpl) GetAvailableStreamingNodes(ctx context.Context) (map[int64]*types.StreamingNodeInfoWithResourceGroup, error) {
 	nodes, err := resource.Resource().StreamingNodeManagerClient().GetAllStreamingNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	filtered := make(map[int64]*types.StreamingNodeInfo, len(nodes))
+	filtered := make(map[int64]*types.StreamingNodeInfoWithResourceGroup, len(nodes))
 	for nodeID, info := range nodes {
 		if !b.freezeNodes.Contain(nodeID) {
 			filtered[nodeID] = info
 		}
 	}
 	return filtered, nil
+}
+
+// ConfirmPrimaryResourceGroupReady returns nil iff every RW pchannel is currently
+// assigned to a streaming node that belongs to the configured primary resource group.
+// If streaming.primaryResourceGroup is not configured, returns nil.
+func (b *balancerImpl) ConfirmPrimaryResourceGroupReady(ctx context.Context) error {
+	if !b.lifetime.Add(typeutil.LifetimeStateWorking) {
+		return status.NewOnShutdownError("balancer is closing")
+	}
+	defer b.lifetime.Done()
+
+	primaryRG := paramtable.Get().StreamingCfg.PrimaryResourceGroup.GetValue()
+	if primaryRG == "" {
+		return nil
+	}
+	nodes, err := resource.Resource().StreamingNodeManagerClient().GetAllStreamingNodes(ctx)
+	if err != nil {
+		return err
+	}
+	assignment, err := b.channelMetaManager.GetLatestChannelAssignment()
+	if err != nil {
+		return err
+	}
+	for _, rel := range assignment.Relations {
+		// Only RW pchannels carry WAL writes; RO pchannels (e.g., CDC source) are
+		// not constrained by the local primary RG.
+		if rel.Channel.AccessMode != types.AccessModeRW {
+			continue
+		}
+		node, ok := nodes[rel.Node.ServerID]
+		if !ok {
+			return status.NewInner("pchannel %s: assigned node %d not found in streaming nodes",
+				rel.Channel.Name, rel.Node.ServerID)
+		}
+		if node.ResourceGroup != primaryRG {
+			return status.NewInner("pchannel %s still on rg=%s, expected primary rg=%s (WAL migration in progress)",
+				rel.Channel.Name, node.ResourceGroup, primaryRG)
+		}
+	}
+	return nil
 }
 
 // GetLatestWALLocated returns the server id of the node that the wal of the vChannel is located.
@@ -479,8 +522,9 @@ func (b *balancerImpl) balance(ctx context.Context) (bool, error) {
 	b.Logger().Info("start to balance")
 	pchannelView := b.channelMetaManager.CurrentPChannelsView()
 
-	b.Logger().Info("collect all status...")
-	nodeStatus, err := b.fetchStreamingNodeStatus(ctx)
+	rgName := paramtable.Get().StreamingCfg.PrimaryResourceGroup.GetValue()
+	b.Logger().Info("collect all status...", zap.String("resourceGroupHint", rgName))
+	nodeStatus, err := b.fetchStreamingNodeStatus(ctx, rgName)
 	if err != nil {
 		return false, err
 	}
@@ -511,8 +555,8 @@ func (b *balancerImpl) balance(ctx context.Context) (bool, error) {
 }
 
 // fetchStreamingNodeStatus fetch the streaming node status.
-func (b *balancerImpl) fetchStreamingNodeStatus(ctx context.Context) (map[int64]*types.StreamingNodeStatus, error) {
-	nodeStatus, err := resource.Resource().StreamingNodeManagerClient().CollectAllStatus(ctx)
+func (b *balancerImpl) fetchStreamingNodeStatus(ctx context.Context, rgName string) (map[int64]*types.StreamingNodeStatus, error) {
+	nodeStatus, err := resource.Resource().StreamingNodeManagerClient().CollectAllStatus(ctx, rgName)
 	if err != nil {
 		return nil, errors.Wrap(err, "fail to collect all status")
 	}

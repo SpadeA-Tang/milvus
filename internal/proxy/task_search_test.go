@@ -735,19 +735,19 @@ func TestSearchTask_PreExecute(t *testing.T) {
 		createColl(t, collName, qc)
 
 		task := getSearchTask(t, collName)
-		task.SearchRequest.Nq = 1000
-		task.SearchRequest.Topk = 1001
+		task.Nq = 1000
+		task.Topk = 1001
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
-		task.SearchRequest.Nq = 100
-		task.SearchRequest.Topk = 100
-		task.SearchRequest.GroupSize = 200
+		task.Nq = 100
+		task.Topk = 100
+		task.GroupSize = 200
 		err = task.PreExecute(ctx)
 		assert.Error(t, err)
 
-		task.SearchRequest.IsAdvanced = true
-		task.SearchRequest.SubReqs = []*internalpb.SubSearchRequest{
+		task.IsAdvanced = true
+		task.SubReqs = []*internalpb.SubSearchRequest{
 			{
 				Topk:      100,
 				Nq:        100,
@@ -896,7 +896,7 @@ func TestSearchTask_PreExecute(t *testing.T) {
 		assert.NoError(t, err)
 
 		assert.NoError(t, st.PreExecute(ctx))
-		assert.Equal(t, collInfo.updateTimestamp, st.SearchRequest.GuaranteeTimestamp)
+		assert.Equal(t, collInfo.updateTimestamp, st.GuaranteeTimestamp)
 	})
 	t.Run("search with rerank", func(t *testing.T) {
 		collName := "search_with_rerank" + funcutil.GenRandomStr()
@@ -912,7 +912,7 @@ func TestSearchTask_PreExecute(t *testing.T) {
 		st.SetTs(enqueueTs)
 		assert.NoError(t, st.PreExecute(ctx))
 		assert.NotNil(t, st.functionScore)
-		assert.Equal(t, false, st.SearchRequest.GetIsAdvanced())
+		assert.Equal(t, false, st.GetIsAdvanced())
 	})
 
 	t.Run("advance search with rerank", func(t *testing.T) {
@@ -934,7 +934,7 @@ func TestSearchTask_PreExecute(t *testing.T) {
 		st.SetTs(enqueueTs)
 		assert.NoError(t, st.PreExecute(ctx))
 		assert.NotNil(t, st.functionScore)
-		assert.Equal(t, true, st.SearchRequest.GetIsAdvanced())
+		assert.Equal(t, true, st.GetIsAdvanced())
 	})
 
 	t.Run("search with rerank grouping", func(t *testing.T) {
@@ -1114,7 +1114,7 @@ func TestSearchTask_WithFunctions(t *testing.T) {
 		err = task.PreExecute(ctx)
 		assert.NoError(t, err)
 		pb := &commonpb.PlaceholderGroup{}
-		proto.Unmarshal(task.SearchRequest.PlaceholderGroup, pb)
+		proto.Unmarshal(task.PlaceholderGroup, pb)
 		assert.Equal(t, len(pb.Placeholders), 1)
 		assert.Equal(t, len(pb.Placeholders[0].Values), 1)
 		assert.Equal(t, pb.Placeholders[0].Type, commonpb.PlaceholderType_FloatVector)
@@ -1125,7 +1125,7 @@ func TestSearchTask_WithFunctions(t *testing.T) {
 		err = task.PreExecute(ctx)
 		assert.NoError(t, err)
 		pb := &commonpb.PlaceholderGroup{}
-		proto.Unmarshal(task.SearchRequest.PlaceholderGroup, pb)
+		proto.Unmarshal(task.PlaceholderGroup, pb)
 		assert.Equal(t, len(pb.Placeholders), 1)
 		assert.Equal(t, len(pb.Placeholders[0].Values), 2)
 		assert.Equal(t, pb.Placeholders[0].Type, commonpb.PlaceholderType_FloatVector)
@@ -1191,8 +1191,8 @@ func TestSearchTask_WithFunctions(t *testing.T) {
 		})
 		err = task.PreExecute(ctx)
 		assert.NoError(t, err)
-		assert.Equal(t, len(task.SearchRequest.SubReqs), 2)
-		for _, sub := range task.SearchRequest.SubReqs {
+		assert.Equal(t, len(task.SubReqs), 2)
+		for _, sub := range task.SubReqs {
 			pb := &commonpb.PlaceholderGroup{}
 			proto.Unmarshal(sub.PlaceholderGroup, pb)
 			assert.Equal(t, len(pb.Placeholders), 1)
@@ -1209,8 +1209,8 @@ func TestSearchTask_WithFunctions(t *testing.T) {
 		})
 		err = task.PreExecute(ctx)
 		assert.NoError(t, err)
-		assert.Equal(t, len(task.SearchRequest.SubReqs), 3)
-		for _, sub := range task.SearchRequest.SubReqs {
+		assert.Equal(t, len(task.SubReqs), 3)
+		for _, sub := range task.SubReqs {
 			pb := &commonpb.PlaceholderGroup{}
 			proto.Unmarshal(sub.PlaceholderGroup, pb)
 			assert.Equal(t, len(pb.Placeholders), 1)
@@ -2554,8 +2554,8 @@ func TestTaskSearch_reduceGroupBySearchResultData(t *testing.T) {
 		{
 			name: "nullable group_by values",
 			inputs: []*schemapb.SearchResultData{
-				makePartialResult(ids[0], scores[0], []int64{1, 2, 3, 4, 1, 2, 3, 4}, []bool{true, true, true, true, false, true, true, true, true, false}),
-				makePartialResult(ids[1], scores[1], []int64{1, 2, 3, 4, 1, 2, 3, 4}, []bool{true, true, true, true, false, true, true, true, true, false}),
+				makePartialResult(ids[0], scores[0], []int64{1, 2, 3, 4, 0, 1, 2, 3, 4, 0}, []bool{true, true, true, true, false, true, true, true, true, false}),
+				makePartialResult(ids[1], scores[1], []int64{1, 2, 3, 4, 0, 1, 2, 3, 4, 0}, []bool{true, true, true, true, false, true, true, true, true, false}),
 			},
 			expectedIDs:    []int64{1, 3, 5, 7, 9, 1, 3, 5, 7, 9},
 			expectedScores: []float32{-10, -8, -6, -4, -2, -10, -8, -6, -4, -2},
@@ -3036,7 +3036,7 @@ func TestSearchTask_ErrExecute(t *testing.T) {
 		shardClientMgr: mgr,
 	}
 	for i := 0; i < len(fieldName2Types); i++ {
-		task.SearchRequest.OutputFieldsId[i] = int64(common.StartOfUserFieldID + i)
+		task.OutputFieldsId[i] = int64(common.StartOfUserFieldID + i)
 	}
 
 	assert.NoError(t, task.OnEnqueue())
@@ -3367,11 +3367,11 @@ func TestSearchTask_parseSearchInfo(t *testing.T) {
 		assert.Equal(t, Params.QuotaConfig.TopKLimit.GetAsInt64(), searchInfo.planInfo.GetTopk())
 	})
 
-	t.Run("check bigTopK uses dedicated topK limit", func(t *testing.T) {
+	t.Run("check largeTopK uses dedicated topK limit", func(t *testing.T) {
 		Params.Save(Params.QuotaConfig.TopKLimit.Key, "100")
-		Params.Save(Params.QuotaConfig.BigTopKLimit.Key, "200")
+		Params.Save(Params.QuotaConfig.LargeTopKLimit.Key, "200")
 		defer Params.Reset(Params.QuotaConfig.TopKLimit.Key)
-		defer Params.Reset(Params.QuotaConfig.BigTopKLimit.Key)
+		defer Params.Reset(Params.QuotaConfig.LargeTopKLimit.Key)
 
 		param := getValidSearchParams()
 		resetSearchParamsValue(param, TopKKey, `150`)
@@ -3384,11 +3384,11 @@ func TestSearchTask_parseSearchInfo(t *testing.T) {
 		assert.Equal(t, int64(150), searchInfo.planInfo.GetTopk())
 	})
 
-	t.Run("check iterator uses bigTopK limit fallback", func(t *testing.T) {
+	t.Run("check iterator uses largeTopK limit fallback", func(t *testing.T) {
 		Params.Save(Params.QuotaConfig.TopKLimit.Key, "100")
-		Params.Save(Params.QuotaConfig.BigTopKLimit.Key, "200")
+		Params.Save(Params.QuotaConfig.LargeTopKLimit.Key, "200")
 		defer Params.Reset(Params.QuotaConfig.TopKLimit.Key)
-		defer Params.Reset(Params.QuotaConfig.BigTopKLimit.Key)
+		defer Params.Reset(Params.QuotaConfig.LargeTopKLimit.Key)
 
 		param := getValidSearchParams()
 		param = append(param, &commonpb.KeyValuePair{
@@ -3569,11 +3569,11 @@ func TestSearchTask_parseSearchInfo(t *testing.T) {
 			assert.ErrorContains(t, err, "batch size is invalid")
 		})
 
-		t.Run("iteratorV2 batch size uses bigTopK limit", func(t *testing.T) {
+		t.Run("iteratorV2 batch size uses largeTopK limit", func(t *testing.T) {
 			Params.Save(Params.QuotaConfig.TopKLimit.Key, "100")
-			Params.Save(Params.QuotaConfig.BigTopKLimit.Key, "200")
+			Params.Save(Params.QuotaConfig.LargeTopKLimit.Key, "200")
 			defer Params.Reset(Params.QuotaConfig.TopKLimit.Key)
-			defer Params.Reset(Params.QuotaConfig.BigTopKLimit.Key)
+			defer Params.Reset(Params.QuotaConfig.LargeTopKLimit.Key)
 
 			param := generateValidParamsForSearchIteratorV2()
 			resetSearchParamsValue(param, SearchIterBatchSizeKey, "150")
@@ -4751,7 +4751,7 @@ func (s *MaterializedViewTestSuite) TestMvEnabledPartitionKeyOnVarCharWithIsolat
 		task := s.getSearchTask()
 		task.enableMaterializedView = true
 		task.IsAdvanced = isAdvanced
-		task.request.Dsl = testVarCharField + " in [\"a\", \"b\"]"
+		task.request.Dsl = testVarCharField + " in [\"a\", \"b\", \"c\"]"
 		schema := ConstructCollectionSchemaWithPartitionKey(s.colName, s.fieldName2Types, testInt64Field, testVarCharField, false)
 		schemaInfo := newSchemaInfo(schema)
 		s.mockMetaCache.EXPECT().GetCollectionSchema(mock.Anything, mock.Anything, mock.Anything).Return(schemaInfo, nil)
@@ -4765,7 +4765,7 @@ func (s *MaterializedViewTestSuite) TestMvEnabledPartitionKeyOnVarCharWithIsolat
 		task := s.getSearchTask()
 		task.enableMaterializedView = true
 		task.IsAdvanced = isAdvanced
-		task.request.Dsl = testVarCharField + " == \"a\" || " + testVarCharField + "  == \"b\""
+		task.request.Dsl = testVarCharField + " == \"a\" || " + testVarCharField + "  == \"b\" || " + testVarCharField + " == \"c\""
 		schema := ConstructCollectionSchemaWithPartitionKey(s.colName, s.fieldName2Types, testInt64Field, testVarCharField, false)
 		schemaInfo := newSchemaInfo(schema)
 		s.mockMetaCache.EXPECT().GetCollectionSchema(mock.Anything, mock.Anything, mock.Anything).Return(schemaInfo, nil)
@@ -4941,7 +4941,7 @@ func TestSearchTask_InitSearchRequestWithStructArrayFields(t *testing.T) {
 					}
 				}
 			}
-			task.SearchRequest.OutputFieldsId = outputFieldIDs
+			task.OutputFieldsId = outputFieldIDs
 
 			err := task.initSearchRequest(ctx)
 			assert.NoError(t, err)
@@ -5236,9 +5236,9 @@ func TestSearchTask_InitSearchRequestWithHighlighter(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Verify that highlighter's RequiredFieldIDs are added to OutputFieldsId
-		assert.Contains(t, task.SearchRequest.OutputFieldsId, int64(101)) // title
-		assert.Contains(t, task.SearchRequest.OutputFieldsId, int64(102)) // content
-		assert.Contains(t, task.SearchRequest.OutputFieldsId, int64(103)) // $meta
+		assert.Contains(t, task.OutputFieldsId, int64(101)) // title
+		assert.Contains(t, task.OutputFieldsId, int64(102)) // content
+		assert.Contains(t, task.OutputFieldsId, int64(103)) // $meta
 	})
 
 	t.Run("highlighter merges DynamicFieldNames into plan.DynamicFields", func(t *testing.T) {
@@ -5289,7 +5289,7 @@ func TestSearchTask_InitSearchRequestWithHighlighter(t *testing.T) {
 
 		// Deserialize the plan to check DynamicFields
 		plan := &planpb.PlanNode{}
-		err = proto.Unmarshal(task.SearchRequest.SerializedExprPlan, plan)
+		err = proto.Unmarshal(task.SerializedExprPlan, plan)
 		assert.NoError(t, err)
 
 		// Verify that highlighter's DynamicFieldNames are merged into plan.DynamicFields
@@ -5343,7 +5343,7 @@ func TestSearchTask_InitSearchRequestWithHighlighter(t *testing.T) {
 
 		// Deserialize the plan
 		plan := &planpb.PlanNode{}
-		err = proto.Unmarshal(task.SearchRequest.SerializedExprPlan, plan)
+		err = proto.Unmarshal(task.SerializedExprPlan, plan)
 		assert.NoError(t, err)
 
 		// Only original user dynamic fields should be present
@@ -5398,11 +5398,145 @@ func TestSearchTask_InitSearchRequestWithHighlighter(t *testing.T) {
 
 		// Deserialize the plan
 		plan := &planpb.PlanNode{}
-		err = proto.Unmarshal(task.SearchRequest.SerializedExprPlan, plan)
+		err = proto.Unmarshal(task.SerializedExprPlan, plan)
 		assert.NoError(t, err)
 
 		// When needRequery is true, DynamicFields should NOT be set (the branch is skipped)
 		// The DynamicFields will be handled in requery stage instead
 		assert.Empty(t, plan.DynamicFields)
+	})
+}
+
+func TestSearchTask_SearchRequeryPolicy(t *testing.T) {
+	paramtable.Init()
+	ctx := context.Background()
+
+	schema := &schemapb.CollectionSchema{
+		Name: "test_collection",
+		Fields: []*schemapb.FieldSchema{
+			{FieldID: 100, Name: "pk", DataType: schemapb.DataType_Int64, IsPrimaryKey: true},
+			{FieldID: 101, Name: "vec", DataType: schemapb.DataType_FloatVector, TypeParams: []*commonpb.KeyValuePair{{Key: common.DimKey, Value: "128"}}},
+			{FieldID: 102, Name: "title", DataType: schemapb.DataType_VarChar, TypeParams: []*commonpb.KeyValuePair{{Key: common.MaxLengthKey, Value: "256"}}},
+		},
+	}
+	schemaInfo := newSchemaInfo(schema)
+
+	buildTask := func(outputFields []string) *searchTask {
+		return &searchTask{
+			ctx:            ctx,
+			collectionName: "test_collection",
+			SearchRequest: &internalpb.SearchRequest{
+				CollectionID:   1,
+				PartitionIDs:   []int64{1},
+				DslType:        commonpb.DslType_BoolExprV1,
+				OutputFieldsId: []int64{},
+			},
+			request: &milvuspb.SearchRequest{
+				CollectionName: "test_collection",
+				OutputFields:   outputFields,
+				SearchParams: []*commonpb.KeyValuePair{
+					{Key: AnnsFieldKey, Value: "vec"},
+					{Key: TopKKey, Value: "10"},
+					{Key: common.MetricTypeKey, Value: metric.L2},
+					{Key: ParamsKey, Value: `{"nprobe": 10}`},
+				},
+				SearchInput: &milvuspb.SearchRequest_PlaceholderGroup{
+					PlaceholderGroup: nil,
+				},
+				ConsistencyLevel: commonpb.ConsistencyLevel_Session,
+			},
+			schema:                 schemaInfo,
+			translatedOutputFields: outputFields,
+			tr:                     timerecord.NewTimeRecorder("test"),
+			queryInfos:             []*planpb.QueryInfo{{}},
+		}
+	}
+
+	tests := []struct {
+		name            string
+		policy          string
+		outputFields    []string
+		expectedRequery bool
+	}{
+		{
+			name:            "always_policy_no_output",
+			policy:          "always",
+			outputFields:    []string{"pk"},
+			expectedRequery: true,
+		},
+		{
+			name:            "always_policy_with_vector",
+			policy:          "always",
+			outputFields:    []string{"pk", "vec"},
+			expectedRequery: true,
+		},
+		{
+			name:            "outputvector_policy_with_vector",
+			policy:          "outputvector",
+			outputFields:    []string{"pk", "vec"},
+			expectedRequery: true,
+		},
+		{
+			name:            "outputvector_policy_without_vector",
+			policy:          "outputvector",
+			outputFields:    []string{"pk", "title"},
+			expectedRequery: false,
+		},
+		{
+			name:            "outputfields_policy_with_scalar",
+			policy:          "outputfields",
+			outputFields:    []string{"pk", "title"},
+			expectedRequery: true,
+		},
+		{
+			name:            "outputfields_policy_no_output",
+			policy:          "outputfields",
+			outputFields:    []string{},
+			expectedRequery: false,
+		},
+		{
+			name:            "default_fallback_to_outputvector_with_vector",
+			policy:          "unknown_value",
+			outputFields:    []string{"pk", "vec"},
+			expectedRequery: true,
+		},
+		{
+			name:            "default_fallback_to_outputvector_without_vector",
+			policy:          "unknown_value",
+			outputFields:    []string{"pk", "title"},
+			expectedRequery: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Params.Save(Params.CommonCfg.SearchRequeryPolicy.Key, tt.policy)
+			defer Params.Save(Params.CommonCfg.SearchRequeryPolicy.Key, "OutputVector")
+
+			task := buildTask(tt.outputFields)
+			err := task.initSearchRequest(ctx)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedRequery, task.needRequery, tt.name)
+		})
+	}
+
+	t.Run("case_insensitive_policy", func(t *testing.T) {
+		Params.Save(Params.CommonCfg.SearchRequeryPolicy.Key, "Always")
+		defer Params.Save(Params.CommonCfg.SearchRequeryPolicy.Key, "OutputVector")
+
+		task := buildTask([]string{"pk"})
+		err := task.initSearchRequest(ctx)
+		assert.NoError(t, err)
+		assert.True(t, task.needRequery, "policy should be case-insensitive")
+	})
+
+	t.Run("outputvector_policy_only_scalar_no_requery", func(t *testing.T) {
+		Params.Save(Params.CommonCfg.SearchRequeryPolicy.Key, "OutputVector")
+		defer Params.Save(Params.CommonCfg.SearchRequeryPolicy.Key, "OutputVector")
+
+		task := buildTask([]string{"pk"}) // only pk, no vector, no extra output
+		err := task.initSearchRequest(ctx)
+		assert.NoError(t, err)
+		assert.False(t, task.needRequery, "only pk output should not trigger requery under outputvector policy")
 	})
 }

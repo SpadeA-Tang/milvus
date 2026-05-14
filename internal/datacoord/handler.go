@@ -260,8 +260,7 @@ func retrieveSegment(validSegmentInfos map[int64]*SegmentInfo,
 		}, ids...)
 	}
 
-	var compactionFromExistWithCache func(segID UniqueID) bool
-	compactionFromExistWithCache = func(segID UniqueID) bool {
+	compactionFromExistWithCache := func(segID UniqueID) bool {
 		var compactionFromExist func(segID UniqueID) bool
 		compactionFromExistMap := make(map[UniqueID]bool)
 
@@ -485,6 +484,7 @@ func (h *ServerHandler) GetChannelSeekPosition(channel RWChannel, partitionIDs .
 	return nil
 }
 
+// Deprecated: use toMsgPositionWithWALNames
 func toMsgPosition(channel string, startPositions []*commonpb.KeyDataPair) *msgpb.MsgPosition {
 	for _, sp := range startPositions {
 		if sp.GetKey() != funcutil.ToPhysicalChannel(channel) {
@@ -493,6 +493,21 @@ func toMsgPosition(channel string, startPositions []*commonpb.KeyDataPair) *msgp
 		return &msgpb.MsgPosition{
 			ChannelName: channel,
 			MsgID:       sp.GetData(),
+		}
+	}
+	return nil
+}
+
+func toMsgPositionWithWALNames(channel string, startPositions []*commonpb.KeyDataPair, channelWALNames map[string]commonpb.WALName) *msgpb.MsgPosition {
+	for _, sp := range startPositions {
+		pChannel := funcutil.ToPhysicalChannel(channel)
+		if sp.GetKey() != pChannel {
+			continue
+		}
+		return &msgpb.MsgPosition{
+			ChannelName: channel,
+			MsgID:       sp.GetData(),
+			WALName:     channelWALNames[pChannel],
 		}
 	}
 	return nil

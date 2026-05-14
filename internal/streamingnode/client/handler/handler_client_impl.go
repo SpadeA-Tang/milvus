@@ -21,6 +21,7 @@ import (
 	"github.com/milvus-io/milvus/internal/util/streamingutil/status"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/proto/streamingpb"
+	"github.com/milvus-io/milvus/pkg/v2/streaming/util/options"
 	"github.com/milvus-io/milvus/pkg/v2/streaming/util/types"
 	"github.com/milvus-io/milvus/pkg/v2/util/funcutil"
 	"github.com/milvus-io/milvus/pkg/v2/util/typeutil"
@@ -104,6 +105,51 @@ func (hc *handlerClientImpl) GetReplicateCheckpoint(ctx context.Context, pchanne
 	return cp.(*wal.ReplicateCheckpoint), nil
 }
 
+// GetSalvageCheckpoint gets all salvage checkpoints of the wal.
+func (hc *handlerClientImpl) GetSalvageCheckpoint(ctx context.Context, pchannel string) ([]*wal.ReplicateCheckpoint, error) {
+	if !hc.lifetime.Add(typeutil.LifetimeStateWorking) {
+		return nil, ErrClientClosed
+	}
+	defer hc.lifetime.Done()
+
+	logger := log.With(zap.String("pchannel", pchannel), zap.String("handler", "salvage checkpoint"))
+	cps, err := hc.createHandlerAfterStreamingNodeReady(ctx, logger, pchannel, func(ctx context.Context, assign *types.PChannelInfoAssigned) (any, error) {
+		if assign.Channel.AccessMode != types.AccessModeRW {
+			return nil, errors.New("salvage checkpoint can only be read for RW channel")
+		}
+		localWAL, err := registry.GetLocalAvailableWAL(assign.Channel)
+		if err == nil {
+			// Local WAL - get salvage checkpoints directly
+			return localWAL.GetSalvageCheckpoint(), nil
+		}
+		if !shouldUseRemoteWAL(err) {
+			return nil, err
+		}
+		handlerService, err := hc.service.GetService(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := handlerService.GetSalvageCheckpoint(ctx, &streamingpb.GetSalvageCheckpointRequest{
+			Pchannel: types.NewProtoFromPChannelInfo(assign.Channel),
+		})
+		if err != nil {
+			return nil, err
+		}
+		result := make([]*wal.ReplicateCheckpoint, 0, len(resp.GetCheckpoints()))
+		for _, cp := range resp.GetCheckpoints() {
+			result = append(result, utility.NewReplicateCheckpointFromProto(cp))
+		}
+		return result, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if cps == nil {
+		return nil, nil
+	}
+	return cps.([]*wal.ReplicateCheckpoint), nil
+}
+
 // GetWALMetricsIfLocal gets the metrics of the local wal.
 func (hc *handlerClientImpl) GetWALMetricsIfLocal(ctx context.Context) (*types.StreamingNodeMetrics, error) {
 	if !hc.lifetime.Add(typeutil.LifetimeStateWorking) {
@@ -161,17 +207,25 @@ func (hc *handlerClientImpl) CreateConsumer(ctx context.Context, opts *ConsumerO
 	defer hc.lifetime.Done()
 
 	logger := log.With(zap.String("pchannel", opts.PChannel), zap.String("vchannel", opts.VChannel), zap.String("handler", "consumer"))
+	// Use a local variable to track DeliverPolicy, so modifications in the closure don't affect the original opts
+	deliverPolicy := opts.DeliverPolicy
 	c, err := hc.createHandlerAfterStreamingNodeReady(ctx, logger, opts.PChannel, func(ctx context.Context, assign *types.PChannelInfoAssigned) (any, error) {
 		// Check if the localWAL is assigned at local
 		localWAL, err := registry.GetLocalAvailableWAL(assign.Channel)
 		if err == nil {
 			localScanner, err := localWAL.Read(ctx, wal.ReadOption{
 				VChannel:               opts.VChannel,
-				DeliverPolicy:          opts.DeliverPolicy,
+				DeliverPolicy:          deliverPolicy,
 				MessageFilter:          opts.DeliverFilters,
 				MesasgeHandler:         opts.MessageHandler,
 				IgnorePauseConsumption: opts.IgnorePauseConsumption,
 			})
+			// If the error is WALNameMismatch, change deliver policy to DeliverPolicyAll for next retry
+			if err != nil && status.AsStreamingError(err).IsWALNameMismatch() {
+				deliverPolicy = options.DeliverPolicyAll()
+				logger.Info("change deliver policy to DeliverPolicyAll because of WALNameMismatch", zap.Error(err))
+				return nil, err
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -189,11 +243,19 @@ func (hc *handlerClientImpl) CreateConsumer(ctx context.Context, opts *ConsumerO
 		remoteScanner, err := hc.newConsumer(ctx, &consumer.ConsumerOptions{
 			Assignment:             assign,
 			VChannel:               opts.VChannel,
-			DeliverPolicy:          opts.DeliverPolicy,
+			DeliverPolicy:          deliverPolicy,
 			DeliverFilters:         opts.DeliverFilters,
 			MessageHandler:         opts.MessageHandler,
 			IgnorePauseConsumption: opts.IgnorePauseConsumption,
 		}, handlerService)
+
+		// If the error is WALNameMismatch, change deliver policy to DeliverPolicyAll for next retry
+		if err != nil && status.AsStreamingError(err).IsWALNameMismatch() {
+			deliverPolicy = options.DeliverPolicyAll()
+			logger.Info("change deliver policy to DeliverPolicyAll because of WALNameMismatch", zap.Error(err))
+			return nil, err
+		}
+
 		if err != nil {
 			return nil, err
 		}

@@ -188,6 +188,38 @@ func (m *TxnManager) GetSessionOfTxn(id message.TxnID) (*TxnSession, error) {
 	return session, nil
 }
 
+// RollbackAllInFlightTransactions rolls back all active transaction sessions.
+// Called ONLY in the failover scenario.
+func (m *TxnManager) RollbackAllInFlightTransactions() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.sessions) == 0 {
+		m.Logger().Info("No in-flight transactions to rollback")
+		return
+	}
+
+	m.Logger().Info("Rolling back all in-flight transactions", zap.Int("sessionCount", len(m.sessions)))
+
+	ids := make([]int64, 0, len(m.sessions))
+	for txnID, session := range m.sessions {
+		ids = append(ids, int64(txnID))
+		session.Cleanup()
+		delete(m.sessions, txnID)
+		delete(m.recoveredSessions, txnID)
+	}
+
+	m.Logger().Info("Rolled back in-flight transactions",
+		zap.Int64s("txnIDs", ids))
+
+	// Signal GracefulClose if it's already waiting and all sessions are now cleared.
+	if len(m.sessions) == 0 && m.closed != nil {
+		m.closed.Close()
+	}
+
+	m.notifyRecoverDone()
+}
+
 // GracefulClose waits for all transactions to be cleaned up.
 func (m *TxnManager) GracefulClose(ctx context.Context) error {
 	defer m.metrics.Close()

@@ -6,12 +6,13 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/rgpb"
 	"github.com/milvus-io/milvus/internal/querycoordv2/session"
+	"github.com/milvus-io/milvus/pkg/v2/common"
 	"github.com/milvus-io/milvus/pkg/v2/proto/querypb"
 	"github.com/milvus-io/milvus/pkg/v2/util/typeutil"
 )
 
-var (
-	DefaultResourceGroupName           = "__default_resource_group"
+const (
+	DefaultResourceGroupName           = common.DefaultResourceGroupName
 	defaultResourceGroupCapacity int32 = 1000000
 )
 
@@ -95,6 +96,11 @@ func (rg *ResourceGroup) GetConfig() *rgpb.ResourceGroupConfig {
 // GetConfigCloned return a cloned resource group config.
 func (rg *ResourceGroup) GetConfigCloned() *rgpb.ResourceGroupConfig {
 	return proto.Clone(rg.cfg).(*rgpb.ResourceGroupConfig)
+}
+
+// GetAllNodes return all physical nodes of resource group, bypassing node label filter.
+func (rg *ResourceGroup) GetAllNodes() []int64 {
+	return rg.nodes.Collect()
 }
 
 // GetNodes return nodes of resource group which match required node labels

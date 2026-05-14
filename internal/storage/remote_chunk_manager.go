@@ -24,8 +24,8 @@ import (
 	"strings"
 	"syscall"
 
+	cstorage "cloud.google.com/go/storage"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/cockroachdb/errors"
 	"github.com/minio/minio-go/v7"
 	"go.uber.org/zap"
@@ -74,11 +74,12 @@ var _ ChunkManager = (*RemoteChunkManager)(nil)
 func NewRemoteChunkManager(ctx context.Context, c *objectstorage.Config) (*RemoteChunkManager, error) {
 	var client ObjectStorage
 	var err error
-	if c.CloudProvider == objectstorage.CloudProviderAzure {
+	switch c.CloudProvider {
+	case objectstorage.CloudProviderAzure:
 		client, err = newAzureObjectStorageWithConfig(ctx, c)
-	} else if c.CloudProvider == objectstorage.CloudProviderGCPNative {
+	case objectstorage.CloudProviderGCPNative:
 		client, err = newGcpNativeObjectStorageWithConfig(ctx, c)
-	} else {
+	default:
 		client, err = newMinioObjectStorageWithConfig(ctx, c)
 	}
 	if err != nil {
@@ -146,7 +147,7 @@ func (mcm *RemoteChunkManager) Size(ctx context.Context, filePath string) (int64
 			return false, nil
 		}
 		log.Warn("failed to get object size", zap.String("bucket", mcm.bucketName), zap.String("path", filePath), zap.Error(err))
-		err = checkObjectStorageError(filePath, err)
+		err = mapObjectStorageError(filePath, err)
 		if merr.IsRetryableErr(err) {
 			return true, err
 		}
@@ -207,7 +208,7 @@ func (mcm *RemoteChunkManager) Read(ctx context.Context, filePath string) ([]byt
 		// Prefetch object data
 		var empty []byte
 		_, err = object.Read(empty)
-		err = checkObjectStorageError(filePath, err)
+		err = mapObjectStorageError(filePath, err)
 		if err != nil {
 			log.Warn("failed to read object", zap.String("path", filePath), zap.Error(err))
 			return err
@@ -218,7 +219,7 @@ func (mcm *RemoteChunkManager) Read(ctx context.Context, filePath string) ([]byt
 			return err
 		}
 		data, err = read(object, size)
-		err = checkObjectStorageError(filePath, err)
+		err = mapObjectStorageError(filePath, err)
 		if err != nil {
 			log.Warn("failed to read object", zap.String("bucket", mcm.bucketName), zap.String("path", filePath), zap.Error(err))
 			return err
@@ -265,7 +266,7 @@ func (mcm *RemoteChunkManager) ReadAt(ctx context.Context, filePath string, off 
 	defer object.Close()
 
 	data, err := read(object, length)
-	err = checkObjectStorageError(filePath, err)
+	err = mapObjectStorageError(filePath, err)
 	if err != nil {
 		log.Warn("failed to read object", zap.String("bucket", mcm.bucketName), zap.String("path", filePath), zap.Error(err))
 		return nil, err
@@ -414,42 +415,122 @@ func (mcm *RemoteChunkManager) removeObject(ctx context.Context, bucketName, obj
 }
 
 func ToMilvusIoError(fileName string, err error) error {
-	return checkObjectStorageError(fileName, err)
+	return mapObjectStorageError(fileName, err)
 }
 
-func checkObjectStorageError(fileName string, err error) error {
+// Error code constants for cloud provider error mapping.
+const (
+	// Azure Blob Storage error codes
+	azureBlobNotFound      = "BlobNotFound"
+	azureServerBusy        = "ServerBusy"
+	azureAuthFailed        = "AuthenticationFailed"
+	azureAuthFailure       = "AuthorizationFailure"
+	azureContainerNotFound = "ContainerNotFound"
+	azureInvalidParam      = "InvalidParameterValue"
+	azureInvalidRange      = "InvalidRange"
+	azureRequestBodyTooLg  = "RequestBodyTooLarge"
+
+	// S3-compatible error codes (AWS S3, MinIO, Aliyun OSS, Tencent COS, etc.)
+	minioNoSuchKey      = "NoSuchKey"
+	minioSlowDown       = "SlowDown"
+	minioTooMany        = "TooManyRequestsException"
+	minioAccessDenied   = "AccessDenied"
+	minioInvalidKeyId   = "InvalidAccessKeyId"
+	minioSigMismatch    = "SignatureDoesNotMatch"
+	minioNoSuchBucket   = "NoSuchBucket"
+	minioInvalidToken   = "InvalidToken"
+	minioExpiredToken   = "ExpiredToken"
+	minioInvalidArg     = "InvalidArgument"
+	minioInvalidRequest = "InvalidRequest"
+	minioInvalidRange   = "InvalidRange"
+	minioEntityTooLarge = "EntityTooLarge"
+	minioMaxMessage     = "MaxMessageLengthExceeded"
+	// Aliyun OSS specific error codes (S3-compatible, via MinIO client)
+	ossSecurityTokenExpired = "SecurityTokenExpired"
+	ossInvalidAccessKeyId   = "InvalidAccessKeyId.Inactive"
+)
+
+func mapObjectStorageError(fileName string, err error) error {
 	if err == nil {
 		return nil
 	}
 
+	// If error is already a Milvus error, return it as-is to avoid double-wrapping
+	if merr.IsMilvusError(err) {
+		return err
+	}
+
 	switch err := err.(type) {
 	case *azcore.ResponseError:
-		if err.ErrorCode == string(bloberror.BlobNotFound) {
+		switch err.ErrorCode {
+		case azureBlobNotFound:
 			return merr.WrapErrIoKeyNotFound(fileName, err.Error())
-		}
-		if err.ErrorCode == string(bloberror.ServerBusy) {
+		case azureServerBusy:
 			return merr.WrapErrIoTooManyRequests(fileName, err)
+		case azureAuthFailed, azureAuthFailure:
+			return merr.WrapErrIoPermissionDenied(fileName, err)
+		case azureContainerNotFound:
+			return merr.WrapErrIoBucketNotFound(fileName, err)
+		case azureInvalidParam:
+			return merr.WrapErrIoInvalidArgument(fileName, err)
+		case azureInvalidRange:
+			return merr.WrapErrIoInvalidRange(fileName, err)
+		case azureRequestBodyTooLg:
+			return merr.WrapErrIoEntityTooLarge(fileName, err)
+		default:
+			return merr.WrapErrIoFailed(fileName, err)
 		}
-		return merr.WrapErrIoFailed(fileName, err)
 	case minio.ErrorResponse:
-		if err.Code == "NoSuchKey" {
+		switch err.Code {
+		case minioNoSuchKey:
 			return merr.WrapErrIoKeyNotFound(fileName, err.Error())
-		}
-		if err.Code == "SlowDown" || err.Code == "TooManyRequestsException" {
+		case minioSlowDown, minioTooMany:
 			return merr.WrapErrIoTooManyRequests(fileName, err)
+		case minioAccessDenied, minioInvalidKeyId, minioSigMismatch, ossInvalidAccessKeyId:
+			return merr.WrapErrIoPermissionDenied(fileName, err)
+		case minioNoSuchBucket:
+			return merr.WrapErrIoBucketNotFound(fileName, err)
+		case minioInvalidToken, minioExpiredToken, ossSecurityTokenExpired:
+			return merr.WrapErrIoInvalidCredentials(fileName, err)
+		case minioInvalidArg, minioInvalidRequest:
+			return merr.WrapErrIoInvalidArgument(fileName, err)
+		case minioInvalidRange:
+			return merr.WrapErrIoInvalidRange(fileName, err)
+		case minioEntityTooLarge, minioMaxMessage:
+			return merr.WrapErrIoEntityTooLarge(fileName, err)
+		default:
+			return merr.WrapErrIoFailed(fileName, err)
 		}
-		return merr.WrapErrIoFailed(fileName, err)
 	case *googleapi.Error:
-		if err.Code == http.StatusNotFound {
+		switch err.Code {
+		case http.StatusNotFound:
 			return merr.WrapErrIoKeyNotFound(fileName, err.Error())
-		}
-		if err.Code == http.StatusTooManyRequests {
+		case http.StatusTooManyRequests:
 			return merr.WrapErrIoTooManyRequests(fileName, err)
+		case http.StatusForbidden:
+			return merr.WrapErrIoPermissionDenied(fileName, err)
+		case http.StatusUnauthorized:
+			return merr.WrapErrIoInvalidCredentials(fileName, err)
+		case http.StatusBadRequest:
+			return merr.WrapErrIoInvalidArgument(fileName, err)
+		case http.StatusRequestedRangeNotSatisfiable:
+			return merr.WrapErrIoInvalidRange(fileName, err)
+		case http.StatusRequestEntityTooLarge:
+			return merr.WrapErrIoEntityTooLarge(fileName, err)
+		default:
+			return merr.WrapErrIoFailed(fileName, err)
 		}
-		return merr.WrapErrIoFailed(fileName, err)
 	}
-	// syscall.ECONNRESET is typically triggered by rate limiting, with errors such as: `read tcp xxxxx:xx->xxxxxx:xxxxx: read: connection reset by peer`
-	// so we need to wrap it as ErrIoTooManyRequests and trigger retry.
+
+	// GCP cloud.google.com/go/storage sentinel errors (not *googleapi.Error)
+	if errors.Is(err, cstorage.ErrObjectNotExist) {
+		return merr.WrapErrIoKeyNotFound(fileName, err.Error())
+	}
+	if errors.Is(err, cstorage.ErrBucketNotExist) {
+		return merr.WrapErrIoBucketNotFound(fileName, err)
+	}
+
+	// syscall.ECONNRESET is typically triggered by rate limiting
 	if errors.Is(err, syscall.ECONNRESET) {
 		return merr.WrapErrIoTooManyRequests(fileName, err)
 	}

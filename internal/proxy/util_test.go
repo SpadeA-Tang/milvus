@@ -2124,12 +2124,12 @@ func Test_TopKLimit(t *testing.T) {
 	assert.Error(t, validateLimit(0, false))
 }
 
-func Test_BigTopKLimit(t *testing.T) {
+func Test_LargeTopKLimit(t *testing.T) {
 	paramtable.Init()
 	Params.Save(Params.QuotaConfig.TopKLimit.Key, "100")
-	Params.Save(Params.QuotaConfig.BigTopKLimit.Key, "200")
+	Params.Save(Params.QuotaConfig.LargeTopKLimit.Key, "200")
 	defer Params.Reset(Params.QuotaConfig.TopKLimit.Key)
-	defer Params.Reset(Params.QuotaConfig.BigTopKLimit.Key)
+	defer Params.Reset(Params.QuotaConfig.LargeTopKLimit.Key)
 
 	assert.Nil(t, validateLimit(100, false))
 	assert.Error(t, validateLimit(101, false))
@@ -2148,8 +2148,8 @@ func Test_MaxQueryResultWindow(t *testing.T) {
 	assert.Error(t, validateMaxQueryResultWindow(0, 0, false))
 	assert.Error(t, validateMaxQueryResultWindow(1, 0, false))
 
-	Params.Save(Params.QuotaConfig.BigMaxQueryResultWindow.Key, "1000000")
-	defer Params.Reset(Params.QuotaConfig.BigMaxQueryResultWindow.Key)
+	Params.Save(Params.QuotaConfig.LargeMaxQueryResultWindow.Key, "1000000")
+	defer Params.Reset(Params.QuotaConfig.LargeMaxQueryResultWindow.Key)
 	assert.Nil(t, validateMaxQueryResultWindow(0, 16385, true))
 	assert.Nil(t, validateMaxQueryResultWindow(0, 1000000, true))
 	assert.Error(t, validateMaxQueryResultWindow(0, 1000001, true))
@@ -2189,8 +2189,8 @@ func Test_CheckDynamicFieldData(t *testing.T) {
 		jsonBytes, err := json.MarshalIndent(data, "", "  ")
 		assert.NoError(t, err)
 		jsonData = append(jsonData, jsonBytes)
-		jsonFieldData := autoGenDynamicFieldData(jsonData)
 		schema := newTestSchema()
+		jsonFieldData := autoGenDynamicFieldData(schema, jsonData)
 		insertMsg := &msgstream.InsertMsg{
 			InsertRequest: &msgpb.InsertRequest{
 				CollectionName: "collectionName",
@@ -2218,8 +2218,8 @@ func Test_CheckDynamicFieldData(t *testing.T) {
 		jsonBytes, err := json.MarshalIndent(data, "", "  ")
 		assert.NoError(t, err)
 		jsonData = append(jsonData, jsonBytes)
-		jsonFieldData := autoGenDynamicFieldData(jsonData)
 		schema := newTestSchema()
+		jsonFieldData := autoGenDynamicFieldData(schema, jsonData)
 		insertMsg := &msgstream.InsertMsg{
 			InsertRequest: &msgpb.InsertRequest{
 				CollectionName: "collectionName",
@@ -2247,8 +2247,8 @@ func Test_CheckDynamicFieldData(t *testing.T) {
 		jsonBytes, err := json.MarshalIndent(data, "", "  ")
 		assert.NoError(t, err)
 		jsonData = append(jsonData, jsonBytes)
-		jsonFieldData := autoGenDynamicFieldData(jsonData)
 		schema := newTestSchema()
+		jsonFieldData := autoGenDynamicFieldData(schema, jsonData)
 		insertMsg := &msgstream.InsertMsg{
 			InsertRequest: &msgpb.InsertRequest{
 				CollectionName: "collectionName",
@@ -2275,8 +2275,8 @@ func Test_CheckDynamicFieldData(t *testing.T) {
 		jsonBytes, err := json.MarshalIndent(data, "", "  ")
 		assert.NoError(t, err)
 		jsonData = append(jsonData, jsonBytes)
-		jsonFieldData := autoGenDynamicFieldData(jsonData)
 		schema := newTestSchema()
+		jsonFieldData := autoGenDynamicFieldData(schema, jsonData)
 		insertMsg := &msgstream.InsertMsg{
 			InsertRequest: &msgpb.InsertRequest{
 				CollectionName: "collectionName",
@@ -2291,8 +2291,8 @@ func Test_CheckDynamicFieldData(t *testing.T) {
 	})
 	t.Run("json data is string", func(t *testing.T) {
 		data := "abcdefg"
-		jsonFieldData := autoGenDynamicFieldData([][]byte{[]byte(data)})
 		schema := newTestSchema()
+		jsonFieldData := autoGenDynamicFieldData(schema, [][]byte{[]byte(data)})
 		insertMsg := &msgstream.InsertMsg{
 			InsertRequest: &msgpb.InsertRequest{
 				CollectionName: "collectionName",
@@ -3966,7 +3966,7 @@ func TestValidateFieldsInStruct(t *testing.T) {
 		}
 		err := ValidateFieldsInStruct(field, schema)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Fields in StructArrayField can only be array or array of struct")
+		assert.Contains(t, err.Error(), "fields in StructArrayField can only be array or array of struct")
 	})
 
 	t.Run("JSON not supported in struct", func(t *testing.T) {
@@ -3997,7 +3997,7 @@ func TestValidateFieldsInStruct(t *testing.T) {
 			}
 			err := ValidateFieldsInStruct(field, schema)
 			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "Nested array is not supported")
+			assert.Contains(t, err.Error(), "nested array is not supported")
 		}
 	})
 
@@ -4020,7 +4020,7 @@ func TestValidateFieldsInStruct(t *testing.T) {
 		}
 		err := ValidateFieldsInStruct(field, schema)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Unsupported element type of array field array_vector_with_scalar, now only float vector is supported")
+		assert.Contains(t, err.Error(), "unsupported element type of array field array_vector_with_scalar, now only float vector is supported")
 	})
 
 	t.Run("array of vector missing dimension", func(t *testing.T) {

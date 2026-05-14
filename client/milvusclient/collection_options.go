@@ -122,6 +122,15 @@ func (opt *createCollectionOption) WithNumPartitions(numPartitions int64) *creat
 	return opt
 }
 
+// Validate runs client-side sanity checks against the user-provided schema. Invoked automatically
+// from Client.CreateCollection via interface assertion.
+func (opt *createCollectionOption) Validate() error {
+	if opt.schema == nil {
+		return nil
+	}
+	return opt.schema.Validate()
+}
+
 func (opt *createCollectionOption) Request() *milvuspb.CreateCollectionRequest {
 	// fast create collection
 	if opt.isFast {
@@ -383,6 +392,25 @@ func NewAlterCollectionFieldPropertiesOption(collectionName string, fieldName st
 		fieldName:      fieldName,
 		properties:     make(map[string]string),
 	}
+}
+
+// TruncateCollectionOption is the interface builds TruncateCollectionRequest.
+type TruncateCollectionOption interface {
+	Request() *milvuspb.TruncateCollectionRequest
+}
+
+type truncateCollectionOption struct {
+	name string
+}
+
+func (opt *truncateCollectionOption) Request() *milvuspb.TruncateCollectionRequest {
+	return &milvuspb.TruncateCollectionRequest{
+		CollectionName: opt.name,
+	}
+}
+
+func NewTruncateCollectionOption(name string) *truncateCollectionOption {
+	return &truncateCollectionOption{name: name}
 }
 
 type GetCollectionOption interface {

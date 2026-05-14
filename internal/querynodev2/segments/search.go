@@ -29,7 +29,6 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/segments/metricsutil"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/metrics"
-	"github.com/milvus-io/milvus/pkg/v2/proto/planpb"
 	"github.com/milvus-io/milvus/pkg/v2/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/v2/util/timerecord"
 )
@@ -52,11 +51,11 @@ func searchSegments(ctx context.Context, mgr *Manager, segments []Segment, segTy
 		}
 		resultCh <- searchResult
 		// update metrics
-		elapsed := tr.ElapseSpan().Milliseconds()
+		elapsed := float64(tr.ElapseSpan().Microseconds()) / 1000.0
 		metrics.QueryNodeSQSegmentLatency.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
-			metrics.SearchLabel, searchLabel).Observe(float64(elapsed))
+			metrics.SearchLabel, searchLabel).Observe(elapsed)
 		metrics.QueryNodeSegmentSearchLatencyPerVector.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
-			metrics.SearchLabel, searchLabel).Observe(float64(elapsed) / float64(searchReq.GetNumOfQuery()))
+			metrics.SearchLabel, searchLabel).Observe(elapsed / float64(searchReq.GetNumOfQuery()))
 		return nil
 	}
 
@@ -132,7 +131,7 @@ func searchSegmentsStreamly(ctx context.Context,
 		// record search time
 		tr := timerecord.NewTimeRecorder("searchOnSegments")
 		searchResult, searchErr := seg.Search(ctx, searchReq)
-		searchDuration := tr.RecordSpan().Milliseconds()
+		searchDuration := float64(tr.RecordSpan().Microseconds()) / 1000.0
 		if searchErr != nil {
 			return searchErr
 		}
@@ -147,9 +146,9 @@ func searchSegmentsStreamly(ctx context.Context,
 		sumReduceDuration.Add(reduceDuration)
 		// update metrics
 		metrics.QueryNodeSQSegmentLatency.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
-			metrics.SearchLabel, searchLabel).Observe(float64(searchDuration))
+			metrics.SearchLabel, searchLabel).Observe(searchDuration)
 		metrics.QueryNodeSegmentSearchLatencyPerVector.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
-			metrics.SearchLabel, searchLabel).Observe(float64(searchDuration) / float64(searchReq.GetNumOfQuery()))
+			metrics.SearchLabel, searchLabel).Observe(searchDuration / float64(searchReq.GetNumOfQuery()))
 		return nil
 	}
 
@@ -195,7 +194,7 @@ func searchSegmentsStreamly(ctx context.Context,
 	metrics.QueryNodeReduceLatency.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
 		metrics.SearchLabel,
 		metrics.ReduceSegments,
-		metrics.StreamReduce).Observe(float64(sumReduceDuration.Load().Milliseconds()))
+		metrics.StreamReduce).Observe(float64(sumReduceDuration.Load().Microseconds()) / 1000.0)
 	log.Debug("stream reduce sum duration:", zap.Duration("duration", sumReduceDuration.Load()))
 	return nil
 }
@@ -204,12 +203,12 @@ func searchSegmentsStreamly(ctx context.Context,
 // if segIDs is not specified, it will search on all the historical segments speficied by partIDs.
 // if segIDs is specified, it will only search on the segments specified by the segIDs.
 // if partIDs is empty, it means all the partitions of the loaded collection or all the partitions loaded.
-func SearchHistorical(ctx context.Context, manager *Manager, searchReq *SearchRequest, collID int64, partIDs []int64, segIDs []int64, plan *planpb.PlanNode) ([]*SearchResult, []Segment, error) {
+func SearchHistorical(ctx context.Context, manager *Manager, searchReq *SearchRequest, collID int64, partIDs []int64, segIDs []int64) ([]*SearchResult, []Segment, error) {
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
 	}
 
-	segments, err := validateOnHistorical(ctx, manager, collID, partIDs, segIDs, plan)
+	segments, err := validateOnHistorical(ctx, manager, collID, partIDs, segIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -219,12 +218,12 @@ func SearchHistorical(ctx context.Context, manager *Manager, searchReq *SearchRe
 
 // searchStreaming will search all the target segments in streaming
 // if partIDs is empty, it means all the partitions of the loaded collection or all the partitions loaded.
-func SearchStreaming(ctx context.Context, manager *Manager, searchReq *SearchRequest, collID int64, partIDs []int64, segIDs []int64, plan *planpb.PlanNode) ([]*SearchResult, []Segment, error) {
+func SearchStreaming(ctx context.Context, manager *Manager, searchReq *SearchRequest, collID int64, partIDs []int64, segIDs []int64) ([]*SearchResult, []Segment, error) {
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
 	}
 
-	segments, err := validateOnStream(ctx, manager, collID, partIDs, segIDs, plan)
+	segments, err := validateOnStream(ctx, manager, collID, partIDs, segIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -233,13 +232,13 @@ func SearchStreaming(ctx context.Context, manager *Manager, searchReq *SearchReq
 }
 
 func SearchHistoricalStreamly(ctx context.Context, manager *Manager, searchReq *SearchRequest,
-	collID int64, partIDs []int64, segIDs []int64, plan *planpb.PlanNode, streamReduce func(result *SearchResult) error,
+	collID int64, partIDs []int64, segIDs []int64, streamReduce func(result *SearchResult) error,
 ) ([]Segment, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	segments, err := validateOnHistorical(ctx, manager, collID, partIDs, segIDs, plan)
+	segments, err := validateOnHistorical(ctx, manager, collID, partIDs, segIDs)
 	if err != nil {
 		return segments, err
 	}

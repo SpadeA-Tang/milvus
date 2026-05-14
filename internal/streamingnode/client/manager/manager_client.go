@@ -30,13 +30,14 @@ type ManagerClient interface {
 	// WatchNodeChanged returns a channel that receive the signal that a streaming node change.
 	WatchNodeChanged(ctx context.Context) (<-chan struct{}, error)
 
-	// GetAllStreamingNodes fetches all streaming node info.
+	// GetAllStreamingNodes fetches all streaming node info with resource group.
 	// The result is fetch from service discovery, so there's no rpc call.
-	GetAllStreamingNodes(ctx context.Context) (map[int64]*types.StreamingNodeInfo, error)
+	// The resource group is obtained from the session's ServerLabels.
+	GetAllStreamingNodes(ctx context.Context) (map[int64]*types.StreamingNodeInfoWithResourceGroup, error)
 
-	// CollectAllStatus collects status of all streamingnode, such as load balance attributes.
-	// The result is fetch from service discovery and make a broadcast rpc call to all streamingnode.
-	CollectAllStatus(ctx context.Context) (map[int64]*types.StreamingNodeStatus, error)
+	// CollectAllStatus collects status of selected streamingnode, such as load balance attributes.
+	// The resourceGroupHint is preferred when it has discovered nodes; otherwise another resource group is selected before RPC.
+	CollectAllStatus(ctx context.Context, resourceGroupHint string) (map[int64]*types.StreamingNodeStatus, error)
 
 	// Assign a wal instance for the channel on streaming node of given server id.
 	Assign(ctx context.Context, pchannel types.PChannelInfoAssigned) error

@@ -416,6 +416,17 @@ func (mr *MilvusRoles) Run() {
 		paramtable.SetRole(mr.ServerType)
 	}
 
+	// Persist immutable configurations at startup, such as mqType paramItem
+	if (mr.EnableRootCoord && mr.EnableDataCoord && mr.EnableQueryCoord) || mr.EnableMixCoord {
+		// Initialize the actual walName instead of default
+		util.InitAndSelectWALName()
+		// persist immutable configs if necessary
+		if err := paramtable.GetBaseTable().Manager().ProcessImmutableConfigs(); err != nil {
+			log.Error("failed to process immutable configs", zap.Error(err))
+			return
+		}
+	}
+
 	internalmetrics.InitHolmes()
 	defer internalmetrics.CloseHolmes()
 
@@ -462,7 +473,11 @@ func (mr *MilvusRoles) Run() {
 	if mr.ServerType == typeutil.StandaloneRole || !mr.EnableDataNode {
 		// only datanode does not init streaming service
 		streaming.Init()
-		defer streaming.Release()
+		defer func() {
+			if err := streaming.Release(); err != nil {
+				log.Warn("release streaming service failed", zap.Error(err))
+			}
+		}()
 	}
 
 	local := mr.Local

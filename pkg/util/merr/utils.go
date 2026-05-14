@@ -57,11 +57,44 @@ func Code(err error) int32 {
 }
 
 func IsRetryableErr(err error) bool {
-	if err, ok := err.(milvusError); ok {
-		return err.retriable
+	var milvusErr milvusError
+	if errors.As(err, &milvusErr) {
+		return milvusErr.retriable
 	}
 
 	return false
+}
+
+// IsNonRetryableErr checks if an error is non-retryable (denylist approach).
+// Returns true for permanent errors (resource not found, permission denied)
+// and client validation errors (invalid argument, invalid range).
+// All other errors are considered retryable (including nil).
+func IsNonRetryableErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Permanent errors - resource doesn't exist or access denied
+	if errors.Is(err, ErrIoKeyNotFound) ||
+		errors.Is(err, ErrIoPermissionDenied) ||
+		errors.Is(err, ErrIoBucketNotFound) ||
+		errors.Is(err, ErrIoInvalidCredentials) {
+		return true
+	}
+
+	// Client validation errors - request is malformed
+	if errors.Is(err, ErrIoInvalidArgument) ||
+		errors.Is(err, ErrIoInvalidRange) ||
+		errors.Is(err, ErrIoEntityTooLarge) {
+		return true
+	}
+
+	return false
+}
+
+func IsMilvusError(err error) bool {
+	var me milvusError
+	return errors.As(err, &me)
 }
 
 func IsCanceledOrTimeout(err error) bool {
@@ -167,7 +200,7 @@ func oldCode(code int32) commonpb.ErrorCode {
 	case ErrServiceDiskLimitExceeded.code():
 		return commonpb.ErrorCode_DiskQuotaExhausted
 
-	case ErrServiceTimeTickLongDelay.code():
+	case ErrServiceTimeTickLongDelay.code(), ErrChannelTSafeStalled.code():
 		return commonpb.ErrorCode_TimeTickLongDelay
 
 	case ErrServiceRateLimit.code():
@@ -722,6 +755,10 @@ func WrapErrChannelCPExceededMaxLag(name string, msg ...string) error {
 	return warpChannelErr(ErrChannelCPExceededMaxLag, name, msg...)
 }
 
+func WrapErrChannelTSafeStalled(name string, msg ...string) error {
+	return warpChannelErr(ErrChannelTSafeStalled, name, msg...)
+}
+
 func WrapErrChannelLack(name string, msg ...string) error {
 	return warpChannelErr(ErrChannelLack, name, msg...)
 }
@@ -949,6 +986,48 @@ func WrapErrIoTooManyRequests(key string, err error) error {
 		return nil
 	}
 	return wrapFieldsWithDesc(ErrIoTooManyRequests, err.Error(), value("key", key))
+}
+
+func WrapErrIoPermissionDenied(key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return wrapFieldsWithDesc(ErrIoPermissionDenied, err.Error(), value("key", key))
+}
+
+func WrapErrIoBucketNotFound(key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return wrapFieldsWithDesc(ErrIoBucketNotFound, err.Error(), value("key", key))
+}
+
+func WrapErrIoInvalidCredentials(key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return wrapFieldsWithDesc(ErrIoInvalidCredentials, err.Error(), value("key", key))
+}
+
+func WrapErrIoInvalidArgument(key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return wrapFieldsWithDesc(ErrIoInvalidArgument, err.Error(), value("key", key))
+}
+
+func WrapErrIoInvalidRange(key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return wrapFieldsWithDesc(ErrIoInvalidRange, err.Error(), value("key", key))
+}
+
+func WrapErrIoEntityTooLarge(key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return wrapFieldsWithDesc(ErrIoEntityTooLarge, err.Error(), value("key", key))
 }
 
 // Parameter related

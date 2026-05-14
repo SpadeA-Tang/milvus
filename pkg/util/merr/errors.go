@@ -99,6 +99,7 @@ var (
 	ErrChannelReduplicate      = newMilvusError("channel reduplicates", 502, false)
 	ErrChannelNotAvailable     = newMilvusError("channel not available", 503, false)
 	ErrChannelCPExceededMaxLag = newMilvusError("channel checkpoint exceed max lag", 504, false)
+	ErrChannelTSafeStalled     = newMilvusError("channel tsafe stalled", 505, true)
 
 	// Segment related
 	ErrSegmentNotFound    = newMilvusError("segment not found", 600, false)
@@ -136,6 +137,16 @@ var (
 	ErrIoFailed          = newMilvusError("IO failed", 1001, false)
 	ErrIoUnexpectEOF     = newMilvusError("unexpected EOF", 1002, true)
 	ErrIoTooManyRequests = newMilvusError("too many requests", 1003, true)
+
+	// Permanent errors - resource doesn't exist or access denied
+	ErrIoPermissionDenied   = newMilvusError("permission denied", 1005, false)
+	ErrIoBucketNotFound     = newMilvusError("bucket not found", 1006, false)
+	ErrIoInvalidCredentials = newMilvusError("invalid credentials", 1007, false)
+
+	// Client validation errors - request is malformed
+	ErrIoInvalidArgument = newMilvusError("invalid argument", 1010, false)
+	ErrIoInvalidRange    = newMilvusError("invalid range", 1011, false)
+	ErrIoEntityTooLarge  = newMilvusError("entity too large", 1012, false)
 
 	// Parameter related
 	ErrParameterInvalid  = newMilvusError("invalid parameter", 1100, false)

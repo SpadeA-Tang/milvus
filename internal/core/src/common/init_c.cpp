@@ -15,15 +15,20 @@
 // limitations under the License.
 
 #include <mutex>
+
+#include <arrow/io/interfaces.h>
+#include <openssl/evp.h>
 #include "common/init_c.h"
 #include "common/Common.h"
 #include "common/Tracer.h"
+#include "log/Log.h"
 #include "storage/ThreadPool.h"
 #include "log/Log.h"
 #include "exec/expression/ExprCache.h"
 
 std::once_flag traceFlag;
 std::once_flag cpuNumFlag;
+std::once_flag fipsFlag;
 
 void
 InitCpuNum(const int value) {
@@ -48,6 +53,11 @@ SetMiddlePriorityThreadCoreCoefficient(const float value) {
 void
 SetLowPriorityThreadCoreCoefficient(const float value) {
     milvus::SetLowPriorityThreadCoreCoefficient(value);
+}
+
+void
+SetThreadPoolMaxThreadsSize(const int value) {
+    milvus::SetThreadPoolMaxThreadsSize(value);
 }
 
 void
@@ -94,6 +104,30 @@ void
 SetExprResCacheCapacityBytes(int64_t bytes) {
     milvus::exec::ExprResCacheManager::Instance().SetCapacityBytes(
         static_cast<size_t>(bytes));
+}
+
+void
+SetArrowIOThreadPoolCapacity(int threads) {
+    if (threads <= 0) {
+        return;
+    }
+    auto status = arrow::io::SetIOThreadPoolCapacity(threads);
+    if (!status.ok()) {
+        LOG_WARN("failed to set arrow io thread pool capacity to {}: {}",
+                 threads,
+                 status.ToString());
+        return;
+    }
+    LOG_INFO("arrow io thread pool capacity set to {}", threads);
+}
+
+void
+LogOpenSSLFIPSStatus() {
+    std::call_once(fipsFlag, []() {
+        LOG_INFO("Milvus FIPS in OpenSSL: {}",
+                 EVP_default_properties_is_fips_enabled(NULL) ? "enabled"
+                                                              : "disabled");
+    });
 }
 
 void

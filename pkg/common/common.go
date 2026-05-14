@@ -77,6 +77,12 @@ const (
 	// AllPartitionsID indicates data applies to all partitions.
 	AllPartitionsID = int64(-1)
 
+	// PkFilter values for SearchRequest/RetrieveRequest.PkFilter field.
+	// Proxy sets this to let delegator skip plan unmarshal when no PK predicate exists.
+	PkFilterNotChecked  = int32(0) // old proxy or not checked (backward compat)
+	PkFilterHasPkFilter = int32(1) // plan contains optimizable PK predicate
+	PkFilterNoPkFilter  = int32(2) // plan has no PK predicate, skip segment filter
+
 	// InvalidFieldID indicates that the field does not exist . It will be set when the field is not found.
 	InvalidFieldID = int64(-1)
 
@@ -90,9 +96,35 @@ const (
 )
 
 const (
+	// Scalar index engine version tracks the *capability* of a Milvus node
+	// (which index types / features it supports). It is reported by QueryNodes
+	// in their session and aggregated by datacoord so that newly built indexes
+	// are clamped to a version every node in the cluster can load — this is
+	// what makes rolling upgrades safe.
+	//
+	// Engine version is distinct from the on-disk file format version
+	// (see MILVUS_V3_FORMAT_VERSION in IndexEntryWriter.h). Multiple engine
+	// versions can share the same file format; bumping the engine version
+	// does not necessarily imply a format change.
+	//
+	// Scalar index engine version 3:
+	// - Packed single-file index layout (file format v3) becomes the default
+	// - HYBRID/AUTOINDEX high-cardinality scalar indexes switched from
+	//   INVERTED to STL_SORT
 	MinimalScalarIndexEngineVersion = int32(0)
-	CurrentScalarIndexEngineVersion = int32(2)
+	CurrentScalarIndexEngineVersion = int32(3)
+	MaximumScalarIndexEngineVersion = int32(3)
 )
+
+// ClampScalarIndexVersion clamps the given scalar index version to MaximumScalarIndexEngineVersion.
+// Used by DataNode to ensure the version written back to metadata does not exceed
+// what the cluster can handle.
+func ClampScalarIndexVersion(v int32) int32 {
+	if v > MaximumScalarIndexEngineVersion {
+		return MaximumScalarIndexEngineVersion
+	}
+	return v
+}
 
 const DefaultTimezone = "UTC"
 
@@ -132,6 +164,8 @@ const (
 
 	// JSONStatsPath storage path const for json stats
 	JSONStatsPath = "json_stats"
+
+	DefaultResourceGroupName = "__default_resource_group"
 )
 
 const (
@@ -160,12 +194,14 @@ const (
 
 	DropRatioBuildKey = "drop_ratio_build"
 
-	IsSparseKey               = "is_sparse"
-	AutoIndexName             = "AUTOINDEX"
-	BitmapCardinalityLimitKey = "bitmap_cardinality_limit"
-	IgnoreGrowing             = "ignore_growing"
-	ConsistencyLevel          = "consistency_level"
-	HintsKey                  = "hints"
+	IsSparseKey                       = "is_sparse"
+	AutoIndexName                     = "AUTOINDEX"
+	BitmapCardinalityLimitKey         = "bitmap_cardinality_limit"
+	HybridLowCardinalityIndexTypeKey  = "hybrid_low_cardinality_index_type"
+	HybridHighCardinalityIndexTypeKey = "hybrid_high_cardinality_index_type"
+	IgnoreGrowing                     = "ignore_growing"
+	ConsistencyLevel                  = "consistency_level"
+	HintsKey                          = "hints"
 
 	JSONCastTypeKey     = "json_cast_type"
 	JSONPathKey         = "json_path"
@@ -264,8 +300,10 @@ const (
 	AllowInsertAutoIDKey    = "allow_insert_auto_id"
 	DisableFuncRuntimeCheck = "disable_func_runtime_check"
 
-	// BigTopK optimization
-	BigTopKOptimizationEnabledKey = "bigtopk_optimization.enabled"
+	// query mode
+	QueryModeKey       = "query_mode"
+	QueryModeLargeTopK = "large_topk"
+	ValidQueryModes    = QueryModeLargeTopK // comma-separated if more modes added later
 
 	// warmup related
 	WarmupKey            = "warmup"
@@ -477,17 +515,47 @@ func IsPartitionKeyIsolationKvEnabled(kvs ...*commonpb.KeyValuePair) (bool, erro
 	return false, nil
 }
 
-func IsBigTopKOptimizationEnabled(kvs ...*commonpb.KeyValuePair) (bool, error) {
+// IsQueryModeKeyExists checks if the query_mode key exists in the key-value pairs.
+func IsQueryModeKeyExists(kvs ...*commonpb.KeyValuePair) bool {
 	for _, kv := range kvs {
-		if kv.Key == BigTopKOptimizationEnabledKey {
-			val, err := strconv.ParseBool(strings.ToLower(kv.Value))
-			if err != nil {
-				return false, errors.Wrap(err, "failed to parse bigTopK Optimization")
-			}
-			return val, nil
+		if kv.Key == QueryModeKey {
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+// GetQueryMode extracts the query_mode value from properties.
+// Returns empty string if not set.
+func GetQueryMode(kvs ...*commonpb.KeyValuePair) string {
+	for _, kv := range kvs {
+		if kv.Key == QueryModeKey {
+			return kv.Value
+		}
+	}
+	return ""
+}
+
+// ValidateQueryMode validates the query_mode value. Returns nil if the value
+// is valid or if query_mode is not set.
+func ValidateQueryMode(kvs ...*commonpb.KeyValuePair) error {
+	for _, kv := range kvs {
+		if kv.Key == QueryModeKey {
+			if kv.Value != QueryModeLargeTopK {
+				return fmt.Errorf("invalid query_mode value %q, valid values: [%s]", kv.Value, ValidQueryModes)
+			}
+			return nil
+		}
+		if strings.EqualFold(kv.Key, QueryModeKey) {
+			return fmt.Errorf("invalid property key %q, did you mean %q?", kv.Key, QueryModeKey)
+		}
+	}
+	return nil
+}
+
+// IsQueryModeLargeTopK checks if query_mode is set to "large_topk".
+func IsQueryModeLargeTopK(kvs ...*commonpb.KeyValuePair) bool {
+	return GetQueryMode(kvs...) == QueryModeLargeTopK
 }
 
 func IsDisableFuncRuntimeCheck(kvs ...*commonpb.KeyValuePair) (bool, error) {

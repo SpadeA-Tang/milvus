@@ -37,6 +37,7 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/pkoracle"
 	"github.com/milvus-io/milvus/internal/querynodev2/segments"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/grpcclient"
 	"github.com/milvus-io/milvus/pkg/v2/common"
 	"github.com/milvus-io/milvus/pkg/v2/log"
 	"github.com/milvus-io/milvus/pkg/v2/metrics"
@@ -320,6 +321,10 @@ func (sd *shardDelegator) applyDelete(ctx context.Context,
 						// cancel other request
 						cancel()
 						return false, err
+					} else if grpcclient.IsServerIDMismatchErr(err) {
+						log.Warn("try to delete data on mismatched node, node has been replaced", zap.Error(err))
+						cancel()
+						return false, err
 					} else if errors.IsAny(err, merr.ErrSegmentNotFound, merr.ErrSegmentNotLoaded) {
 						log.Warn("try to delete data of released segment")
 						return false, nil
@@ -404,7 +409,8 @@ func (sd *shardDelegator) LoadGrowing(ctx context.Context, infos []*querypb.Segm
 	return nil
 }
 
-// load bm25 stats for sealed segments
+// load bm25 stats for sealed segments.
+// idf oracle owns the full lifecycle: download, disk write, register, cleanup.
 func (sd *shardDelegator) loadBM25Stats(ctx context.Context, infos []*querypb.SegmentLoadInfo, req *querypb.LoadSegmentsRequest) error {
 	if sd.idfOracle == nil {
 		return nil
@@ -412,36 +418,23 @@ func (sd *shardDelegator) loadBM25Stats(ctx context.Context, infos []*querypb.Se
 
 	pool := segments.GetBM25LoadPool()
 
-	future := pool.Submit(func() (any, error) {
-		bm25Stats, err := sd.loader.LoadBM25Stats(ctx, req.GetCollectionID(), infos...)
-		if err != nil {
-			log.Warn("failed to load bm25 stats for segment", zap.Int64("collectionID", req.GetCollectionID()), zap.Error(err))
-			return nil, err
-		}
-
-		if bm25Stats != nil {
-			bm25Stats.Range(func(segmentID int64, stats map[int64]*storage.BM25Stats) bool {
-				log.Info("register sealed segment bm25 stats into idforacle",
-					zap.Int64("segmentID", segmentID),
-				)
-				err = sd.idfOracle.RegisterSealed(segmentID, stats)
-				if err != nil {
-					log.Warn("failed to register sealed segment bm25 stats into idforacle", zap.Error(err))
-					return false
-				}
-				return true
-			})
-
-			if err != nil {
-				log.Warn("failed to register sealed segment bm25 stats into idforacle", zap.Error(err))
+	cm := sd.loader.GetChunkManager()
+	futures := make([]*conc.Future[any], 0, len(infos))
+	for _, info := range infos {
+		info := info
+		futures = append(futures, pool.Submit(func() (any, error) {
+			if err := sd.idfOracle.LoadSealed(ctx, info.GetSegmentID(), info.GetBm25Logs(), cm); err != nil {
+				log.Warn("failed to load bm25 stats for segment",
+					zap.Int64("collectionID", req.GetCollectionID()),
+					zap.Int64("segmentID", info.GetSegmentID()),
+					zap.Error(err))
 				return nil, err
 			}
-		}
+			return nil, nil
+		}))
+	}
 
-		return nil, nil
-	})
-
-	err := conc.BlockOnAll(future)
+	err := conc.BlockOnAll(futures...)
 	if err != nil {
 		log.Warn("failed to load bm25 stats", zap.Error(err))
 		return err
@@ -526,8 +519,7 @@ func (sd *shardDelegator) LoadSegments(ctx context.Context, req *querypb.LoadSeg
 	}
 	log.Debug("work loads segments done")
 
-	// load index segment need no stream delete and distribution change
-	if req.GetLoadScope() == querypb.LoadScope_Index {
+	if req.GetLoadScope() == querypb.LoadScope_Index || req.GetLoadScope() == querypb.LoadScope_Reopen {
 		return nil
 	}
 
@@ -577,14 +569,6 @@ func (sd *shardDelegator) LoadSegments(ctx context.Context, req *querypb.LoadSeg
 		entries, req.GetLoadMeta().GetSchemaVersion())
 	if err != nil {
 		log.Warn("load stream delete failed", zap.Error(err))
-		// Rollback BM25 stats registered by loadBM25Stats above,
-		// since segment will not be added to distribution.
-		if sd.idfOracle != nil {
-			segmentIDs := lo.Map(infos, func(info *querypb.SegmentLoadInfo, _ int) int64 {
-				return info.GetSegmentID()
-			})
-			sd.idfOracle.UnregisterSealed(segmentIDs...)
-		}
 		return err
 	}
 

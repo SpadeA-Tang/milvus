@@ -83,8 +83,8 @@ PhyVectorSearchNode::GetOutput() {
     auto src_data = ph.get_blob();
     auto src_offsets = ph.get_offsets();
     auto num_queries = ph.num_of_queries_;
+    int64_t data_cnt = active_count_;
     std::shared_ptr<const IArrayOffsets> array_offsets = nullptr;
-    int64_t data_cnt = 0;
     if (ph.element_level_) {
         array_offsets = segment_->GetArrayOffsets(search_info_.field_id_);
         AssertInfo(array_offsets != nullptr, "Array offsets not available");
@@ -108,27 +108,41 @@ PhyVectorSearchNode::GetOutput() {
             input_ = std::make_shared<RowVector>(col_res);
         }
     }
-    milvus::SearchResult search_result;
 
     auto col_input = GetColumnVector(input_);
-    TargetBitmapView view(col_input->GetRawData(), col_input->size());
-    if (view.all()) {
-        query_context_->set_search_result(
-            std::move(empty_search_result(num_queries, ph.element_level_)));
-        return input_;
+
+    // Prepare BitsetView for search.
+    // Fast path: all_rows_visible + non-element-level -> empty BitsetView
+    //            (IDSelectorAll in Knowhere, skips per-vector bit test).
+    // Normal path: build BitsetView from the bitmap produced upstream.
+    milvus::BitsetView search_view;
+
+    if (query_context_->get_all_rows_visible() && !ph.element_level_) {
+        // search_view stays default-constructed (empty)
+    } else {
+        TargetBitmapView view(col_input->GetRawData(), col_input->size());
+
+        if (view.all()) {
+            query_context_->set_search_result(
+                std::move(empty_search_result(num_queries, ph.element_level_)));
+            return input_;
+        }
+
+        // TODO: uniform knowhere BitsetView and milvus BitsetView
+        search_view = milvus::BitsetView((uint8_t*)col_input->GetRawData(),
+                                         col_input->size());
+        data_cnt = search_view.size();
     }
 
-    // TODO: uniform knowhere BitsetView and milvus BitsetView
-    milvus::BitsetView final_view((uint8_t*)col_input->GetRawData(),
-                                  col_input->size());
-    data_cnt = final_view.size();
+    // Single search + metrics path
+    milvus::SearchResult search_result;
     auto op_context = query_context_->get_op_context();
     segment_->vector_search(search_info_,
                             src_data,
                             src_offsets,
                             num_queries,
                             query_timestamp_,
-                            final_view,
+                            search_view,
                             op_context,
                             search_result);
 
@@ -137,8 +151,8 @@ PhyVectorSearchNode::GetOutput() {
 
     span.GetSpan()->SetAttribute(
         "result_count", static_cast<int>(search_result.seg_offsets_.size()));
-
     query_context_->set_search_result(std::move(search_result));
+
     std::chrono::high_resolution_clock::time_point vector_end =
         std::chrono::high_resolution_clock::now();
     double vector_cost =
@@ -146,8 +160,8 @@ PhyVectorSearchNode::GetOutput() {
             .count();
     milvus::monitor::internal_core_search_latency_vector.Observe(vector_cost /
                                                                  1000);
-    // for now, vector search store result in query_context
-    // this node interface just return bitset
+    // vector search stores result in query_context;
+    // this node returns the bitset for downstream operators
     return input_;
 }
 

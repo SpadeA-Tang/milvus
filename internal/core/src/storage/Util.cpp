@@ -675,9 +675,8 @@ GenIndexPathIdentifier(int64_t build_id,
                        int64_t index_version,
                        int64_t segment_id,
                        int64_t field_id) {
-    return std::to_string(build_id) + "_" + std::to_string(index_version) +
-           "_" + std::to_string(segment_id) + "_" + std::to_string(field_id) +
-           "/";
+    return fmt::format(
+        "{}_{}_{}_{}/", build_id, index_version, segment_id, field_id);
 }
 
 std::string
@@ -809,8 +808,7 @@ GenFieldRawDataPathPrefix(ChunkManagerPtr cm,
                           int64_t field_id) {
     boost::filesystem::path prefix = cm->GetRootPath();
     boost::filesystem::path path = std::string(RAWDATA_ROOT_PATH);
-    boost::filesystem::path path1 =
-        std::to_string(segment_id) + "_" + std::to_string(field_id) + "/";
+    boost::filesystem::path path1 = fmt::format("{}_{}/", segment_id, field_id);
     return NormalizePath(prefix / path / path1);
 }
 
@@ -1045,6 +1043,7 @@ InitArrowFileSystem(milvus::storage::StorageConfig storage_config) {
         conf.use_custom_part_upload = true;
         conf.max_connections = storage_config.max_connections;
         conf.tls_min_version = storage_config.tls_min_version;
+        conf.use_crc32c_checksum = storage_config.use_crc32c_checksum;
     }
     return StorageV2FSCache::Instance().Get(conf);
 }
@@ -1305,7 +1304,8 @@ GetFieldDatasFromStorageV2(std::vector<std::vector<std::string>>& remote_files,
             fs,
             column_group_file,
             milvus_storage::DEFAULT_READ_BUFFER_SIZE,
-            GetReaderProperties());
+            GetReaderProperties(),
+            GetArrowReaderProperties());
         AssertInfo(result.ok(),
                    "[StorageV2] Failed to create file row group reader: " +
                        result.status().ToString());
@@ -1534,7 +1534,8 @@ GetFieldIDList(FieldId column_group_id,
         filepath,
         arrow_schema,
         milvus_storage::DEFAULT_READ_BUFFER_SIZE,
-        GetReaderProperties());
+        GetReaderProperties(),
+        GetArrowReaderProperties());
     AssertInfo(result.ok(),
                "[StorageV2] Failed to create file row group reader: " +
                    result.status().ToString());

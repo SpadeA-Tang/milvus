@@ -283,22 +283,13 @@ func (it *indexBuildTask) prepareJobRequest(ctx context.Context, segment *Segmen
 	if it.indexEngineVersionManager.GetIndexNonEncoding() {
 		indexNonEncoding = "true"
 	}
-	indexParams = append(indexParams, &commonpb.KeyValuePair{
+	params = append(params, &commonpb.KeyValuePair{
 		Key:   common.IndexNonEncoding,
 		Value: indexNonEncoding,
 	})
 
-	currentVecIndexVersion := it.indexEngineVersionManager.GetCurrentIndexEngineVersion()
-	// if specify target vec index version, use it with high priority
-	if Params.DataCoordCfg.TargetVecIndexVersion.GetAsInt64() != -1 {
-		// if force rebuild segment index is true, use target vec index version directly
-		if Params.DataCoordCfg.ForceRebuildSegmentIndex.GetAsBool() {
-			currentVecIndexVersion = Params.DataCoordCfg.TargetVecIndexVersion.GetAsInt32()
-		} else {
-			// if force rebuild segment index is not enabled, use newer index version between current index version and target index version
-			currentVecIndexVersion = max(currentVecIndexVersion, Params.DataCoordCfg.TargetVecIndexVersion.GetAsInt32())
-		}
-	}
+	currentVecIndexVersion := it.indexEngineVersionManager.ResolveVecIndexVersion()
+	currentScalarIndexVersion := it.indexEngineVersionManager.ResolveScalarIndexVersion()
 
 	// Create the job request
 	req := &workerpb.CreateJobRequest{
@@ -311,7 +302,7 @@ func (it *indexBuildTask) prepareJobRequest(ctx context.Context, segment *Segmen
 		TypeParams:                typeParams,
 		NumRows:                   segIndex.NumRows,
 		CurrentIndexVersion:       currentVecIndexVersion,
-		CurrentScalarIndexVersion: it.indexEngineVersionManager.GetCurrentScalarIndexEngineVersion(),
+		CurrentScalarIndexVersion: currentScalarIndexVersion,
 		CollectionID:              segment.GetCollectionID(),
 		PartitionID:               segment.GetPartitionID(),
 		SegmentID:                 segment.GetID(),
@@ -369,6 +360,17 @@ func (it *indexBuildTask) prepareOptionalFields(ctx context.Context, collectionI
 
 func (it *indexBuildTask) QueryTaskOnWorker(cluster session.Cluster) {
 	log := log.Ctx(context.TODO()).With(zap.Int64("taskID", it.BuildID), zap.Int64("segmentID", it.SegmentID), zap.Int64("nodeID", it.NodeID))
+
+	// Check if task exists in meta
+	segIndex, exist := it.meta.indexMeta.GetIndexJob(it.BuildID)
+	if !exist || segIndex == nil {
+		log.Info("index task has not exist in meta table, removing task")
+		if it.tryDropTaskOnWorker(cluster) != nil {
+			return
+		}
+		it.SetState(indexpb.JobState_JobStateNone, "index task has not exist in meta table")
+		return
+	}
 
 	results, err := cluster.QueryIndex(it.NodeID, &workerpb.QueryJobsRequest{
 		ClusterID: Params.CommonCfg.ClusterPrefix.GetValue(),

@@ -334,6 +334,16 @@ class QueryContext : public Context {
         return bitset_is_element_level_;
     }
 
+    void
+    set_all_rows_visible(bool v) {
+        all_rows_visible_ = v;
+    }
+
+    bool
+    get_all_rows_visible() const {
+        return all_rows_visible_;
+    }
+
  private:
     folly::Executor* executor_;
     //folly::Executor::KeepAlive<> executor_keepalive_;
@@ -366,6 +376,11 @@ class QueryContext : public Context {
     std::shared_ptr<const IArrayOffsets> array_offsets_{nullptr};
     int64_t active_element_count_{0};
     bool bitset_is_element_level_{false};
+
+    // Set by MvccNode when no filtering is needed (sealed, no filter,
+    // no deletes, no TTL). VectorSearchNode checks this to pass empty
+    // BitsetView to Knowhere (IDSelectorAll fast path).
+    bool all_rows_visible_{false};
 };
 
 // Represent the state of one thread of query execution.

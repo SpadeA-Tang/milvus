@@ -17,6 +17,7 @@
 package paramtable
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,13 @@ func TestComponentParam(t *testing.T) {
 
 		assert.Equal(t, Params.IndexSliceSize.GetAsInt64(), int64(DefaultIndexSliceSize))
 		t.Logf("knowhere index slice size = %d", Params.IndexSliceSize.GetAsInt64())
+
+		assert.Equal(t, int64(0), Params.ArrowReaderHoleSizeLimitBytes.GetAsInt64())
+		assert.Equal(t, int64(0), Params.ArrowReaderRangeSizeLimitBytes.GetAsInt64())
+		params.Save(Params.ArrowReaderHoleSizeLimitBytes.Key, "1048576")
+		params.Save(Params.ArrowReaderRangeSizeLimitBytes.Key, "67108864")
+		assert.Equal(t, int64(1048576), Params.ArrowReaderHoleSizeLimitBytes.GetAsInt64())
+		assert.Equal(t, int64(67108864), Params.ArrowReaderRangeSizeLimitBytes.GetAsInt64())
 
 		assert.Equal(t, Params.GracefulTime.GetAsInt64(), int64(DefaultGracefulTime))
 		t.Logf("default grafeful time = %d", Params.GracefulTime.GetAsInt64())
@@ -516,7 +524,7 @@ func TestComponentParam(t *testing.T) {
 
 		assert.Equal(t, 2, Params.BloomFilterApplyParallelFactor.GetAsInt())
 		assert.Equal(t, true, Params.SkipGrowingSegmentBF.GetAsBool())
-		assert.Equal(t, true, Params.EnableSparseFilterInQuery.GetAsBool())
+		assert.Equal(t, true, Params.EnableSegmentFilter.GetAsBool())
 
 		assert.Equal(t, "/var/lib/milvus/data/mmap", Params.MmapDirPath.GetValue())
 
@@ -711,6 +719,7 @@ func TestComponentParam(t *testing.T) {
 		assert.Equal(t, 10*time.Minute, params.StreamingCfg.FlushL0MaxLifetime.GetAsDurationByParse())
 		assert.Equal(t, 500000, params.StreamingCfg.FlushL0MaxRowNum.GetAsInt())
 		assert.Equal(t, int64(32*1024*1024), params.StreamingCfg.FlushL0MaxSize.GetAsSize())
+		assert.Equal(t, 30, params.StreamingCfg.OldVersionLastConfirmedWindowSize.GetAsInt())
 		assert.Equal(t, 2*time.Second, params.StreamingCfg.DelegatorEmptyTimeTickMaxFilterInterval.GetAsDurationByParse())
 		assert.Equal(t, 1*time.Second, params.StreamingCfg.FlushEmptyTimeTickMaxFilterInterval.GetAsDurationByParse())
 		assert.Equal(t, 0, params.StreamingCfg.WALBalancerExpectedInitialStreamingNodeNum.GetAsInt())
@@ -807,10 +816,10 @@ func TestCachedParam(t *testing.T) {
 	assert.Equal(t, uint(100000), params.CommonCfg.BloomFilterSize.GetAsUint())
 	assert.Equal(t, "BlockedBloomFilter", params.CommonCfg.BloomFilterType.GetValue())
 
-	assert.Equal(t, uint64(8388608), params.ServiceParam.MQCfg.PursuitBufferSize.GetAsUint64())
-	assert.Equal(t, uint64(8388608), params.ServiceParam.MQCfg.PursuitBufferSize.GetAsUint64())
+	assert.Equal(t, uint64(8388608), params.MQCfg.PursuitBufferSize.GetAsUint64())
+	assert.Equal(t, uint64(8388608), params.MQCfg.PursuitBufferSize.GetAsUint64())
 
-	assert.Equal(t, 60, params.ServiceParam.MQCfg.PursuitBufferTime.GetAsInt())
+	assert.Equal(t, 60, params.MQCfg.PursuitBufferTime.GetAsInt())
 
 	assert.Equal(t, int64(1024), params.DataCoordCfg.SegmentMaxSize.GetAsInt64())
 	assert.Equal(t, int64(1024), params.DataCoordCfg.SegmentMaxSize.GetAsInt64())
@@ -836,4 +845,53 @@ func TestFallbackParam(t *testing.T) {
 	params.Save("common.chanNamePrefix.cluster", "foo")
 
 	assert.Equal(t, "foo", params.CommonCfg.ClusterPrefix.GetValue())
+}
+
+func TestQueryCoordForceLoadPriority(t *testing.T) {
+	Init()
+	params := Get()
+
+	t.Run("test_default_value", func(t *testing.T) {
+		// Default value should be empty string
+		assert.Equal(t, "", params.QueryCoordCfg.ForceLoadPriority.GetValue())
+	})
+
+	t.Run("test_dynamic_update", func(t *testing.T) {
+		key := params.QueryCoordCfg.ForceLoadPriority.Key
+
+		// Update to LOW
+		params.Save(key, "LOW")
+		assert.Equal(t, "LOW", params.QueryCoordCfg.ForceLoadPriority.GetValue())
+
+		// Update to HIGH
+		params.Save(key, "HIGH")
+		assert.Equal(t, "HIGH", params.QueryCoordCfg.ForceLoadPriority.GetValue())
+
+		// Reset to empty
+		params.Reset(key)
+		assert.Equal(t, "", params.QueryCoordCfg.ForceLoadPriority.GetValue())
+	})
+
+	t.Run("test_normalization_compatibility", func(t *testing.T) {
+		// This simulates how executor.go handles the value
+		key := params.QueryCoordCfg.ForceLoadPriority.Key
+
+		testCases := []struct {
+			input    string
+			expected string
+		}{
+			{"high", "HIGH"},
+			{"  low  ", "LOW"},
+			{"HiGh", "HIGH"},
+			{"", ""},
+		}
+
+		for _, tc := range testCases {
+			params.Save(key, tc.input)
+			rawVal := params.QueryCoordCfg.ForceLoadPriority.GetValue()
+			// Use the same logic as in executor.go
+			standardized := strings.ToUpper(strings.TrimSpace(rawVal))
+			assert.Equal(t, tc.expected, standardized)
+		}
+	})
 }

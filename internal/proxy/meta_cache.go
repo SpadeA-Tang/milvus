@@ -107,7 +107,7 @@ type collectionInfo struct {
 	createdUtcTimestamp   uint64
 	consistencyLevel      commonpb.ConsistencyLevel
 	partitionKeyIsolation bool
-	bigTopKOptimization   bool
+	queryMode             string
 	replicateID           string
 	updateTimestamp       uint64
 	collectionTTL         uint64
@@ -430,6 +430,14 @@ func (m *MetaCache) getCollection(database, collectionName string, collectionID 
 		if collection, ok := db[collectionName]; ok {
 			return collection, collection.isCollectionCached()
 		}
+		// update() stores alias requests under the real collection name.
+		if aliasDB, ok := m.aliasInfo[database]; ok {
+			if entry, ok := aliasDB[collectionName]; ok && entry.collectionName != "" {
+				if collection, ok := db[entry.collectionName]; ok {
+					return collection, collection.isCollectionCached()
+				}
+			}
+		}
 	}
 
 	return nil, false
@@ -479,10 +487,7 @@ func (m *MetaCache) update(ctx context.Context, database, collectionName string,
 	if err != nil {
 		return nil, err
 	}
-	bigTopKOptimizationEnabled, err := common.IsBigTopKOptimizationEnabled(collection.Properties...)
-	if err != nil {
-		return nil, err
-	}
+	queryMode := common.GetQueryMode(collection.Properties...)
 
 	schemaInfo := newSchemaInfo(collection.Schema)
 
@@ -502,9 +507,9 @@ func (m *MetaCache) update(ctx context.Context, database, collectionName string,
 			createdUtcTimestamp:   collection.CreatedUtcTimestamp,
 			consistencyLevel:      collection.ConsistencyLevel,
 			partitionKeyIsolation: isolation,
-			bigTopKOptimization:   bigTopKOptimizationEnabled,
+			queryMode:             queryMode,
 			updateTimestamp:       collection.UpdateTimestamp,
-			collectionTTL:         getCollectionTTL(schemaInfo.CollectionSchema.GetProperties()),
+			collectionTTL:         getCollectionTTL(schemaInfo.GetProperties()),
 			vChannels:             collection.VirtualChannelNames,
 			pChannels:             collection.PhysicalChannelNames,
 			numPartitions:         collection.NumPartitions,
@@ -536,10 +541,10 @@ func (m *MetaCache) update(ctx context.Context, database, collectionName string,
 		createdUtcTimestamp:   collection.CreatedUtcTimestamp,
 		consistencyLevel:      collection.ConsistencyLevel,
 		partitionKeyIsolation: isolation,
-		bigTopKOptimization:   bigTopKOptimizationEnabled,
+		queryMode:             queryMode,
 		replicateID:           replicateID,
 		updateTimestamp:       collection.UpdateTimestamp,
-		collectionTTL:         getCollectionTTL(schemaInfo.CollectionSchema.GetProperties()),
+		collectionTTL:         getCollectionTTL(schemaInfo.GetProperties()),
 		vChannels:             collection.VirtualChannelNames,
 		pChannels:             collection.PhysicalChannelNames,
 		numPartitions:         collection.NumPartitions,

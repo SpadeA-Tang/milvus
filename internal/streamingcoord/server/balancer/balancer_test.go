@@ -40,21 +40,18 @@ func TestBalancer(t *testing.T) {
 	streamingNodeManager.EXPECT().WatchNodeChanged(mock.Anything).Return(make(chan struct{}), nil)
 	streamingNodeManager.EXPECT().Assign(mock.Anything, mock.Anything).Return(nil)
 	streamingNodeManager.EXPECT().Remove(mock.Anything, mock.Anything).Return(nil)
-	streamingNodeManager.EXPECT().GetAllStreamingNodes(mock.Anything).Return(map[int64]*types.StreamingNodeInfo{
+	streamingNodeManager.EXPECT().GetAllStreamingNodes(mock.Anything).Return(map[int64]*types.StreamingNodeInfoWithResourceGroup{
 		1: {
-			ServerID: 1,
-			Address:  "localhost:1",
+			StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 1, Address: "localhost:1"},
 		},
 		2: {
-			ServerID: 2,
-			Address:  "localhost:2",
+			StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 2, Address: "localhost:2"},
 		},
 		3: {
-			ServerID: 3,
-			Address:  "localhost:3",
+			StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 3, Address: "localhost:3"},
 		},
 	}, nil)
-	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything).Return(map[int64]*types.StreamingNodeStatus{
+	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything, mock.Anything).Return(map[int64]*types.StreamingNodeStatus{
 		1: {
 			StreamingNodeInfo: types.StreamingNodeInfo{
 				ServerID: 1,
@@ -230,12 +227,19 @@ func TestBalancer(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, doneErr)
 
-	// Verify GetAllStreamingNodes filters out frozen node 1.
-	nodes, err := b.GetAllStreamingNodes(ctx)
+	// Verify GetAvailableStreamingNodes filters out frozen node 1.
+	nodes, err := b.GetAvailableStreamingNodes(ctx)
 	assert.NoError(t, err)
 	assert.NotContains(t, nodes, int64(1))
 	assert.Contains(t, nodes, int64(2))
 	assert.Contains(t, nodes, int64(3))
+
+	// Verify GetAllStreamingNodes still returns all nodes including frozen.
+	allNodes, err := b.GetAllStreamingNodes(ctx)
+	assert.NoError(t, err)
+	assert.Contains(t, allNodes, int64(1))
+	assert.Contains(t, allNodes, int64(2))
+	assert.Contains(t, allNodes, int64(3))
 
 	resp, err = b.UpdateBalancePolicy(ctx, &streamingpb.UpdateWALBalancePolicyRequest{
 		Config: &streamingpb.WALBalancePolicyConfig{
@@ -268,8 +272,8 @@ func TestBalancer(t *testing.T) {
 	assert.NoError(t, err)
 	b.Trigger(ctx)
 
-	// Verify GetAllStreamingNodes returns all nodes after defreeze.
-	nodes, err = b.GetAllStreamingNodes(ctx)
+	// Verify GetAvailableStreamingNodes returns all nodes after defreeze.
+	nodes, err = b.GetAvailableStreamingNodes(ctx)
 	assert.NoError(t, err)
 	assert.Contains(t, nodes, int64(1))
 	assert.Contains(t, nodes, int64(2))
@@ -290,7 +294,7 @@ func TestBalancer_WithRecoveryLag(t *testing.T) {
 	streamingNodeManager.EXPECT().WatchNodeChanged(mock.Anything).Return(make(chan struct{}), nil)
 	streamingNodeManager.EXPECT().Assign(mock.Anything, mock.Anything).Return(nil)
 	streamingNodeManager.EXPECT().Remove(mock.Anything, mock.Anything).Return(nil)
-	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything).RunAndReturn(func(ctx context.Context) (map[int64]*types.StreamingNodeStatus, error) {
+	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, resourceGroupHint string) (map[int64]*types.StreamingNodeStatus, error) {
 		now := time.Now()
 		mvccTimeTick := tsoutil.ComposeTSByTime(now, 0)
 		recoveryTimeTick := tsoutil.ComposeTSByTime(now.Add(-time.Second*10), 0)
@@ -381,6 +385,7 @@ func TestBalancer_WithRecoveryLag(t *testing.T) {
 	b, err := balancer.RecoverBalancer(ctx, newStaticChannelProvider("test-channel-1"))
 	assert.NoError(t, err)
 	assert.NotNil(t, b)
+	defer b.Close()
 
 	b.Trigger(context.Background())
 	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -411,6 +416,7 @@ func TestBalancer_WithRecoveryLag(t *testing.T) {
 		}
 		return nil
 	})
+	b.Close()
 }
 
 func TestBalancer_DynamicChannelFromProvider(t *testing.T) {
@@ -423,11 +429,11 @@ func TestBalancer_DynamicChannelFromProvider(t *testing.T) {
 	streamingNodeManager.EXPECT().WatchNodeChanged(mock.Anything).Return(make(chan struct{}), nil)
 	streamingNodeManager.EXPECT().Assign(mock.Anything, mock.Anything).Return(nil).Maybe()
 	streamingNodeManager.EXPECT().Remove(mock.Anything, mock.Anything).Return(nil).Maybe()
-	streamingNodeManager.EXPECT().GetAllStreamingNodes(mock.Anything).Return(map[int64]*types.StreamingNodeInfo{
-		1: {ServerID: 1, Address: "localhost:1"},
-		2: {ServerID: 2, Address: "localhost:2"},
+	streamingNodeManager.EXPECT().GetAllStreamingNodes(mock.Anything).Return(map[int64]*types.StreamingNodeInfoWithResourceGroup{
+		1: {StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 1, Address: "localhost:1"}},
+		2: {StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 2, Address: "localhost:2"}},
 	}, nil).Maybe()
-	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything).Return(map[int64]*types.StreamingNodeStatus{
+	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything, mock.Anything).Return(map[int64]*types.StreamingNodeStatus{
 		1: {StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 1, Address: "localhost:1"}},
 		2: {StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 2, Address: "localhost:2"}},
 	}, nil).Maybe()
@@ -501,10 +507,10 @@ func TestBalancer_DynamicChannelProviderClosed(t *testing.T) {
 	streamingNodeManager.EXPECT().WatchNodeChanged(mock.Anything).Return(make(chan struct{}), nil)
 	streamingNodeManager.EXPECT().Assign(mock.Anything, mock.Anything).Return(nil).Maybe()
 	streamingNodeManager.EXPECT().Remove(mock.Anything, mock.Anything).Return(nil).Maybe()
-	streamingNodeManager.EXPECT().GetAllStreamingNodes(mock.Anything).Return(map[int64]*types.StreamingNodeInfo{
-		1: {ServerID: 1, Address: "localhost:1"},
+	streamingNodeManager.EXPECT().GetAllStreamingNodes(mock.Anything).Return(map[int64]*types.StreamingNodeInfoWithResourceGroup{
+		1: {StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 1, Address: "localhost:1"}},
 	}, nil).Maybe()
-	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything).Return(map[int64]*types.StreamingNodeStatus{
+	streamingNodeManager.EXPECT().CollectAllStatus(mock.Anything, mock.Anything).Return(map[int64]*types.StreamingNodeStatus{
 		1: {StreamingNodeInfo: types.StreamingNodeInfo{ServerID: 1, Address: "localhost:1"}},
 	}, nil).Maybe()
 

@@ -39,7 +39,7 @@ func adaptImplsToROWAL(
 		log.FieldComponent("wal"),
 		zap.String("channel", basicWAL.Channel().String()),
 	)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in availableCancel and called in Close()
 	roWAL := &roWALAdaptorImpl{
 		roWALImpls:      basicWAL,
 		lifetime:        typeutil.NewLifetime(),
@@ -80,7 +80,7 @@ func adaptImplsToRWWAL(
 		writeMetrics:           metricsutil.NewWriteMetrics(roWAL.Channel(), roWAL.WALName()),
 		isFenced:               atomic.NewBool(false),
 	}
-	wal.writeMetrics.SetLogger(wal.roWALAdaptorImpl.Logger())
+	wal.writeMetrics.SetLogger(wal.Logger())
 	interceptorParam.WAL.Set(wal)
 	return wal
 }
@@ -131,6 +131,16 @@ func (w *walAdaptorImpl) GetReplicateCheckpoint() (*utility.ReplicateCheckpoint,
 	defer w.lifetime.Done()
 
 	return w.param.ReplicateManager.GetReplicateCheckpoint()
+}
+
+// GetSalvageCheckpoint returns all salvage checkpoints captured during force promote.
+func (w *walAdaptorImpl) GetSalvageCheckpoint() []*utility.ReplicateCheckpoint {
+	if !w.lifetime.Add(typeutil.LifetimeStateWorking) {
+		return nil
+	}
+	defer w.lifetime.Done()
+
+	return w.param.ReplicateManager.GetSalvageCheckpoint()
 }
 
 // Append writes a record to the log.
@@ -196,6 +206,14 @@ func (w *walAdaptorImpl) Append(ctx context.Context, msg message.MutableMessage)
 		}
 		return nil, err
 	}
+	// Mark WAL as fenced if alter WAL message is appended successfully
+	// This prevents further append operations during WAL switch
+	if msg.MessageType() == message.MessageTypeAlterWAL {
+		w.Logger().Info("alter WAL message appended, marking WAL as fenced")
+		w.isFenced.CompareAndSwap(false, true)
+		w.forceCancelAfterGracefulTimeout()
+		w.Logger().Info("WAL marked as fenced for WAL switch, all append operations will be rejected")
+	}
 	var extra *anypb.Any
 	if extraAppendResult.Extra != nil {
 		var err error
@@ -228,6 +246,10 @@ func (w *walAdaptorImpl) retryAppendWhenRecoverableError(ctx context.Context, ms
 	for i := 0; ; i++ {
 		msgID, err := w.rwWALImpls.Append(ctx, msg)
 		if err == nil {
+			if msg.MessageType() == message.MessageTypeAlterWAL {
+				// if the append operation is a alter WAL message, we should log the message
+				w.Logger().Info("append alter WAL message to WAL finish", zap.String("channel", msg.VChannel()), zap.Uint64("timetick", msg.TimeTick()))
+			}
 			return msgID, nil
 		}
 		if errors.IsAny(err, context.Canceled, context.DeadlineExceeded, walimpls.ErrFenced) {

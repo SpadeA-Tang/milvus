@@ -58,6 +58,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/v2/proto/indexcgopb"
 	"github.com/milvus-io/milvus/pkg/v2/proto/querypb"
 	"github.com/milvus-io/milvus/pkg/v2/proto/segcorepb"
+	"github.com/milvus-io/milvus/pkg/v2/util/contextutil"
 	"github.com/milvus-io/milvus/pkg/v2/util/funcutil"
 	"github.com/milvus-io/milvus/pkg/v2/util/indexparams"
 	"github.com/milvus-io/milvus/pkg/v2/util/merr"
@@ -196,11 +197,34 @@ func (s *baseSegment) BloomFilterExist() bool {
 	return s.bloomFilterSet.BloomFilterExist()
 }
 
+func (s *baseSegment) PkCandidateExist() bool {
+	return s.bloomFilterSet.PkCandidateExist()
+}
+
 func (s *baseSegment) UpdateBloomFilter(pks []storage.PrimaryKey) {
 	if s.skipGrowingBF {
 		return
 	}
 	s.bloomFilterSet.UpdateBloomFilter(pks)
+}
+
+func (s *baseSegment) UpdatePkCandidate(pks []storage.PrimaryKey) {
+	if s.skipGrowingBF {
+		return
+	}
+	s.bloomFilterSet.UpdatePkCandidate(pks)
+}
+
+func (s *baseSegment) Stats() *storage.PkStatistics {
+	return s.bloomFilterSet.Stats()
+}
+
+func (s *baseSegment) Charge() {
+	s.bloomFilterSet.Charge()
+}
+
+func (s *baseSegment) Refund() {
+	s.bloomFilterSet.Refund()
 }
 
 func (s *baseSegment) UpdateBM25Stats(stats map[int64]*storage.BM25Stats) {
@@ -499,6 +523,31 @@ func (s *LocalSegment) LastDeltaTimestamp() uint64 {
 	return s.lastDeltaTimestamp.Load()
 }
 
+// advanceLastDeltaTimestamp moves lastDeltaTimestamp forward to max(current, max(tss)).
+// Consumers (file-level skip in segment_loader.LoadDeltaLogs, dist_handler reporting to
+// QueryCoord) treat this field as a high-water-mark. Using tss[last] on unsorted batches
+// underestimates the watermark, so we scan for the true max.
+func (s *LocalSegment) advanceLastDeltaTimestamp(tss []typeutil.Timestamp) {
+	if len(tss) == 0 {
+		return
+	}
+	maxTs := tss[0]
+	for _, t := range tss[1:] {
+		if t > maxTs {
+			maxTs = t
+		}
+	}
+	for {
+		cur := s.lastDeltaTimestamp.Load()
+		if maxTs <= cur {
+			return
+		}
+		if s.lastDeltaTimestamp.CompareAndSwap(cur, maxTs) {
+			return
+		}
+	}
+}
+
 // UpdateBloomFilter updates bloom filter with provided pks and charges resource if BF is newly created.
 // This overrides baseSegment.UpdateBloomFilter to handle resource charging for growing segments.
 func (s *LocalSegment) UpdateBloomFilter(pks []storage.PrimaryKey) {
@@ -626,7 +675,7 @@ func (s *LocalSegment) Search(ctx context.Context, searchReq *segcore.SearchRequ
 		log.Warn("Search failed")
 		return nil, err
 	}
-	metrics.QueryNodeSQSegmentLatencyInCore.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.SearchLabel).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	metrics.QueryNodeSQSegmentLatencyInCore.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.SearchLabel).Observe(float64(tr.ElapseSpan().Microseconds()) / 1000.0)
 	log.Debug("search segment done")
 	return result, nil
 }
@@ -647,7 +696,7 @@ func (s *LocalSegment) retrieve(ctx context.Context, plan *segcore.RetrievePlan,
 		return nil, err
 	}
 	metrics.QueryNodeSQSegmentLatencyInCore.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
-		metrics.QueryLabel).Observe(float64(tr.ElapseSpan().Milliseconds()))
+		contextutil.GetQueryLabel(ctx)).Observe(float64(tr.ElapseSpan().Microseconds()) / 1000.0)
 	return result, nil
 }
 
@@ -693,7 +742,7 @@ func (s *LocalSegment) retrieveByOffsets(ctx context.Context, plan *segcore.Retr
 		return nil, err
 	}
 	metrics.QueryNodeSQSegmentLatencyInCore.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
-		metrics.QueryLabel).Observe(float64(tr.ElapseSpan().Milliseconds()))
+		contextutil.GetQueryLabel(ctx)).Observe(float64(tr.ElapseSpan().Microseconds()) / 1000.0)
 	return result, nil
 }
 
@@ -783,12 +832,11 @@ func (s *LocalSegment) Delete(ctx context.Context, primaryKeys storage.PrimaryKe
 	s.deltaMut.Lock()
 	defer s.deltaMut.Unlock()
 
-	if s.lastDeltaTimestamp.Load() >= timestamps[len(timestamps)-1] {
-		log.Info("skip delete due to delete record before lastDeltaTimestamp",
-			zap.Int64("segmentID", s.ID()),
-			zap.Uint64("lastDeltaTimestamp", s.lastDeltaTimestamp.Load()))
-		return nil
-	}
+	// segcore DeletedRecord::InternalPush is idempotent on (PK, ts):
+	// duplicate deletes against already-deleted rows are discarded internally.
+	// Do NOT add a ts-watermark skip here. In L0-forward + partial-L0-compaction
+	// scenarios, batches contain ts values below the watermark that have NOT yet
+	// been applied to this segment, and skipping them causes silent data loss.
 
 	var err error
 	GetDynamicPool().Submit(func() (any, error) {
@@ -812,7 +860,10 @@ func (s *LocalSegment) Delete(ctx context.Context, primaryKeys storage.PrimaryKe
 	}
 
 	s.rowNum.Store(-1)
-	s.lastDeltaTimestamp.Store(timestamps[len(timestamps)-1])
+	// Track max ts as a high-water-mark (consumed by file-level skip in
+	// LoadDeltaLogs and by dist_handler for QueryCoord reporting). Using
+	// tss[last] on unsorted batches underestimates the watermark.
+	s.advanceLastDeltaTimestamp(timestamps)
 	return nil
 }
 
@@ -933,11 +984,9 @@ func (s *LocalSegment) LoadDeltaData(ctx context.Context, deltaData *storage.Del
 	s.deltaMut.Lock()
 	defer s.deltaMut.Unlock()
 
-	if s.lastDeltaTimestamp.Load() >= tss[len(tss)-1] {
-		log.Info("skip load delta data due to delete record before lastDeltaTimestamp",
-			zap.Uint64("lastDeltaTimestamp", s.lastDeltaTimestamp.Load()))
-		return nil
-	}
+	// See comment in Delete(): segcore dedups at (PK, ts) level, and tss is
+	// NOT sorted across L0 segments (BufferForwarder appends in iteration
+	// order), so comparing against tss[last] is both unnecessary and incorrect.
 
 	ids, err := storage.ParsePrimaryKeysBatch2IDs(pks)
 	if err != nil {
@@ -981,7 +1030,7 @@ func (s *LocalSegment) LoadDeltaData(ctx context.Context, deltaData *storage.Del
 	}
 
 	s.rowNum.Store(-1)
-	s.lastDeltaTimestamp.Store(tss[len(tss)-1])
+	s.advanceLastDeltaTimestamp(tss)
 
 	log.Info("load deleted record done",
 		zap.Int64("rowNum", rowNum),
@@ -1041,20 +1090,21 @@ func GetCLoadInfoWithFunc(ctx context.Context,
 		}
 	}
 	indexInfoProto := &cgopb.LoadIndexInfo{
-		CollectionID:       loadInfo.GetCollectionID(),
-		PartitionID:        loadInfo.GetPartitionID(),
-		SegmentID:          loadInfo.GetSegmentID(),
-		Field:              fieldSchema,
-		EnableMmap:         enableMmap,
-		IndexID:            indexInfo.GetIndexID(),
-		IndexBuildID:       indexInfo.GetBuildID(),
-		IndexVersion:       indexInfo.GetIndexVersion(),
-		IndexParams:        indexParams,
-		IndexFiles:         indexInfo.GetIndexFilePaths(),
-		IndexEngineVersion: indexInfo.GetCurrentIndexVersion(),
-		IndexStoreVersion:  indexInfo.GetIndexStoreVersion(),
-		IndexFileSize:      indexInfo.GetIndexSize(),
-		NumRows:            indexInfo.GetNumRows(),
+		CollectionID:              loadInfo.GetCollectionID(),
+		PartitionID:               loadInfo.GetPartitionID(),
+		SegmentID:                 loadInfo.GetSegmentID(),
+		Field:                     fieldSchema,
+		EnableMmap:                enableMmap,
+		IndexID:                   indexInfo.GetIndexID(),
+		IndexBuildID:              indexInfo.GetBuildID(),
+		IndexVersion:              indexInfo.GetIndexVersion(),
+		IndexParams:               indexParams,
+		IndexFiles:                indexInfo.GetIndexFilePaths(),
+		IndexEngineVersion:        indexInfo.GetCurrentIndexVersion(),
+		IndexStoreVersion:         indexInfo.GetIndexStoreVersion(),
+		IndexFileSize:             indexInfo.GetIndexSize(),
+		NumRows:                   indexInfo.GetNumRows(),
+		CurrentScalarIndexVersion: indexInfo.GetCurrentScalarIndexVersion(),
 	}
 
 	// 2.
@@ -1157,6 +1207,13 @@ func (s *LocalSegment) innerLoadIndex(ctx context.Context,
 }
 
 func (s *LocalSegment) LoadTextIndex(ctx context.Context, textLogs *datapb.TextIndexStats, schemaHelper *typeutil.SchemaHelper) error {
+	_, err := GetLoadPool().Submit(func() (any, error) {
+		return nil, s.loadTextIndexCgo(ctx, textLogs, schemaHelper)
+	}).Await()
+	return err
+}
+
+func (s *LocalSegment) loadTextIndexCgo(ctx context.Context, textLogs *datapb.TextIndexStats, schemaHelper *typeutil.SchemaHelper) error {
 	log.Ctx(ctx).Info("load text index", zap.Int64("field id", textLogs.GetFieldID()), zap.Any("text logs", textLogs))
 
 	if !s.ptrLock.PinIf(state.IsNotReleased) {
@@ -1174,17 +1231,18 @@ func (s *LocalSegment) LoadTextIndex(ctx context.Context, textLogs *datapb.TextI
 	// Text match index should based on scala field's warmup policy like mmap
 	warmupPolicy := getScalarDataWarmupPolicy(f)
 	cgoProto := &indexcgopb.LoadTextIndexInfo{
-		FieldID:      textLogs.GetFieldID(),
-		Version:      textLogs.GetVersion(),
-		BuildID:      textLogs.GetBuildID(),
-		Files:        textLogs.GetFiles(),
-		Schema:       f,
-		CollectionID: s.Collection(),
-		PartitionID:  s.Partition(),
-		LoadPriority: s.LoadInfo().GetPriority(),
-		EnableMmap:   enableMmap,
-		IndexSize:    textLogs.GetMemorySize(),
-		WarmupPolicy: warmupPolicy,
+		FieldID:                   textLogs.GetFieldID(),
+		Version:                   textLogs.GetVersion(),
+		BuildID:                   textLogs.GetBuildID(),
+		Files:                     textLogs.GetFiles(),
+		Schema:                    f,
+		CollectionID:              s.Collection(),
+		PartitionID:               s.Partition(),
+		LoadPriority:              s.LoadInfo().GetPriority(),
+		EnableMmap:                enableMmap,
+		IndexSize:                 textLogs.GetMemorySize(),
+		CurrentScalarIndexVersion: textLogs.GetCurrentScalarIndexVersion(),
+		WarmupPolicy:              warmupPolicy,
 	}
 
 	marshaled, err := proto.Marshal(cgoProto)
@@ -1195,11 +1253,7 @@ func (s *LocalSegment) LoadTextIndex(ctx context.Context, textLogs *datapb.TextI
 	guard := segcore.NewCancellationGuard(ctx)
 	defer guard.Close()
 
-	var status C.CStatus
-	_, _ = GetLoadPool().Submit(func() (any, error) {
-		status = C.LoadTextIndex(s.ptr, (*C.uint8_t)(unsafe.Pointer(&marshaled[0])), (C.uint64_t)(len(marshaled)), (C.CLoadCancellationSource)(guard.Source()))
-		return nil, nil
-	}).Await()
+	status := C.LoadTextIndex(s.ptr, (*C.uint8_t)(unsafe.Pointer(&marshaled[0])), (C.uint64_t)(len(marshaled)), (C.CLoadCancellationSource)(guard.Source()))
 
 	return HandleCStatus(ctx, &status, "LoadTextIndex failed")
 }
@@ -1334,16 +1388,23 @@ func (s *LocalSegment) UpdateFieldRawDataSize(ctx context.Context, numRows int64
 }
 
 func (s *LocalSegment) CreateTextIndex(ctx context.Context, fieldID int64) error {
-	var status C.CStatus
 	log.Ctx(ctx).Info("create text index for segment", zap.Int64("segmentID", s.ID()), zap.Int64("fieldID", fieldID))
+
+	if !s.ptrLock.PinIf(state.IsNotReleased) {
+		return merr.WrapErrSegmentNotLoaded(s.ID(), "segment released")
+	}
+	defer s.ptrLock.Unpin()
 
 	guard := segcore.NewCancellationGuard(ctx)
 	defer guard.Close()
 
-	GetLoadPool().Submit(func() (any, error) {
+	var status C.CStatus
+	if _, err := GetLoadPool().Submit(func() (any, error) {
 		status = C.CreateTextIndex(s.ptr, C.int64_t(fieldID), (C.CLoadCancellationSource)(guard.Source()))
 		return nil, nil
-	}).Await()
+	}).Await(); err != nil {
+		return err
+	}
 
 	if err := HandleCStatus(ctx, &status, "CreateTextIndex failed"); err != nil {
 		return err

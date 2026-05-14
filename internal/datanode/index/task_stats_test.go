@@ -185,6 +185,7 @@ func (s *TaskStatsSuite) TestBuildIndexParams() {
 			PartitionID:               3,
 			TargetSegmentID:           4,
 			TaskVersion:               5,
+			NumRows:                   100,
 			CurrentScalarIndexVersion: int32(1),
 			StorageVersion:            storage.StorageV2,
 			InsertLogs:                []*datapb.FieldBinlog{},
@@ -193,13 +194,14 @@ func (s *TaskStatsSuite) TestBuildIndexParams() {
 
 		options := &BuildIndexOptions{
 			TantivyMemory:                0,
-			JsonStatsMaxShreddingColumns: 256,
-			JsonStatsShreddingRatio:      0.3,
-			JsonStatsWriteBatchSize:      81920,
+			JSONStatsMaxShreddingColumns: 256,
+			JSONStatsShreddingRatio:      0.3,
+			JSONStatsWriteBatchSize:      81920,
 		}
 		params := buildIndexParams(req, []string{"file1", "file2"}, nil, &indexcgopb.StorageConfig{}, options)
 
 		s.Equal(storage.StorageV2, params.StorageVersion)
+		s.Equal(int64(100), params.NumRows)
 		s.NotNil(params.SegmentInsertFiles)
 	})
 }
