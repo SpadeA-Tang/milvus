@@ -74,20 +74,27 @@ SearchOnSealedIndex(const Schema& schema,
         dynamic_cast<index::VectorIndex*>(accessor->get_cell_of(0));
 
     if (search_info.iterator_v2_info_.has_value()) {
+        AssertInfo(search_info.array_offsets_ == nullptr,
+                   "element-level search is not supported for search iterator");
         CachedSearchIterator cached_iter(
             *vec_index, dataset, search_info, bitset);
         cached_iter.NextBatch(search_info, search_result);
         return;
     }
 
+    BitsetView search_bitset = bitset;
+    AssertInfo(search_info.array_offsets_ == nullptr ||
+                   !milvus::exec::UseVectorIterator(search_info),
+               "element-level search is not supported for vector iterator");
+
     if (!milvus::exec::PrepareVectorIteratorsFromIndex(search_info,
                                                        num_queries,
                                                        dataset,
                                                        search_result,
-                                                       bitset,
+                                                       search_bitset,
                                                        *vec_index)) {
         vec_index->Query(
-            dataset, search_info, bitset, op_context, search_result);
+            dataset, search_info, search_bitset, op_context, search_result);
         float* distances = search_result.distances_.data();
         auto total_num = num_queries * topK;
         if (round_decimal != -1) {
@@ -96,6 +103,25 @@ SearchOnSealedIndex(const Schema& schema,
                 distances[i] =
                     std::round(distances[i] * multiplier) / multiplier;
             }
+        }
+        if (search_info.array_offsets_ != nullptr) {
+            std::vector<int64_t> element_ids =
+                std::move(search_result.seg_offsets_);
+            search_result.seg_offsets_.resize(element_ids.size());
+            search_result.element_indices_.resize(element_ids.size());
+            for (size_t i = 0; i < element_ids.size(); i++) {
+                if (element_ids[i] == INVALID_SEG_OFFSET) {
+                    search_result.seg_offsets_[i] = INVALID_SEG_OFFSET;
+                    search_result.element_indices_[i] = -1;
+                } else {
+                    auto [doc_id, elem_index] =
+                        search_info.array_offsets_->ElementIDToRowID(
+                            element_ids[i]);
+                    search_result.seg_offsets_[i] = doc_id;
+                    search_result.element_indices_[i] = elem_index;
+                }
+            }
+            search_result.element_level_ = true;
         }
     }
     search_result.total_nq_ = num_queries;
@@ -151,17 +177,37 @@ SearchOnSealedColumn(const Schema& schema,
                              search_info.metric_type_,
                              search_info.round_decimal_);
 
-    auto offset = 0;
+    bool is_element_level_search = data_type == DataType::VECTOR_ARRAY &&
+                                   search_info.array_offsets_ != nullptr;
+    if (is_element_level_search) {
+        data_type = element_type;
+    }
+    AssertInfo(!is_element_level_search ||
+                   !milvus::exec::UseVectorIterator(search_info),
+               "element-level search is not supported for vector iterator");
+
+    BitsetView search_bitview = bitview;
+
+    int64_t offset = 0;
 
     auto vector_chunks = column->GetAllChunks(op_context);
     for (int i = 0; i < num_chunk; ++i) {
         auto pw = vector_chunks[i];
         auto vec_data = pw.get()->Data();
-        auto chunk_size = column->chunk_row_nums(i);
+        auto row_count_in_chunk = column->chunk_row_nums(i);
+        auto chunk_size = row_count_in_chunk;
         auto raw_dataset =
             query::dataset::RawDataset{offset, dim, chunk_size, vec_data};
 
         PinWrapper<const size_t*> offsets_pw;
+        if (is_element_level_search) {
+            offsets_pw = column->VectorArrayOffsets(op_context, i);
+            auto elem_offsets = offsets_pw.get();
+            chunk_size = elem_offsets[row_count_in_chunk];
+            raw_dataset =
+                query::dataset::RawDataset{offset, dim, chunk_size, vec_data};
+        }
+
         if (data_type == DataType::VECTOR_ARRAY) {
             AssertInfo(
                 query_offsets != nullptr,
@@ -180,7 +226,7 @@ SearchOnSealedColumn(const Schema& schema,
                                                            raw_dataset,
                                                            search_info,
                                                            index_info,
-                                                           bitview,
+                                                           search_bitview,
                                                            data_type);
             final_qr.merge(sub_qr);
         } else {
@@ -188,7 +234,7 @@ SearchOnSealedColumn(const Schema& schema,
                                            raw_dataset,
                                            search_info,
                                            index_info,
-                                           bitview,
+                                           search_bitview,
                                            data_type,
                                            element_type,
                                            op_context);
@@ -204,8 +250,17 @@ SearchOnSealedColumn(const Schema& schema,
                                             final_qr.chunk_iterators(),
                                             larger_is_closer);
     } else {
+        if (is_element_level_search) {
+            auto [seg_offsets, element_indices] =
+                final_qr.convert_to_element_offsets(
+                    search_info.array_offsets_.get());
+            result.seg_offsets_ = std::move(seg_offsets);
+            result.element_indices_ = std::move(element_indices);
+            result.element_level_ = true;
+        } else {
+            result.seg_offsets_ = std::move(final_qr.mutable_seg_offsets());
+        }
         result.distances_ = std::move(final_qr.mutable_distances());
-        result.seg_offsets_ = std::move(final_qr.mutable_seg_offsets());
     }
     result.unity_topK_ = query_dataset.topk;
     result.total_nq_ = query_dataset.num_queries;

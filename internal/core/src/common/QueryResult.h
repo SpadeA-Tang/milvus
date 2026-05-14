@@ -28,6 +28,7 @@
 #include <NamedType/named_type.hpp>
 
 #include "common/FieldMeta.h"
+#include "common/ArrayOffsets.h"
 #include "pb/schema.pb.h"
 #include "knowhere/index/index_node.h"
 
@@ -294,6 +295,10 @@ struct SearchResult {
         vector_iterators_;
     // record the storage usage in search
     StorageCost search_storage_cost_;
+
+    bool element_level_{false};
+    std::vector<int32_t> element_indices_;
+    std::vector<std::unique_ptr<uint8_t[]>> chunk_buffers_{};
 };
 
 using SearchResultPtr = std::shared_ptr<SearchResult>;

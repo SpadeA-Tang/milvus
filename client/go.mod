@@ -119,3 +119,5 @@ require (
 	k8s.io/apimachinery v0.32.3 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
+
+replace github.com/milvus-io/milvus-proto/go-api/v2 => /home/spadea/working2/milvus-proto/go-api
