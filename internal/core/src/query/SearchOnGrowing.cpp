@@ -80,7 +80,7 @@ SearchOnGrowing(const segcore::SegmentGrowingImpl& segment,
                 Timestamp timestamp,
                 const BitsetView& bitset,
                 milvus::OpContext* op_context,
-    SearchResult& search_result) {
+                SearchResult& search_result) {
     auto& schema = segment.get_schema();
     auto& record = segment.get_insert_record();
 
