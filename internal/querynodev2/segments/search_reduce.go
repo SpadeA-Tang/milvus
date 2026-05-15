@@ -113,6 +113,11 @@ func (scr *SearchCommonReduce) ReduceSearchResultData(ctx context.Context, searc
 		ret.AllSearchCount += searchResultData[i].GetAllSearchCount()
 	}
 
+	idxComputers := make([]*typeutil.FieldDataIdxComputer, len(searchResultData))
+	for i, srd := range searchResultData {
+		idxComputers[i] = typeutil.NewFieldDataIdxComputer(srd.FieldsData)
+	}
+
 	var skipDupCnt int64
 	var retSize int64
 	maxOutputSize := paramtable.Get().QuotaConfig.MaxOutputSize.GetAsInt64()
@@ -136,7 +141,9 @@ func (scr *SearchCommonReduce) ReduceSearchResultData(ctx context.Context, searc
 				return nil, err
 			}
 			if _, ok := idSet[key]; !ok {
-				retSize += typeutil.AppendFieldData(ret.FieldsData, searchResultData[sel].FieldsData, idx)
+				fieldsData := searchResultData[sel].FieldsData
+				fieldIdxs := idxComputers[sel].Compute(idx)
+				retSize += typeutil.AppendFieldData(ret.FieldsData, fieldsData, idx, fieldIdxs...)
 				typeutil.AppendPKs(ret.Ids, id)
 				ret.Scores = append(ret.Scores, score)
 				if hasElementIndices {
@@ -215,6 +222,11 @@ func (sbr *SearchGroupByReduce) ReduceSearchResultData(ctx context.Context, sear
 		return ret, merr.WrapErrServiceInternal("failed to construct group by field data builder, this is abnormal as segcore should always set up a group by field, no matter data status, check code on qn", err.Error())
 	}
 
+	idxComputers := make([]*typeutil.FieldDataIdxComputer, len(searchResultData))
+	for i, srd := range searchResultData {
+		idxComputers[i] = typeutil.NewFieldDataIdxComputer(srd.FieldsData)
+	}
+
 	var filteredCount int64
 	var retSize int64
 	maxOutputSize := paramtable.Get().QuotaConfig.MaxOutputSize.GetAsInt64()
@@ -254,7 +266,9 @@ func (sbr *SearchGroupByReduce) ReduceSearchResultData(ctx context.Context, sear
 					// exceed the limit for each group, filter this entity
 					filteredCount++
 				} else {
-					retSize += typeutil.AppendFieldData(ret.FieldsData, searchResultData[sel].FieldsData, idx)
+					fieldsData := searchResultData[sel].FieldsData
+					fieldIdxs := idxComputers[sel].Compute(idx)
+					retSize += typeutil.AppendFieldData(ret.FieldsData, fieldsData, idx, fieldIdxs...)
 					typeutil.AppendPKs(ret.Ids, id)
 					ret.Scores = append(ret.Scores, score)
 					if hasElementIndices {

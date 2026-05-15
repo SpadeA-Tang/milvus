@@ -19,6 +19,7 @@
 #include "query/PlanImpl.h"
 #include "common/QueryResult.h"
 #include "segcore/ReduceStructure.h"
+#include "segcore/Utils.h"
 #include "common/EasyAssert.h"
 #include "segcore/reduce/Reduce.h"
 
@@ -253,6 +254,13 @@ class StreamReducerHelper {
 
     bool
     TryAcceptSearchResult(const StreamSearchResultPair& result);
+
+    void
+    SetNullableVectorValidDataOffsets(
+        const std::map<FieldId, std::unique_ptr<milvus::DataArray>>&
+            output_fields_data,
+        int64_t ki,
+        MergeBase& merge_base);
 
  protected:
     std::unique_ptr<MergedSearchResult> merged_search_result;
