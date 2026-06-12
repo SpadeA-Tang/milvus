@@ -1093,15 +1093,19 @@ func mergeStringField(data *InsertData, fid FieldID, field *StringFieldData) {
 func mergeArrayField(data *InsertData, fid FieldID, field *ArrayFieldData) {
 	if _, ok := data.Data[fid]; !ok {
 		fieldData := &ArrayFieldData{
-			ElementType: field.ElementType,
-			Data:        nil,
-			ValidData:   nil,
+			ElementType:      field.ElementType,
+			Data:             nil,
+			ValidData:        nil,
+			ElementValidData: nil,
+			ElementNullable:  field.ElementNullable,
 		}
 		data.Data[fid] = fieldData
 	}
 	fieldData := data.Data[fid].(*ArrayFieldData)
+	fieldData.ElementNullable = fieldData.ElementNullable || field.ElementNullable
 	fieldData.Data = append(fieldData.Data, field.Data...)
 	fieldData.ValidData = append(fieldData.ValidData, field.ValidData...)
+	fieldData.ElementValidData = append(fieldData.ElementValidData, field.ElementValidData...)
 }
 
 func mergeJSONField(data *InsertData, fid FieldID, field *JSONFieldData) {
@@ -1202,17 +1206,21 @@ func mergeSparseFloatVectorField(data *InsertData, fid FieldID, field *SparseFlo
 func mergeVectorArrayField(data *InsertData, fid FieldID, field *VectorArrayFieldData) {
 	if _, ok := data.Data[fid]; !ok {
 		fieldData := &VectorArrayFieldData{
-			Data:        nil,
-			Dim:         field.Dim,
-			ElementType: field.ElementType,
-			ValidData:   nil,
-			Nullable:    field.Nullable,
+			Data:             nil,
+			Dim:              field.Dim,
+			ElementType:      field.ElementType,
+			ValidData:        nil,
+			Nullable:         field.Nullable,
+			ElementValidData: nil,
+			ElementNullable:  field.ElementNullable,
 		}
 		data.Data[fid] = fieldData
 	}
 	fieldData := data.Data[fid].(*VectorArrayFieldData)
+	fieldData.ElementNullable = fieldData.ElementNullable || field.ElementNullable
 	fieldData.Data = append(fieldData.Data, field.Data...)
 	fieldData.ValidData = append(fieldData.ValidData, field.ValidData...)
+	fieldData.ElementValidData = append(fieldData.ElementValidData, field.ElementValidData...)
 }
 
 func mergeInt8VectorField(data *InsertData, fid FieldID, field *Int8VectorFieldData) {

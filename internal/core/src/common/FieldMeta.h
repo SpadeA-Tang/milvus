@@ -56,6 +56,7 @@ class FieldMeta {
           id_(id),
           type_(type),
           nullable_(nullable),
+          element_nullable_(false),
           default_value_(std::move(default_value)),
           external_field_mapping_(std::move(external_field_mapping)) {
         Assert(!IsVectorDataType(type_));
@@ -72,6 +73,7 @@ class FieldMeta {
           id_(id),
           type_(type),
           nullable_(nullable),
+          element_nullable_(false),
           string_info_(StringInfo{max_length}),
           default_value_(std::move(default_value)),
           external_field_mapping_(std::move(external_field_mapping)) {
@@ -92,6 +94,7 @@ class FieldMeta {
           id_(id),
           type_(type),
           nullable_(nullable),
+          element_nullable_(false),
           string_info_(StringInfo{
               max_length,
               enable_match,
@@ -108,6 +111,7 @@ class FieldMeta {
               DataType type,
               DataType element_type,
               bool nullable,
+              bool element_nullable,
               std::optional<DefaultValueType> default_value,
               std::string external_field_mapping = "")
         : name_(std::move(name)),
@@ -115,6 +119,7 @@ class FieldMeta {
           type_(type),
           element_type_(element_type),
           nullable_(nullable),
+          element_nullable_(element_nullable),
           default_value_(std::move(default_value)),
           external_field_mapping_(std::move(external_field_mapping)) {
         Assert(IsArrayDataType(type_));
@@ -134,6 +139,7 @@ class FieldMeta {
           id_(id),
           type_(type),
           nullable_(nullable),
+          element_nullable_(false),
           vector_info_(VectorInfo{dim, std::move(metric_type)}),
           default_value_(std::move(default_value)),
           external_field_mapping_(std::move(external_field_mapping)) {
@@ -150,12 +156,14 @@ class FieldMeta {
               int64_t dim,
               std::optional<knowhere::MetricType> metric_type,
               bool nullable,
+              bool element_nullable,
               std::string external_field_mapping = "")
         : name_(std::move(name)),
           id_(id),
           type_(type),
-          nullable_(nullable),
           element_type_(element_type),
+          nullable_(nullable),
+          element_nullable_(element_nullable),
           vector_info_(VectorInfo{dim, std::move(metric_type)}),
           external_field_mapping_(std::move(external_field_mapping)) {
         Assert(type_ == DataType::VECTOR_ARRAY);
@@ -176,6 +184,7 @@ class FieldMeta {
           main_field_id_(main_field_id),
           type_(type),
           nullable_(nullable),
+          element_nullable_(false),
           default_value_(std::move(default_value)),
           external_field_mapping_(std::move(external_field_mapping)) {
         Assert(!IsVectorDataType(type_));
@@ -262,6 +271,11 @@ class FieldMeta {
     }
 
     bool
+    is_element_nullable() const {
+        return element_nullable_;
+    }
+
+    bool
     NeedLoad() const {
         return external_field_mapping_.empty();
     }
@@ -342,6 +356,7 @@ class FieldMeta {
     DataType type_ = DataType::NONE;
     DataType element_type_ = DataType::NONE;
     bool nullable_;
+    bool element_nullable_;
     std::optional<DefaultValueType> default_value_;
     std::optional<VectorInfo> vector_info_;
     std::optional<StringInfo> string_info_;

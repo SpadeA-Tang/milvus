@@ -172,7 +172,8 @@ class Schema {
                                     element_type,
                                     dim,
                                     metric_type,
-                                    nullable);
+                                    nullable,
+                                    false);
         this->AddField(std::move(field_meta));
         return field_id;
     }
@@ -222,7 +223,7 @@ class Schema {
              DataType element_type,
              bool nullable) {
         auto field_meta = FieldMeta(
-            name, id, data_type, element_type, nullable, std::nullopt);
+            name, id, data_type, element_type, nullable, false, std::nullopt);
         this->AddField(std::move(field_meta));
     }
 
