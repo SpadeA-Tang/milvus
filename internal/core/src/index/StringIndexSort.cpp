@@ -844,9 +844,12 @@ StringIndexSortMemoryImpl::BuildFromArrayDataNested(
                 continue;
             }
             for (int64_t j = 0; j < array_column[i].length(); j++) {
-                auto value = array_column[i].get_data<std::string>(j);
-                map[value].push_back(static_cast<int32_t>(element_id));
-                valid_bitset.set(element_id);
+                if (array_column[i].is_element_valid(j)) {
+                    auto value =
+                        array_column[i].get_data_unchecked<std::string>(j);
+                    map[value].push_back(static_cast<int32_t>(element_id));
+                    valid_bitset.set(element_id);
+                }
                 element_id++;
             }
         }

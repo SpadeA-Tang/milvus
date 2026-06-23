@@ -875,18 +875,36 @@ class FieldDataJsonImpl : public FieldDataImpl<Json, true> {
 };
 
 class FieldDataArrayImpl : public FieldDataImpl<Array, true> {
+    using Base = FieldDataImpl<Array, true>;
+
  public:
     explicit FieldDataArrayImpl(DataType data_type,
                                 bool nullable,
                                 int64_t total_num_rows = 0)
-        : FieldDataImpl<Array, true>(1, data_type, nullable, total_num_rows) {
+        : FieldDataArrayImpl(data_type, nullable, false, total_num_rows) {
     }
+
+    explicit FieldDataArrayImpl(DataType data_type,
+                                bool nullable,
+                                bool element_nullable,
+                                int64_t total_num_rows = 0)
+        : Base(1, data_type, nullable, total_num_rows),
+          element_nullable_(element_nullable) {
+    }
+
+    using Base::FillFieldData;
+
+    void
+    FillFieldData(const std::shared_ptr<arrow::Array> array) override;
 
     int64_t
     DataSize() const override {
         int64_t data_size = 0;
         for (size_t offset = 0; offset < length(); ++offset) {
             data_size += data_[offset].byte_size();
+            if (element_nullable_) {
+                data_size += (data_[offset].length() + 7) / 8;
+            }
         }
         return data_size;
     }
@@ -897,8 +915,20 @@ class FieldDataArrayImpl : public FieldDataImpl<Array, true> {
                    "field data subscript out of range");
         AssertInfo(offset < length(),
                    "subscript position don't has valid value");
-        return data_[offset].byte_size();
+        auto data_size = data_[offset].byte_size();
+        if (element_nullable_) {
+            data_size += (data_[offset].length() + 7) / 8;
+        }
+        return data_size;
     }
+
+    bool
+    is_element_nullable() const {
+        return element_nullable_;
+    }
+
+ private:
+    bool element_nullable_ = false;
 };
 
 // is_type_entire_row set be true as each element in data_ is a VectorArray

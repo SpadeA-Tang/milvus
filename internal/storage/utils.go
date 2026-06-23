@@ -581,6 +581,150 @@ func validateColumnBasedNullableVectorFieldData(field *schemapb.FieldSchema, src
 	return nil
 }
 
+func getVectorArrayValuePhysicalRows(fieldName string, elementType schemapb.DataType, vectors *schemapb.VectorField, dim int64) (uint64, error) {
+	if vectors == nil {
+		return 0, nil
+	}
+
+	switch elementType {
+	case schemapb.DataType_FloatVector:
+		return funcutil.GetNumRowsOfFloatVectorField(vectors.GetFloatVector().GetData(), dim)
+	case schemapb.DataType_BinaryVector:
+		return funcutil.GetNumRowsOfBinaryVectorField(vectors.GetBinaryVector(), dim)
+	case schemapb.DataType_Float16Vector:
+		return funcutil.GetNumRowsOfFloat16VectorField(vectors.GetFloat16Vector(), dim)
+	case schemapb.DataType_BFloat16Vector:
+		return funcutil.GetNumRowsOfBFloat16VectorField(vectors.GetBfloat16Vector(), dim)
+	case schemapb.DataType_SparseFloatVector:
+		if vectors.GetSparseFloatVector() == nil {
+			return 0, nil
+		}
+		return uint64(len(vectors.GetSparseFloatVector().GetContents())), nil
+	case schemapb.DataType_Int8Vector:
+		return funcutil.GetNumRowsOfInt8VectorField(vectors.GetInt8Vector(), dim)
+	default:
+		return 0, fmt.Errorf("unsupported VectorArray element type %s for field %s", elementType, fieldName)
+	}
+}
+
+func validateScalarArrayRepresentation(field *schemapb.FieldSchema, arrayData *schemapb.ArrayArray, logicalRows int) error {
+	plainData := arrayData.GetData()
+	nullableData := arrayData.GetNullableData()
+	if len(plainData) > 0 && len(nullableData) > 0 {
+		return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("field %s Array data and nullable_data cannot both be set", field.GetName()))
+	}
+	if len(nullableData) > 0 {
+		if !field.GetElementNullable() {
+			return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("field %s is not element nullable but nullable_data is set", field.GetName()))
+		}
+		if len(nullableData) != logicalRows {
+			return merr.WrapErrParameterInvalid(logicalRows, len(nullableData), fmt.Sprintf("nullable_data row count does not match field %s row count", field.GetName()))
+		}
+		return nil
+	}
+
+	if field.GetElementNullable() {
+		if logicalRows > 0 || len(plainData) > 0 {
+			return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("field %s is element nullable and must use nullable_data", field.GetName()))
+		}
+	}
+	return nil
+}
+
+func parseScalarArrayFieldData(field *schemapb.FieldSchema, arrayData *schemapb.ArrayArray, logicalRows int) ([]*schemapb.ScalarField, []*schemapb.NullableScalarArrayValue, error) {
+	if err := validateScalarArrayRepresentation(field, arrayData, logicalRows); err != nil {
+		return nil, nil, err
+	}
+
+	nullableData := arrayData.GetNullableData()
+	if len(nullableData) > 0 {
+		rows := make([]*schemapb.NullableScalarArrayValue, 0, len(nullableData))
+		for _, row := range nullableData {
+			if row == nil {
+				rows = append(rows, &schemapb.NullableScalarArrayValue{})
+				continue
+			}
+			rows = append(rows, proto.Clone(row).(*schemapb.NullableScalarArrayValue))
+		}
+		return nil, rows, nil
+	}
+	if field.GetElementNullable() {
+		return nil, nil, nil
+	}
+	return arrayData.GetData(), nil, nil
+}
+
+func validateVectorArrayRepresentation(field *schemapb.FieldSchema, vectorArray *schemapb.VectorArray, logicalRows int) error {
+	plainData := vectorArray.GetData()
+	nullableData := vectorArray.GetNullableData()
+	if len(plainData) > 0 && len(nullableData) > 0 {
+		return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("field %s VectorArray data and nullable_data cannot both be set", field.GetName()))
+	}
+	if len(nullableData) > 0 {
+		if !field.GetElementNullable() {
+			return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("field %s is not element nullable but nullable_data is set", field.GetName()))
+		}
+		if len(nullableData) != logicalRows {
+			return merr.WrapErrParameterInvalid(logicalRows, len(nullableData), fmt.Sprintf("nullable_data row count does not match field %s row count", field.GetName()))
+		}
+		dim := vectorArray.GetDim()
+		if dim == 0 && field.GetElementType() != schemapb.DataType_SparseFloatVector {
+			fieldDim, err := GetDimFromParams(field.GetTypeParams())
+			if err != nil {
+				return err
+			}
+			dim = int64(fieldDim)
+		}
+		for i, row := range nullableData {
+			physicalRows, err := getVectorArrayValuePhysicalRows(field.GetName(), field.GetElementType(), row.GetData(), dim)
+			if err != nil {
+				return merr.WrapErrParameterInvalidMsg(err.Error())
+			}
+			requireValidData := physicalRows > 0 || len(row.GetValidData()) > 0
+			if err := funcutil.ValidateNullableVectorCompactRows(
+				fmt.Sprintf("%s[%d]", field.GetName(), i),
+				row.GetValidData(),
+				physicalRows,
+				uint64(len(row.GetValidData())),
+				requireValidData,
+			); err != nil {
+				return merr.WrapErrParameterInvalidMsg(err.Error())
+			}
+		}
+		return nil
+	}
+
+	if field.GetElementNullable() {
+		if logicalRows > 0 || len(plainData) > 0 {
+			return merr.WrapErrParameterInvalidMsg(fmt.Sprintf("field %s is element nullable and must use nullable_data", field.GetName()))
+		}
+	}
+	return nil
+}
+
+func parseVectorArrayFieldData(field *schemapb.FieldSchema, vectorArray *schemapb.VectorArray, logicalRows int) ([]*schemapb.VectorField, []*schemapb.NullableVectorArrayValue, error) {
+	if err := validateVectorArrayRepresentation(field, vectorArray, logicalRows); err != nil {
+		return nil, nil, err
+	}
+
+	nullableData := vectorArray.GetNullableData()
+	if len(nullableData) > 0 {
+		rows := make([]*schemapb.NullableVectorArrayValue, 0, len(nullableData))
+		for _, row := range nullableData {
+			if row == nil {
+				rows = append(rows, &schemapb.NullableVectorArrayValue{})
+				continue
+			}
+			rows = append(rows, proto.Clone(row).(*schemapb.NullableVectorArrayValue))
+		}
+		return nil, rows, nil
+	}
+	if field.GetElementNullable() {
+		return nil, nil, nil
+	}
+	return vectorArray.GetData(), nil, nil
+}
+
 func validateColumnBasedInsertMsgNullableVectors(schema *schemapb.CollectionSchema, msg *msgstream.InsertMsg) error {
 	srcFields := make(map[int64]*schemapb.FieldData, len(msg.GetFieldsData()))
 	for _, fieldData := range msg.GetFieldsData() {
@@ -864,14 +1008,19 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 			}
 
 		case schemapb.DataType_Array:
-			srcData := srcField.GetScalars().GetArrayData().GetData()
+			srcData, nullableData, err := parseScalarArrayFieldData(field, srcField.GetScalars().GetArrayData(), int(msg.GetNumRows()))
+			if err != nil {
+				return nil, err
+			}
 			validData := srcField.GetValidData()
 
 			fieldData = &ArrayFieldData{
-				ElementType: field.GetElementType(),
-				Data:        srcData,
-				ValidData:   validData,
-				Nullable:    field.GetNullable(),
+				ElementType:     field.GetElementType(),
+				Data:            srcData,
+				NullableData:    nullableData,
+				ValidData:       validData,
+				Nullable:        field.GetNullable(),
+				ElementNullable: field.GetElementNullable(),
 			}
 
 		case schemapb.DataType_JSON:
@@ -886,14 +1035,28 @@ func ColumnBasedInsertMsgToInsertData(msg *msgstream.InsertMsg, collSchema *sche
 
 		case schemapb.DataType_ArrayOfVector:
 			vectorArray := srcField.GetVectors().GetVectorArray()
+			dim := vectorArray.GetDim()
+			if dim == 0 && field.GetElementType() != schemapb.DataType_SparseFloatVector {
+				fieldDim, err := GetDimFromParams(field.GetTypeParams())
+				if err != nil {
+					return nil, err
+				}
+				dim = int64(fieldDim)
+			}
+			srcData, nullableData, err := parseVectorArrayFieldData(field, vectorArray, int(msg.GetNumRows()))
+			if err != nil {
+				return nil, err
+			}
 			validData := srcField.GetValidData()
 
 			fieldData = &VectorArrayFieldData{
-				ElementType: field.GetElementType(),
-				Data:        vectorArray.GetData(),
-				Dim:         vectorArray.GetDim(),
-				ValidData:   validData,
-				Nullable:    field.GetNullable(),
+				ElementType:     field.GetElementType(),
+				Data:            srcData,
+				NullableData:    nullableData,
+				Dim:             dim,
+				ValidData:       validData,
+				Nullable:        field.GetNullable(),
+				ElementNullable: field.GetElementNullable(),
 			}
 		case schemapb.DataType_Geometry:
 			srcData := srcField.GetScalars().GetGeometryData().GetData()
@@ -1093,19 +1256,21 @@ func mergeStringField(data *InsertData, fid FieldID, field *StringFieldData) {
 func mergeArrayField(data *InsertData, fid FieldID, field *ArrayFieldData) {
 	if _, ok := data.Data[fid]; !ok {
 		fieldData := &ArrayFieldData{
-			ElementType:      field.ElementType,
-			Data:             nil,
-			ValidData:        nil,
-			ElementValidData: nil,
-			ElementNullable:  field.ElementNullable,
+			ElementType:     field.ElementType,
+			Data:            nil,
+			NullableData:    nil,
+			ValidData:       nil,
+			Nullable:        field.Nullable,
+			ElementNullable: field.ElementNullable,
 		}
 		data.Data[fid] = fieldData
 	}
 	fieldData := data.Data[fid].(*ArrayFieldData)
+	fieldData.Nullable = fieldData.Nullable || field.Nullable
 	fieldData.ElementNullable = fieldData.ElementNullable || field.ElementNullable
 	fieldData.Data = append(fieldData.Data, field.Data...)
+	fieldData.NullableData = append(fieldData.NullableData, field.NullableData...)
 	fieldData.ValidData = append(fieldData.ValidData, field.ValidData...)
-	fieldData.ElementValidData = append(fieldData.ElementValidData, field.ElementValidData...)
 }
 
 func mergeJSONField(data *InsertData, fid FieldID, field *JSONFieldData) {
@@ -1206,21 +1371,21 @@ func mergeSparseFloatVectorField(data *InsertData, fid FieldID, field *SparseFlo
 func mergeVectorArrayField(data *InsertData, fid FieldID, field *VectorArrayFieldData) {
 	if _, ok := data.Data[fid]; !ok {
 		fieldData := &VectorArrayFieldData{
-			Data:             nil,
-			Dim:              field.Dim,
-			ElementType:      field.ElementType,
-			ValidData:        nil,
-			Nullable:         field.Nullable,
-			ElementValidData: nil,
-			ElementNullable:  field.ElementNullable,
+			Data:            nil,
+			NullableData:    nil,
+			Dim:             field.Dim,
+			ElementType:     field.ElementType,
+			ValidData:       nil,
+			Nullable:        field.Nullable,
+			ElementNullable: field.ElementNullable,
 		}
 		data.Data[fid] = fieldData
 	}
 	fieldData := data.Data[fid].(*VectorArrayFieldData)
 	fieldData.ElementNullable = fieldData.ElementNullable || field.ElementNullable
 	fieldData.Data = append(fieldData.Data, field.Data...)
+	fieldData.NullableData = append(fieldData.NullableData, field.NullableData...)
 	fieldData.ValidData = append(fieldData.ValidData, field.ValidData...)
-	fieldData.ElementValidData = append(fieldData.ElementValidData, field.ElementValidData...)
 }
 
 func mergeInt8VectorField(data *InsertData, fid FieldID, field *Int8VectorFieldData) {
@@ -1370,14 +1535,77 @@ func stringFieldDataToPbBytes(field *StringFieldData) ([]byte, error) {
 	return proto.Marshal(arr)
 }
 
-func arrayFieldDataToPbBytes(field *ArrayFieldData) ([]byte, error) {
-	arr := &schemapb.ArrayArray{Data: field.Data}
-	return proto.Marshal(arr)
-}
-
 func jsonFieldDataToPbBytes(field *JSONFieldData) ([]byte, error) {
 	arr := &schemapb.JSONArray{Data: field.Data}
 	return proto.Marshal(arr)
+}
+
+func buildArrayArrayPB(field *ArrayFieldData) (*schemapb.ArrayArray, error) {
+	arr := &schemapb.ArrayArray{
+		ElementType: field.ElementType,
+	}
+	if field.GetElementNullable() {
+		arr.NullableData = field.NullableData
+		return arr, nil
+	}
+	arr.Data = field.Data
+	return arr, nil
+}
+
+func buildVectorArrayPB(field *VectorArrayFieldData) (*schemapb.VectorArray, error) {
+	vectorArray := &schemapb.VectorArray{
+		Dim:         field.Dim,
+		ElementType: field.ElementType,
+	}
+	if field.GetElementNullable() {
+		for _, row := range field.NullableData {
+			if err := validateNullableVectorArrayValue(field.ElementType, field.Dim, row); err != nil {
+				return nil, err
+			}
+		}
+		vectorArray.NullableData = field.NullableData
+		return vectorArray, nil
+	}
+	vectorArray.Data = field.Data
+	return vectorArray, nil
+}
+
+func validateColumnBasedArrayFields(schema *schemapb.CollectionSchema, msg *msgstream.InsertMsg) error {
+	fields := make(map[int64]*schemapb.FieldSchema)
+	for _, field := range typeutil.GetAllFieldSchemas(schema) {
+		if field.GetDataType() == schemapb.DataType_Array || field.GetDataType() == schemapb.DataType_ArrayOfVector {
+			fields[field.GetFieldID()] = field
+		}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	for _, srcField := range msg.GetFieldsData() {
+		field, ok := fields[srcField.GetFieldId()]
+		if !ok {
+			continue
+		}
+		switch field.GetDataType() {
+		case schemapb.DataType_Array:
+			arrayData := srcField.GetScalars().GetArrayData()
+			if !field.GetElementNullable() && len(arrayData.GetNullableData()) == 0 {
+				continue
+			}
+			if err := validateScalarArrayRepresentation(field, arrayData, int(msg.GetNumRows())); err != nil {
+				return err
+			}
+		case schemapb.DataType_ArrayOfVector:
+			vectorArray := srcField.GetVectors().GetVectorArray()
+			if !field.GetElementNullable() && len(vectorArray.GetNullableData()) == 0 {
+				continue
+			}
+			if err := validateVectorArrayRepresentation(field, vectorArray, int(msg.GetNumRows())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func binaryWrite(endian binary.ByteOrder, data interface{}) ([]byte, error) {
@@ -1538,15 +1766,17 @@ func TransferInsertDataToInsertRecord(insertData *InsertData) (*segcorepb.Insert
 				ValidData: rawData.ValidData,
 			}
 		case *ArrayFieldData:
+			arrayData, err := buildArrayArrayPB(rawData)
+			if err != nil {
+				return insertRecord, err
+			}
 			fieldData = &schemapb.FieldData{
 				Type:    schemapb.DataType_Array,
 				FieldId: fieldID,
 				Field: &schemapb.FieldData_Scalars{
 					Scalars: &schemapb.ScalarField{
 						Data: &schemapb.ScalarField_ArrayData{
-							ArrayData: &schemapb.ArrayArray{
-								Data: rawData.Data,
-							},
+							ArrayData: arrayData,
 						},
 					},
 				},
@@ -1669,17 +1899,17 @@ func TransferInsertDataToInsertRecord(insertData *InsertData) (*segcorepb.Insert
 				ValidData: rawData.ValidData,
 			}
 		case *VectorArrayFieldData:
+			vectorArray, err := buildVectorArrayPB(rawData)
+			if err != nil {
+				return insertRecord, err
+			}
 			fieldData = &schemapb.FieldData{
 				Type:    schemapb.DataType_ArrayOfVector,
 				FieldId: fieldID,
 				Field: &schemapb.FieldData_Vectors{
 					Vectors: &schemapb.VectorField{
 						Data: &schemapb.VectorField_VectorArray{
-							VectorArray: &schemapb.VectorArray{
-								Data:        rawData.Data,
-								ElementType: rawData.ElementType,
-								Dim:         rawData.Dim,
-							},
+							VectorArray: vectorArray,
 						},
 						Dim: rawData.Dim,
 					},
@@ -1708,6 +1938,9 @@ func TransferInsertMsgToInsertRecord(schema *schemapb.CollectionSchema, msg *msg
 
 	// column base insert msg
 	if err := validateColumnBasedInsertMsgNullableVectors(schema, msg); err != nil {
+		return nil, err
+	}
+	if err := validateColumnBasedArrayFields(schema, msg); err != nil {
 		return nil, err
 	}
 

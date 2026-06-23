@@ -87,7 +87,7 @@ func RecordToInsertData(
 		}
 
 		for i := 0; i < numRows; i++ {
-			val, err := entry.deserialize(col, i, elementType, dim, true /* shouldCopy */)
+			val, err := entry.deserialize(col, i, elementType, dim, true /* shouldCopy */, field.GetElementNullable())
 			if err != nil {
 				return nil, fmt.Errorf("deserialize field %s row %d: %w",
 					field.GetName(), i, err)

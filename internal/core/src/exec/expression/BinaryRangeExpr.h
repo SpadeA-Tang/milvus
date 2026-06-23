@@ -225,28 +225,44 @@ struct BinaryRangeElementFuncForArray {
                     res[i] = false;
                     continue;
                 }
-                auto value = src[offset].get_data<GetType>(index);
+                if (!src[offset].is_element_valid(index)) {
+                    res[i] = valid_res[i] = false;
+                    continue;
+                }
+                auto value = src[offset].get_data_unchecked<GetType>(index);
                 res[i] = val1 <= value && value <= val2;
             } else if constexpr (lower_inclusive && !upper_inclusive) {
                 if (index >= src[offset].length()) {
                     res[i] = false;
                     continue;
                 }
-                auto value = src[offset].get_data<GetType>(index);
+                if (!src[offset].is_element_valid(index)) {
+                    res[i] = valid_res[i] = false;
+                    continue;
+                }
+                auto value = src[offset].get_data_unchecked<GetType>(index);
                 res[i] = val1 <= value && value < val2;
             } else if constexpr (!lower_inclusive && upper_inclusive) {
                 if (index >= src[offset].length()) {
                     res[i] = false;
                     continue;
                 }
-                auto value = src[offset].get_data<GetType>(index);
+                if (!src[offset].is_element_valid(index)) {
+                    res[i] = valid_res[i] = false;
+                    continue;
+                }
+                auto value = src[offset].get_data_unchecked<GetType>(index);
                 res[i] = val1 < value && value <= val2;
             } else {
                 if (index >= src[offset].length()) {
                     res[i] = false;
                     continue;
                 }
-                auto value = src[offset].get_data<GetType>(index);
+                if (!src[offset].is_element_valid(index)) {
+                    res[i] = valid_res[i] = false;
+                    continue;
+                }
+                auto value = src[offset].get_data_unchecked<GetType>(index);
                 res[i] = val1 < value && value < val2;
             }
         }

@@ -288,6 +288,7 @@ GetFieldDatasFromStorageV2(std::vector<std::vector<std::string>>& remote_files,
                            int64_t field_id,
                            DataType data_type,
                            DataType element_type,
+                           bool element_nullable,
                            int64_t dim,
                            milvus_storage::ArrowFileSystemPtr fs);
 
@@ -336,6 +337,14 @@ CreateFieldData(const DataType& type,
                 bool nullable = false,
                 int64_t dim = 1,
                 int64_t total_num_rows = 0);
+
+FieldDataPtr
+CreateFieldData(const DataType& type,
+                const DataType& element_type,
+                bool nullable,
+                bool element_nullable,
+                int64_t dim,
+                int64_t total_num_rows);
 
 int64_t
 GetByteSizeOfFieldDatas(const std::vector<FieldDataPtr>& field_datas);
@@ -416,10 +425,16 @@ ConvertFieldDataToArrowDataWrapper(const FieldDataPtr& field_data) {
 
     storage::BinlogReaderPtr reader = std::make_shared<storage::BinlogReader>(
         file_data, event_data_bytes.size());
+    bool element_nullable = false;
+    auto array_field = std::dynamic_pointer_cast<FieldData<Array>>(field_data);
+    if (array_field != nullptr) {
+        element_nullable = array_field->is_element_nullable();
+    }
     event_data = storage::BaseEventData(reader,
                                         event_data_bytes.size(),
                                         field_data->get_data_type(),
                                         field_data->IsNullable(),
+                                        element_nullable,
                                         false);
     return std::make_shared<ArrowDataWrapper>(
         event_data.payload_reader->get_reader(),

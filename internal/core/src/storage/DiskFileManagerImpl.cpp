@@ -812,6 +812,8 @@ DiskFileManagerImpl::cache_raw_data_to_disk_storage_v2(const Config& config) {
                                                  GetFieldDataMeta().field_id,
                                                  data_type.value(),
                                                  element_type.value(),
+                                                 field_meta_.field_schema
+                                                     .element_nullable(),
                                                  dim,
                                                  fs_);
     }
@@ -1192,6 +1194,7 @@ DiskFileManagerImpl::cache_opt_field_to_disk_v2(const Config& config) {
                                                       field_id,
                                                       field_type,
                                                       element_type,
+                                                      false,
                                                       1,
                                                       fs_);
 

@@ -498,6 +498,51 @@ FieldDataImpl<Type, is_type_entire_row>::FillFieldData(
     }
 }
 
+void
+FieldDataArrayImpl::FillFieldData(const std::shared_ptr<arrow::Array> array) {
+    AssertInfo(array != nullptr, "null arrow array");
+    auto element_count = array->length();
+    if (element_count == 0) {
+        return;
+    }
+    this->null_count_ += array->null_count();
+
+    auto array_array = std::dynamic_pointer_cast<arrow::BinaryArray>(array);
+    AssertInfo(array_array != nullptr,
+               "ARRAY field data expects arrow::BinaryArray, got {}",
+               array->type()->ToString());
+
+    std::vector<Array> values(element_count);
+    int null_number = 0;
+    for (size_t index = 0; index < element_count; ++index) {
+        if (array_array->IsNull(index)) {
+            null_number++;
+            continue;
+        }
+
+        auto str = array_array->GetView(index);
+        if (element_nullable_) {
+            NullableScalarArrayValueProto field_data;
+            auto success = field_data.ParseFromArray(str.data(), str.size());
+            AssertInfo(success, "parse nullable array from string failed");
+            values[index] = Array(field_data);
+        } else {
+            ScalarFieldProto field_data;
+            auto success = field_data.ParseFromArray(str.data(), str.size());
+            AssertInfo(success, "parse array from string failed");
+            values[index] = Array(field_data);
+        }
+    }
+    if (this->nullable_) {
+        return Base::FillFieldData(values.data(),
+                                   array->null_bitmap_data(),
+                                   element_count,
+                                   array->offset());
+    }
+    AssertInfo(null_number == 0, "get null array when not nullable");
+    return Base::FillFieldData(values.data(), element_count);
+}
+
 // used for generate added field which has no related binlogs
 template <typename Type, bool is_type_entire_row>
 void

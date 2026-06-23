@@ -612,6 +612,29 @@ func TestVectorArrayFieldData_NonNullable(t *testing.T) {
 	assert.Equal(t, vec, fd.GetRow(0))
 }
 
+func TestVectorArrayFieldData_ElementNullableAppendRejectsNonCompactData(t *testing.T) {
+	fd := &VectorArrayFieldData{
+		Dim:             2,
+		ElementType:     schemapb.DataType_FloatVector,
+		Data:            make([]*schemapb.VectorField, 0),
+		ElementNullable: true,
+	}
+
+	err := fd.AppendRow(&schemapb.NullableVectorArrayValue{
+		Data:      makeFloatVec(2, 1, 2, 0, 0, 3, 4),
+		ValidData: []bool{true, false, true},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "compact physical payload rows")
+
+	require.NoError(t, fd.AppendRow(&schemapb.NullableVectorArrayValue{
+		Data:      makeFloatVec(2, 1, 2, 3, 4),
+		ValidData: []bool{true, false, true},
+	}))
+	assert.Equal(t, []float32{1, 2, 3, 4}, fd.NullableData[0].GetData().GetFloatVector().GetData())
+	assert.Equal(t, []bool{true, false, true}, fd.NullableData[0].GetValidData())
+}
+
 func TestVectorArrayFieldData_AppendValidDataRows(t *testing.T) {
 	fd := &VectorArrayFieldData{
 		Dim:         4,

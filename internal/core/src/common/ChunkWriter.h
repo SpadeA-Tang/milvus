@@ -272,8 +272,12 @@ class GeometryChunkWriter : public ChunkWriterBase {
 
 class ArrayChunkWriter : public ChunkWriterBase {
  public:
-    ArrayChunkWriter(const milvus::DataType element_type, bool nullable)
-        : ChunkWriterBase(nullable), element_type_(element_type) {
+    ArrayChunkWriter(const milvus::DataType element_type,
+                     bool nullable,
+                     bool element_nullable)
+        : ChunkWriterBase(nullable),
+          element_type_(element_type),
+          element_nullable_(element_nullable) {
     }
 
     std::pair<size_t, size_t>
@@ -285,6 +289,7 @@ class ArrayChunkWriter : public ChunkWriterBase {
 
  private:
     const milvus::DataType element_type_;
+    const bool element_nullable_;
     // Parsed protobufs cached by calculate_size so write_to_target does not
     // pay a second ScalarFieldProto parse per row.
     std::vector<Array> cached_arrays_;

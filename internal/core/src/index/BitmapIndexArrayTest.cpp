@@ -338,7 +338,10 @@ class ArrayBitmapIndexTest : public testing::Test {
                     return false;
                 }
                 for (size_t j = 0; j < array.length(); ++j) {
-                    auto val = array.template get_data<T>(j);
+                    if (!array.is_element_valid(j)) {
+                        continue;
+                    }
+                    auto val = array.template get_data_unchecked<T>(j);
                     if (s.find(val) != s.end()) {
                         return true;
                     }

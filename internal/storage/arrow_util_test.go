@@ -22,6 +22,7 @@ import (
 
 	"github.com/apache/arrow/go/v17/arrow"
 	"github.com/apache/arrow/go/v17/arrow/array"
+	"github.com/apache/arrow/go/v17/arrow/memory"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/milvus-io/milvus-proto/go-api/v3/commonpb"
@@ -225,7 +226,7 @@ func TestGenerateEmptyArray(t *testing.T) {
 				assert.NoError(t, err)
 				assert.EqualValues(t, rowNum, a.Len())
 				for i := range rowNum {
-					value, deserErr := serdeMap[tc.field.DataType].deserialize(a, i, schemapb.DataType_None, 0, false)
+					value, deserErr := serdeMap[tc.field.DataType].deserialize(a, i, schemapb.DataType_None, 0, false, false)
 					assert.True(t, a.IsValid(i))
 					assert.NoError(t, deserErr)
 					assert.Equal(t, tc.expectValue, value)
@@ -314,4 +315,52 @@ func TestRecordBuilderNullableDenseVectorPreservesDimMetadata(t *testing.T) {
 	dim, ok := field.Metadata.GetValue("dim")
 	assert.True(t, ok)
 	assert.Equal(t, "4", dim)
+}
+
+func TestRecordBuilderArrayOfVectorPreservesElementNulls(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Fields: []*schemapb.FieldSchema{
+			{
+				FieldID:         100,
+				Name:            "vec_array",
+				DataType:        schemapb.DataType_ArrayOfVector,
+				ElementType:     schemapb.DataType_FloatVector,
+				ElementNullable: true,
+				TypeParams: []*commonpb.KeyValuePair{
+					{Key: "dim", Value: "2"},
+				},
+			},
+		},
+	}
+	entry := serdeMap[schemapb.DataType_ArrayOfVector]
+	sourceBuilder := array.NewBuilder(memory.DefaultAllocator, entry.arrowType(2, schemapb.DataType_FloatVector))
+	defer sourceBuilder.Release()
+	assert.NoError(t, entry.serialize(sourceBuilder, &schemapb.NullableVectorArrayValue{
+		Data:      makeFloatVec(2, 1, 2, 3, 4),
+		ValidData: []bool{true, false, true},
+	}, schemapb.DataType_FloatVector))
+
+	arr := sourceBuilder.NewArray()
+	sourceRecord := NewSimpleArrowRecord(array.NewRecord(
+		arrow.NewSchema([]arrow.Field{{Name: "vec_array", Type: arr.DataType(), Nullable: true}}, nil),
+		[]arrow.Array{arr},
+		int64(arr.Len()),
+	), map[FieldID]int{100: 0})
+	defer sourceRecord.Release()
+
+	rb := NewRecordBuilder(schema)
+	defer rb.Release()
+	assert.NoError(t, rb.Append(sourceRecord, 0, sourceRecord.Len()))
+	rebuilt := rb.Build()
+	defer rebuilt.Release()
+
+	listArray, ok := rebuilt.Column(100).(*array.List)
+	if assert.True(t, ok) {
+		child, ok := listArray.ListValues().(*array.FixedSizeBinary)
+		if assert.True(t, ok) {
+			assert.True(t, child.IsValid(0))
+			assert.True(t, child.IsNull(1))
+			assert.True(t, child.IsValid(2))
+		}
+	}
 }

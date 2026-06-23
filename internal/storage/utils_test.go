@@ -1258,6 +1258,340 @@ func TestColumnBasedInsertMsgToInsertDataNullable(t *testing.T) {
 	}
 }
 
+func TestColumnBasedInsertMsgToInsertDataElementNullableArrayFields(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Name: "element_nullable_arrays",
+		Fields: []*schemapb.FieldSchema{
+			{
+				FieldID:      100,
+				Name:         "pk",
+				DataType:     schemapb.DataType_Int64,
+				IsPrimaryKey: true,
+			},
+			{
+				FieldID:         101,
+				Name:            "arr",
+				DataType:        schemapb.DataType_Array,
+				ElementType:     schemapb.DataType_Int32,
+				ElementNullable: true,
+			},
+			{
+				FieldID:         102,
+				Name:            "vec_arr",
+				DataType:        schemapb.DataType_ArrayOfVector,
+				ElementType:     schemapb.DataType_FloatVector,
+				ElementNullable: true,
+				TypeParams: []*commonpb.KeyValuePair{
+					{Key: common.DimKey, Value: "2"},
+				},
+			},
+		},
+	}
+	msg := &msgstream.InsertMsg{
+		InsertRequest: &msgpb.InsertRequest{
+			NumRows: 2,
+			Version: msgpb.InsertDataVersion_ColumnBased,
+			FieldsData: []*schemapb.FieldData{
+				{
+					Type:    schemapb.DataType_Int64,
+					FieldId: 100,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_LongData{LongData: &schemapb.LongArray{Data: []int64{1, 2}}},
+					}},
+				},
+				{
+					Type:    schemapb.DataType_Array,
+					FieldId: 101,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_ArrayData{ArrayData: &schemapb.ArrayArray{
+							ElementType: schemapb.DataType_Int32,
+							NullableData: []*schemapb.NullableScalarArrayValue{
+								{
+									Data: &schemapb.ScalarField{
+										Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{10, 0, 20}}},
+									},
+									ValidData: []bool{true, false, true},
+								},
+								{
+									Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{}}},
+									ValidData: []bool{},
+								},
+							},
+						}},
+					}},
+				},
+				{
+					Type:    schemapb.DataType_ArrayOfVector,
+					FieldId: 102,
+					Field: &schemapb.FieldData_Vectors{Vectors: &schemapb.VectorField{
+						Dim: 2,
+						Data: &schemapb.VectorField_VectorArray{VectorArray: &schemapb.VectorArray{
+							Dim:         2,
+							ElementType: schemapb.DataType_FloatVector,
+							NullableData: []*schemapb.NullableVectorArrayValue{
+								{
+									Data:      makeFloatVec(2, 1, 2, 3, 4),
+									ValidData: []bool{true, false, true},
+								},
+								{
+									Data:      makeFloatVec(2),
+									ValidData: []bool{},
+								},
+							},
+						}},
+					}},
+				},
+			},
+		},
+	}
+
+	idata, err := ColumnBasedInsertMsgToInsertData(msg, schema)
+	require.NoError(t, err)
+
+	arrayData := idata.Data[101].(*ArrayFieldData)
+	require.True(t, arrayData.ElementNullable)
+	require.Len(t, arrayData.NullableData, 2)
+	require.Equal(t, []bool{true, false, true}, arrayData.NullableData[0].GetValidData())
+	require.Empty(t, arrayData.NullableData[1].GetValidData())
+	require.Equal(t, []int32{10, 0, 20}, arrayData.NullableData[0].GetData().GetIntData().GetData())
+
+	vectorArrayData := idata.Data[102].(*VectorArrayFieldData)
+	require.True(t, vectorArrayData.ElementNullable)
+	require.Len(t, vectorArrayData.NullableData, 2)
+	require.Equal(t, []bool{true, false, true}, vectorArrayData.NullableData[0].GetValidData())
+	require.Empty(t, vectorArrayData.NullableData[1].GetValidData())
+	require.Equal(t, []float32{1, 2, 3, 4}, vectorArrayData.NullableData[0].GetData().GetFloatVector().GetData())
+}
+
+func TestColumnBasedInsertMsgToInsertDataRejectsInvalidElementNullableArrayData(t *testing.T) {
+	makeSchema := func(elementNullable bool) *schemapb.CollectionSchema {
+		return &schemapb.CollectionSchema{
+			Name: "invalid_element_nullable_array",
+			Fields: []*schemapb.FieldSchema{
+				{
+					FieldID:      100,
+					Name:         "pk",
+					DataType:     schemapb.DataType_Int64,
+					IsPrimaryKey: true,
+				},
+				{
+					FieldID:         101,
+					Name:            "arr",
+					DataType:        schemapb.DataType_Array,
+					ElementType:     schemapb.DataType_Int32,
+					ElementNullable: elementNullable,
+				},
+			},
+		}
+	}
+	makeMsg := func(arrayData *schemapb.ArrayArray) *msgstream.InsertMsg {
+		return &msgstream.InsertMsg{
+			InsertRequest: &msgpb.InsertRequest{
+				NumRows: 2,
+				Version: msgpb.InsertDataVersion_ColumnBased,
+				FieldsData: []*schemapb.FieldData{
+					{
+						Type:    schemapb.DataType_Int64,
+						FieldId: 100,
+						Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+							Data: &schemapb.ScalarField_LongData{LongData: &schemapb.LongArray{Data: []int64{1, 2}}},
+						}},
+					},
+					{
+						Type:    schemapb.DataType_Array,
+						FieldId: 101,
+						Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+							Data: &schemapb.ScalarField_ArrayData{ArrayData: arrayData},
+						}},
+					},
+				},
+			},
+		}
+	}
+
+	validNullableRow := &schemapb.NullableScalarArrayValue{
+		Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{1}}}},
+		ValidData: []bool{true},
+	}
+
+	tests := []struct {
+		name            string
+		elementNullable bool
+		arrayData       *schemapb.ArrayArray
+		errContains     string
+	}{
+		{
+			name:            "plain and nullable data both set",
+			elementNullable: true,
+			arrayData: &schemapb.ArrayArray{
+				ElementType:  schemapb.DataType_Int32,
+				Data:         []*schemapb.ScalarField{{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{1}}}}},
+				NullableData: []*schemapb.NullableScalarArrayValue{validNullableRow},
+			},
+			errContains: "cannot both be set",
+		},
+		{
+			name:            "plain data with element nullable schema",
+			elementNullable: true,
+			arrayData: &schemapb.ArrayArray{
+				ElementType: schemapb.DataType_Int32,
+				Data: []*schemapb.ScalarField{
+					{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{1}}}},
+					{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{2}}}},
+				},
+			},
+			errContains: "must use nullable_data",
+		},
+		{
+			name:            "nullable row count mismatch",
+			elementNullable: true,
+			arrayData: &schemapb.ArrayArray{
+				ElementType:  schemapb.DataType_Int32,
+				NullableData: []*schemapb.NullableScalarArrayValue{validNullableRow},
+			},
+			errContains: "row count",
+		},
+		{
+			name:            "nullable data without element nullable schema",
+			elementNullable: false,
+			arrayData: &schemapb.ArrayArray{
+				ElementType: schemapb.DataType_Int32,
+				NullableData: []*schemapb.NullableScalarArrayValue{
+					validNullableRow,
+					validNullableRow,
+				},
+			},
+			errContains: "not element nullable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ColumnBasedInsertMsgToInsertData(makeMsg(tt.arrayData), makeSchema(tt.elementNullable))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestColumnBasedInsertMsgToInsertDataRejectsNonCompactElementNullableVectorArrayData(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Name: "invalid_element_nullable_vector_array",
+		Fields: []*schemapb.FieldSchema{
+			{
+				FieldID:      100,
+				Name:         "pk",
+				DataType:     schemapb.DataType_Int64,
+				IsPrimaryKey: true,
+			},
+			{
+				FieldID:         101,
+				Name:            "vec_arr",
+				DataType:        schemapb.DataType_ArrayOfVector,
+				ElementType:     schemapb.DataType_FloatVector,
+				ElementNullable: true,
+				TypeParams: []*commonpb.KeyValuePair{
+					{Key: common.DimKey, Value: "2"},
+				},
+			},
+		},
+	}
+	msg := &msgstream.InsertMsg{
+		InsertRequest: &msgpb.InsertRequest{
+			NumRows: 1,
+			Version: msgpb.InsertDataVersion_ColumnBased,
+			FieldsData: []*schemapb.FieldData{
+				{
+					Type:    schemapb.DataType_Int64,
+					FieldId: 100,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_LongData{LongData: &schemapb.LongArray{Data: []int64{1}}},
+					}},
+				},
+				{
+					Type:    schemapb.DataType_ArrayOfVector,
+					FieldId: 101,
+					Field: &schemapb.FieldData_Vectors{Vectors: &schemapb.VectorField{
+						Dim: 2,
+						Data: &schemapb.VectorField_VectorArray{VectorArray: &schemapb.VectorArray{
+							Dim:         2,
+							ElementType: schemapb.DataType_FloatVector,
+							NullableData: []*schemapb.NullableVectorArrayValue{
+								{
+									Data:      makeFloatVec(2, 1, 2, 0, 0, 3, 4),
+									ValidData: []bool{true, false, true},
+								},
+							},
+						}},
+					}},
+				},
+			},
+		},
+	}
+
+	_, err := ColumnBasedInsertMsgToInsertData(msg, schema)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "compact physical payload rows")
+
+	_, err = TransferInsertMsgToInsertRecord(schema, msg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "compact physical payload rows")
+}
+
+func TestTransferInsertMsgToInsertRecordRejectsNullableArrayPayloadWithoutElementNullableSchema(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Name: "nullable_array_payload_without_element_nullable_schema",
+		Fields: []*schemapb.FieldSchema{
+			{
+				FieldID:      100,
+				Name:         "pk",
+				DataType:     schemapb.DataType_Int64,
+				IsPrimaryKey: true,
+			},
+			{
+				FieldID:     101,
+				Name:        "arr",
+				DataType:    schemapb.DataType_Array,
+				ElementType: schemapb.DataType_Int32,
+			},
+		},
+	}
+	msg := &msgstream.InsertMsg{
+		InsertRequest: &msgpb.InsertRequest{
+			NumRows: 1,
+			Version: msgpb.InsertDataVersion_ColumnBased,
+			FieldsData: []*schemapb.FieldData{
+				{
+					Type:    schemapb.DataType_Int64,
+					FieldId: 100,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_LongData{LongData: &schemapb.LongArray{Data: []int64{1}}},
+					}},
+				},
+				{
+					Type:    schemapb.DataType_Array,
+					FieldId: 101,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_ArrayData{ArrayData: &schemapb.ArrayArray{
+							ElementType: schemapb.DataType_Int32,
+							NullableData: []*schemapb.NullableScalarArrayValue{
+								{
+									Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{1}}}},
+									ValidData: []bool{true},
+								},
+							},
+						}},
+					}},
+				},
+			},
+		},
+	}
+
+	_, err := TransferInsertMsgToInsertRecord(schema, msg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not element nullable")
+}
+
 func TestColumnBasedInsertMsgToInsertDataRejectsNullableVectorNonCompactData(t *testing.T) {
 	validData := []bool{true, false, true}
 	makeSchema := func(dataType schemapb.DataType, dim string) *schemapb.CollectionSchema {
@@ -3167,4 +3501,137 @@ func TestTransferInsertDataToInsertRecord_NullableArrayOfVector(t *testing.T) {
 		}
 	}
 	assert.True(t, found)
+}
+
+func TestTransferInsertDataToInsertRecord_ElementNullableArrayFields(t *testing.T) {
+	insertData := &InsertData{
+		Data: map[FieldID]FieldData{
+			100: &ArrayFieldData{
+				ElementType: schemapb.DataType_Int32,
+				NullableData: []*schemapb.NullableScalarArrayValue{
+					{
+						Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{1, 0, 2}}}},
+						ValidData: []bool{true, false, true},
+					},
+					{
+						Data: &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{}}},
+					},
+				},
+				ElementNullable: true,
+			},
+			101: &VectorArrayFieldData{
+				Dim:         2,
+				ElementType: schemapb.DataType_FloatVector,
+				NullableData: []*schemapb.NullableVectorArrayValue{
+					{
+						Data:      makeFloatVec(2, 1, 2, 3, 4),
+						ValidData: []bool{true, false, true},
+					},
+					{
+						Data: makeFloatVec(2),
+					},
+				},
+				ElementNullable: true,
+			},
+		},
+	}
+
+	record, err := TransferInsertDataToInsertRecord(insertData)
+	require.NoError(t, err)
+
+	fields := lo.SliceToMap(record.GetFieldsData(), func(field *schemapb.FieldData) (int64, *schemapb.FieldData) {
+		return field.GetFieldId(), field
+	})
+	arrayData := fields[100].GetScalars().GetArrayData()
+	require.Empty(t, arrayData.GetData())
+	require.Len(t, arrayData.GetNullableData(), 2)
+	require.Equal(t, schemapb.DataType_Int32, arrayData.GetElementType())
+	require.Equal(t, []bool{true, false, true}, arrayData.GetNullableData()[0].GetValidData())
+	require.Equal(t, []int32{1, 0, 2}, arrayData.GetNullableData()[0].GetData().GetIntData().GetData())
+
+	vectorArrayData := fields[101].GetVectors().GetVectorArray()
+	require.Empty(t, vectorArrayData.GetData())
+	require.Len(t, vectorArrayData.GetNullableData(), 2)
+	require.Equal(t, schemapb.DataType_FloatVector, vectorArrayData.GetElementType())
+	require.Equal(t, int64(2), vectorArrayData.GetDim())
+	require.Equal(t, []bool{true, false, true}, vectorArrayData.GetNullableData()[0].GetValidData())
+	require.Equal(t, []float32{1, 2, 3, 4}, vectorArrayData.GetNullableData()[0].GetData().GetFloatVector().GetData())
+}
+
+func TestTransferInsertMsgToInsertRecordRejectsPlainElementNullableArrayFields(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Name: "reject_plain_element_nullable_arrays",
+		Fields: []*schemapb.FieldSchema{
+			{
+				FieldID:      100,
+				Name:         "pk",
+				DataType:     schemapb.DataType_Int64,
+				IsPrimaryKey: true,
+			},
+			{
+				FieldID:         101,
+				Name:            "arr",
+				DataType:        schemapb.DataType_Array,
+				ElementType:     schemapb.DataType_Int32,
+				ElementNullable: true,
+			},
+			{
+				FieldID:         102,
+				Name:            "vec_arr",
+				DataType:        schemapb.DataType_ArrayOfVector,
+				ElementType:     schemapb.DataType_FloatVector,
+				ElementNullable: true,
+				TypeParams: []*commonpb.KeyValuePair{
+					{Key: common.DimKey, Value: "2"},
+				},
+			},
+		},
+	}
+	msg := &msgstream.InsertMsg{
+		InsertRequest: &msgpb.InsertRequest{
+			NumRows: 2,
+			Version: msgpb.InsertDataVersion_ColumnBased,
+			FieldsData: []*schemapb.FieldData{
+				{
+					Type:    schemapb.DataType_Int64,
+					FieldId: 100,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_LongData{LongData: &schemapb.LongArray{Data: []int64{1, 2}}},
+					}},
+				},
+				{
+					Type:    schemapb.DataType_Array,
+					FieldId: 101,
+					Field: &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{
+						Data: &schemapb.ScalarField_ArrayData{ArrayData: &schemapb.ArrayArray{
+							ElementType: schemapb.DataType_Int32,
+							Data: []*schemapb.ScalarField{
+								{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{10, 20}}}},
+								{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{}}},
+							},
+						}},
+					}},
+				},
+				{
+					Type:    schemapb.DataType_ArrayOfVector,
+					FieldId: 102,
+					Field: &schemapb.FieldData_Vectors{Vectors: &schemapb.VectorField{
+						Dim: 2,
+						Data: &schemapb.VectorField_VectorArray{VectorArray: &schemapb.VectorArray{
+							Dim:         2,
+							ElementType: schemapb.DataType_FloatVector,
+							Data: []*schemapb.VectorField{
+								makeFloatVec(2, 1, 2, 3, 4),
+								makeFloatVec(2),
+							},
+						}},
+					}},
+				},
+			},
+		},
+	}
+
+	_, err := TransferInsertMsgToInsertRecord(schema, msg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must use nullable_data")
 }

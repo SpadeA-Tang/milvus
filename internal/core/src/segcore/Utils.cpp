@@ -236,71 +236,70 @@ GetRawDataSizeOfDataArray(const DataArray* data,
                 break;
             }
             case DataType::ARRAY: {
-                auto& array_data = FIELD_DATA(data, array);
-                switch (field_meta.get_element_type()) {
-                    case DataType::BOOL: {
-                        for (auto& array_bytes : array_data) {
+                auto add_array_size = [&](const proto::schema::ScalarField&
+                                              array_bytes) {
+                    switch (field_meta.get_element_type()) {
+                        case DataType::BOOL: {
                             result += array_bytes.bool_data().data_size() *
                                       sizeof(bool);
+                            break;
                         }
-                        break;
-                    }
-                    case DataType::INT8:
-                    case DataType::INT16:
-                    case DataType::INT32: {
-                        for (auto& array_bytes : array_data) {
+                        case DataType::INT8:
+                        case DataType::INT16:
+                        case DataType::INT32: {
                             result += array_bytes.int_data().data_size() *
                                       sizeof(int);
+                            break;
                         }
-                        break;
-                    }
-                    case DataType::INT64: {
-                        for (auto& array_bytes : array_data) {
+                        case DataType::INT64: {
                             result += array_bytes.long_data().data_size() *
                                       sizeof(int64_t);
+                            break;
                         }
-                        break;
-                    }
-                    case DataType::FLOAT: {
-                        for (auto& array_bytes : array_data) {
+                        case DataType::FLOAT: {
                             result += array_bytes.float_data().data_size() *
                                       sizeof(float);
+                            break;
                         }
-                        break;
-                    }
-                    case DataType::DOUBLE: {
-                        for (auto& array_bytes : array_data) {
+                        case DataType::DOUBLE: {
                             result += array_bytes.double_data().data_size() *
                                       sizeof(double);
+                            break;
                         }
-                        break;
-                    }
-                    case DataType::TIMESTAMPTZ: {
-                        for (auto& array_bytes : array_data) {
+                        case DataType::TIMESTAMPTZ: {
                             result +=
                                 array_bytes.timestamptz_data().data_size() *
                                 sizeof(int64_t);
+                            break;
                         }
-                        break;
-                    }
-                    case DataType::VARCHAR:
-                    case DataType::STRING:
-                    case DataType::TEXT: {
-                        for (auto& array_bytes : array_data) {
+                        case DataType::VARCHAR:
+                        case DataType::STRING:
+                        case DataType::TEXT: {
                             auto element_num =
                                 array_bytes.string_data().data_size();
                             for (int i = 0; i < element_num; ++i) {
                                 result +=
                                     array_bytes.string_data().data(i).size();
                             }
+                            break;
                         }
-                        break;
+                        default:
+                            ThrowInfo(
+                                DataTypeInvalid,
+                                fmt::format("unsupported element type for "
+                                            "array",
+                                            field_meta.get_element_type()));
                     }
-                    default:
-                        ThrowInfo(
-                            DataTypeInvalid,
-                            fmt::format("unsupported element type for array",
-                                        field_meta.get_element_type()));
+                };
+                const auto& array_data = data->scalars().array_data();
+                if (array_data.nullable_data_size() > 0) {
+                    for (const auto& array_bytes : array_data.nullable_data()) {
+                        add_array_size(array_bytes.data());
+                    }
+                } else {
+                    for (const auto& array_bytes : array_data.data()) {
+                        add_array_size(array_bytes);
+                    }
                 }
 
                 break;
@@ -380,6 +379,14 @@ CreateEmptyScalarDataArray(int64_t count, const FieldMeta& field_meta) {
     auto scalar_array = data_array->mutable_scalars();
     SetUpScalarFieldData(
         scalar_array, data_type, field_meta.get_element_type(), count);
+    if (data_type == DataType::ARRAY && field_meta.is_element_nullable()) {
+        auto obj = scalar_array->mutable_array_data();
+        obj->clear_data();
+        obj->mutable_nullable_data()->Reserve(count);
+        for (int i = 0; i < count; ++i) {
+            obj->add_nullable_data();
+        }
+    }
     return data_array;
 }
 
@@ -1059,11 +1066,16 @@ MergeDataArray(std::vector<MergeBase>& merge_bases,
                 auto obj = scalar_array->mutable_array_data();
                 obj->set_element_type(
                     proto::schema::DataType(field_meta.get_element_type()));
-                auto* mutable_src = src_field_data->mutable_scalars()
-                                        ->mutable_array_data()
-                                        ->mutable_data();
-                *(obj->mutable_data()->Add()) =
-                    std::move(*mutable_src->Mutable(src_offset));
+                auto* src_array_data =
+                    src_field_data->mutable_scalars()->mutable_array_data();
+                if (src_array_data->nullable_data_size() > 0) {
+                    *(obj->mutable_nullable_data()->Add()) = std::move(
+                        *src_array_data->mutable_nullable_data()->Mutable(
+                            src_offset));
+                } else {
+                    *(obj->mutable_data()->Add()) = std::move(
+                        *src_array_data->mutable_data()->Mutable(src_offset));
+                }
                 break;
             }
             default: {

@@ -111,8 +111,13 @@ DeserializeFileData(const std::shared_ptr<uint8_t[]> input_data,
     auto event_data_length = header.event_length_ - GetEventHeaderSize(header);
     switch (header.event_type_) {
         case EventType::InsertEvent: {
-            auto insert_event_data = InsertEventData(
-                reader, event_data_length, data_type, nullable, is_field_data);
+            auto insert_event_data =
+                InsertEventData(reader,
+                                event_data_length,
+                                data_type,
+                                nullable,
+                                data_meta.field_schema.element_nullable(),
+                                is_field_data);
 
             std::unique_ptr<InsertData> insert_data;
             insert_data =

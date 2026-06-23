@@ -3650,15 +3650,24 @@ ChunkedSegmentSealedImpl::get_raw_data(milvus::OpContext* op_ctx,
             // SDK) can dispatch on it. Without this, callers parse a
             // headless ScalarField_ArrayData and reject it with
             // "unsupported element type None". Regression fix for #48619.
-            ret->mutable_scalars()->mutable_array_data()->set_element_type(
+            auto array_data = ret->mutable_scalars()->mutable_array_data();
+            array_data->set_element_type(
                 static_cast<milvus::proto::schema::DataType>(
                     field_meta.get_element_type()));
-            bulk_subscript_array_impl(
-                op_ctx,
-                column.get(),
-                seg_offsets,
-                count,
-                ret->mutable_scalars()->mutable_array_data()->mutable_data());
+            if (field_meta.is_element_nullable()) {
+                bulk_subscript_array_impl(
+                    op_ctx,
+                    column.get(),
+                    seg_offsets,
+                    count,
+                    array_data->mutable_nullable_data());
+            } else {
+                bulk_subscript_array_impl(op_ctx,
+                                          column.get(),
+                                          seg_offsets,
+                                          count,
+                                          array_data->mutable_data());
+            }
             break;
         }
 

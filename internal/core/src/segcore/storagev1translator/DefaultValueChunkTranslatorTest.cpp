@@ -487,6 +487,7 @@ TEST_P(DefaultValueChunkTranslatorTest, TestArrayType) {
                          DataType::ARRAY,
                          DataType::INT32,
                          false,
+                         false,
                          std::nullopt);
 
     FieldDataInfo field_data_info(902, row_count, getMmapDirPath());

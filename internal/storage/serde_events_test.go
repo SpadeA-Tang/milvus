@@ -830,6 +830,76 @@ func TestValueDeserializerNullableDenseVectorBinaryRecord(t *testing.T) {
 	}
 }
 
+func TestRecordToInsertDataElementNullableArrayFields(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Fields: []*schemapb.FieldSchema{
+			{
+				FieldID:         100,
+				Name:            "array",
+				DataType:        schemapb.DataType_Array,
+				ElementType:     schemapb.DataType_Int32,
+				ElementNullable: true,
+			},
+			{
+				FieldID:         101,
+				Name:            "vec_array",
+				DataType:        schemapb.DataType_ArrayOfVector,
+				ElementType:     schemapb.DataType_FloatVector,
+				ElementNullable: true,
+				TypeParams: []*commonpb.KeyValuePair{
+					{Key: "dim", Value: "2"},
+				},
+			},
+		},
+	}
+	arrayRow := &schemapb.ScalarField{
+		Data: &schemapb.ScalarField_IntData{
+			IntData: &schemapb.IntArray{Data: []int32{10, 0, 20}},
+		},
+	}
+	insertData := &InsertData{
+		Data: map[FieldID]FieldData{
+			100: &ArrayFieldData{
+				ElementType: schemapb.DataType_Int32,
+				NullableData: []*schemapb.NullableScalarArrayValue{
+					{Data: arrayRow, ValidData: []bool{true, false, true}},
+				},
+				ElementNullable: true,
+			},
+			101: &VectorArrayFieldData{
+				Dim:         2,
+				ElementType: schemapb.DataType_FloatVector,
+				NullableData: []*schemapb.NullableVectorArrayValue{
+					{Data: makeFloatVec(2, 1, 2, 3, 4), ValidData: []bool{true, false, true}},
+				},
+				ElementNullable: true,
+			},
+		},
+	}
+
+	arrowSchema, err := ConvertToArrowSchema(schema, false)
+	require.NoError(t, err)
+	builder := array.NewRecordBuilder(memory.DefaultAllocator, arrowSchema)
+	defer builder.Release()
+	require.NoError(t, BuildRecord(builder, insertData, schema))
+
+	record := NewSimpleArrowRecord(builder.NewRecord(), map[FieldID]int{100: 0, 101: 1})
+	defer record.Release()
+
+	roundTrip, err := RecordToInsertData(record, schema, typeutil.NewSet[int64](100, 101))
+	require.NoError(t, err)
+
+	arrayData := roundTrip.Data[100].(*ArrayFieldData)
+	assert.True(t, arrayData.ElementNullable)
+	assert.Equal(t, []bool{true, false, true}, arrayData.NullableData[0].GetValidData())
+	assert.True(t, proto.Equal(arrayRow, arrayData.NullableData[0].GetData()))
+
+	vectorArrayData := roundTrip.Data[101].(*VectorArrayFieldData)
+	assert.True(t, vectorArrayData.ElementNullable)
+	assert.Equal(t, []bool{true, false, true}, vectorArrayData.NullableData[0].GetValidData())
+	assert.Equal(t, []float32{1, 2, 3, 4}, vectorArrayData.NullableData[0].GetData().GetFloatVector().GetData())
+}
+
 func TestValueSerializerNullableDenseVectorUsesBinaryArrow(t *testing.T) {
 	for _, tc := range nullableDenseVectorSerdeCases() {
 		t.Run(tc.name, func(t *testing.T) {

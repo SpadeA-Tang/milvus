@@ -251,6 +251,16 @@ BaseEventData::BaseEventData(BinlogReaderPtr reader,
                              int event_length,
                              DataType data_type,
                              bool nullable,
+                             bool is_field_data)
+    : BaseEventData(
+          reader, event_length, data_type, nullable, false, is_field_data) {
+}
+
+BaseEventData::BaseEventData(BinlogReaderPtr reader,
+                             int event_length,
+                             DataType data_type,
+                             bool nullable,
+                             bool element_nullable,
                              bool is_field_data) {
     auto ast = reader->ReadSingleValue<Timestamp>(start_timestamp);
     AssertInfo(ast.ok(), "read start timestamp failed");
@@ -262,7 +272,12 @@ BaseEventData::BaseEventData(BinlogReaderPtr reader,
     auto res = reader->Read(payload_length);
     AssertInfo(res.first.ok(), "read payload failed");
     payload_reader = std::make_shared<PayloadReader>(
-        res.second.get(), payload_length, data_type, nullable, is_field_data);
+        res.second.get(),
+        payload_length,
+        data_type,
+        nullable,
+        element_nullable,
+        is_field_data);
 }
 
 std::vector<uint8_t>
@@ -323,12 +338,19 @@ BaseEventData::Serialize() {
                 break;
             }
             case DataType::ARRAY: {
+                auto array_field =
+                    std::dynamic_pointer_cast<FieldData<Array>>(field_data);
+                AssertInfo(array_field != nullptr,
+                           "Failed to cast to FieldData<Array>");
+                auto element_nullable = array_field->is_element_nullable();
                 for (size_t offset = 0; offset < field_data->get_num_rows();
                      ++offset) {
                     auto array =
                         static_cast<const Array*>(field_data->RawValue(offset));
                     auto array_string =
-                        array->output_data().SerializeAsString();
+                        element_nullable
+                            ? array->output_nullable_data().SerializeAsString()
+                            : array->output_data().SerializeAsString();
                     auto size =
                         field_data->is_valid(offset) ? array_string.size() : -1;
 

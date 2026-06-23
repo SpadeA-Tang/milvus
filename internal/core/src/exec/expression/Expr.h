@@ -843,10 +843,16 @@ class SegmentExpr : public Expr {
                     if (!skip_func ||
                         !skip_func(skip_index, field_id_, chunk_id)) {
                         // Extract element from ArrayView
-                        auto value =
-                            array_vec[j].template get_data<ElementType>(
-                                elem_indices[j]);
-                        bool is_valid = !valid_data.data() || valid_data[j];
+                        ElementType value{};
+                        bool is_valid =
+                            (!valid_data.data() || valid_data[j]) &&
+                            array_vec[j].is_element_valid(elem_indices[j]);
+                        if (is_valid) {
+                            value =
+                                array_vec[j]
+                                    .template get_data_unchecked<ElementType>(
+                                        elem_indices[j]);
+                        }
 
                         func.template operator()<FilterType::random>(
                             &value,
@@ -900,8 +906,13 @@ class SegmentExpr : public Expr {
 
                 if (!skip_func || !skip_func(skip_index, field_id_, chunk_id)) {
                     // Extract element from Array
-                    auto value = array_ptr->get_data<ElementType>(elem_idx);
-                    bool is_valid = !valid_data || valid_data[0];
+                    ElementType value{};
+                    bool is_valid = (!valid_data || valid_data[0]) &&
+                                    array_ptr->is_element_valid(elem_idx);
+                    if (is_valid) {
+                        value = array_ptr->get_data_unchecked<ElementType>(
+                            elem_idx);
+                    }
 
                     func.template operator()<FilterType::random>(
                         &value,
@@ -998,13 +1009,17 @@ class SegmentExpr : public Expr {
                                                          std::string>) {
                                 // String type: extract one by one
                                 for (size_t k = 0; k < elem_count; k++) {
-                                    auto str_view =
-                                        data_vec[j]
-                                            .template get_data<
-                                                std::string_view>(k);
-                                    ElementType str_val(str_view);
+                                    bool element_valid =
+                                        data_vec[j].is_element_valid(k);
+                                    ElementType str_val =
+                                        element_valid
+                                            ? ElementType(
+                                                  data_vec[j]
+                                                      .template get_data_unchecked<
+                                                          std::string_view>(k))
+                                            : ElementType{};
                                     func(&str_val,
-                                         nullptr,
+                                         &element_valid,
                                          nullptr,
                                          1,
                                          res + processed_elems + k,
@@ -1020,33 +1035,55 @@ class SegmentExpr : public Expr {
                                     int32_t,
                                     ElementType>;
 
-                                auto* raw_data =
-                                    reinterpret_cast<const StorageType*>(
-                                        data_vec[j].data());
-
-                                if constexpr (std::is_same_v<StorageType,
-                                                             ElementType>) {
-                                    // Types match, batch process
-                                    func(raw_data,
-                                         nullptr,
-                                         nullptr,
-                                         elem_count,
-                                         res + processed_elems,
-                                         valid_res + processed_elems,
-                                         values...);
-                                } else {
-                                    // int8_t/int16_t: need conversion
+                                if (data_vec[j].has_invalid_element()) {
                                     for (size_t k = 0; k < elem_count; k++) {
+                                        bool element_valid =
+                                            data_vec[j].is_element_valid(k);
                                         ElementType val =
-                                            static_cast<ElementType>(
-                                                raw_data[k]);
+                                            element_valid
+                                                ? data_vec[j]
+                                                      .template get_data_unchecked<
+                                                          ElementType>(k)
+                                                : ElementType{};
                                         func(&val,
-                                             nullptr,
+                                             &element_valid,
                                              nullptr,
                                              1,
                                              res + processed_elems + k,
                                              valid_res + processed_elems + k,
                                              values...);
+                                    }
+                                } else {
+                                    auto* raw_data =
+                                        reinterpret_cast<const StorageType*>(
+                                            data_vec[j].data());
+
+                                    if constexpr (std::is_same_v<StorageType,
+                                                                 ElementType>) {
+                                        // Types match, batch process
+                                        func(raw_data,
+                                             nullptr,
+                                             nullptr,
+                                             elem_count,
+                                             res + processed_elems,
+                                             valid_res + processed_elems,
+                                             values...);
+                                    } else {
+                                        // int8_t/int16_t: need conversion
+                                        for (size_t k = 0; k < elem_count;
+                                             k++) {
+                                            ElementType val =
+                                                static_cast<ElementType>(
+                                                    raw_data[k]);
+                                            func(
+                                                &val,
+                                                nullptr,
+                                                nullptr,
+                                                1,
+                                                res + processed_elems + k,
+                                                valid_res + processed_elems + k,
+                                                values...);
+                                        }
                                     }
                                 }
                             }
@@ -1082,13 +1119,17 @@ class SegmentExpr : public Expr {
                                                          std::string>) {
                                 // String type: extract one by one
                                 for (size_t k = 0; k < elem_count; k++) {
-                                    auto str_view =
-                                        data[j]
-                                            .template get_data<
-                                                std::string_view>(k);
-                                    ElementType str_val(str_view);
+                                    bool element_valid =
+                                        data[j].is_element_valid(k);
+                                    ElementType str_val =
+                                        element_valid
+                                            ? ElementType(
+                                                  data[j]
+                                                      .template get_data_unchecked<
+                                                          std::string_view>(k))
+                                            : ElementType{};
                                     func(&str_val,
-                                         nullptr,
+                                         &element_valid,
                                          nullptr,
                                          1,
                                          res + processed_elems + k,
@@ -1104,33 +1145,55 @@ class SegmentExpr : public Expr {
                                     int32_t,
                                     ElementType>;
 
-                                auto* raw_data =
-                                    reinterpret_cast<const StorageType*>(
-                                        data[j].data());
-
-                                if constexpr (std::is_same_v<StorageType,
-                                                             ElementType>) {
-                                    // Types match, batch process
-                                    func(raw_data,
-                                         nullptr,
-                                         nullptr,
-                                         elem_count,
-                                         res + processed_elems,
-                                         valid_res + processed_elems,
-                                         values...);
-                                } else {
-                                    // int8_t/int16_t: need conversion
+                                if (data[j].has_invalid_element()) {
                                     for (size_t k = 0; k < elem_count; k++) {
+                                        bool element_valid =
+                                            data[j].is_element_valid(k);
                                         ElementType val =
-                                            static_cast<ElementType>(
-                                                raw_data[k]);
+                                            element_valid
+                                                ? data[j]
+                                                      .template get_data_unchecked<
+                                                          ElementType>(k)
+                                                : ElementType{};
                                         func(&val,
-                                             nullptr,
+                                             &element_valid,
                                              nullptr,
                                              1,
                                              res + processed_elems + k,
                                              valid_res + processed_elems + k,
                                              values...);
+                                    }
+                                } else {
+                                    auto* raw_data =
+                                        reinterpret_cast<const StorageType*>(
+                                            data[j].data());
+
+                                    if constexpr (std::is_same_v<StorageType,
+                                                                 ElementType>) {
+                                        // Types match, batch process
+                                        func(raw_data,
+                                             nullptr,
+                                             nullptr,
+                                             elem_count,
+                                             res + processed_elems,
+                                             valid_res + processed_elems,
+                                             values...);
+                                    } else {
+                                        // int8_t/int16_t: need conversion
+                                        for (size_t k = 0; k < elem_count;
+                                             k++) {
+                                            ElementType val =
+                                                static_cast<ElementType>(
+                                                    raw_data[k]);
+                                            func(
+                                                &val,
+                                                nullptr,
+                                                nullptr,
+                                                1,
+                                                res + processed_elems + k,
+                                                valid_res + processed_elems + k,
+                                                values...);
+                                        }
                                     }
                                 }
                             }

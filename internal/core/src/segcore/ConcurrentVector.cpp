@@ -167,11 +167,36 @@ VectorBase::set_data_raw(ssize_t element_offset,
             return set_data_raw(element_offset, data_raw.data(), element_count);
         }
         case DataType::ARRAY: {
-            auto& array_data = FIELD_DATA(data, array);
+            const auto& array_array = data->scalars().array_data();
             std::vector<Array> data_raw{};
-            data_raw.reserve(array_data.size());
-            for (auto& array_bytes : array_data) {
-                data_raw.emplace_back(Array(array_bytes));
+            data_raw.reserve(element_count);
+            if (array_array.nullable_data_size() > 0) {
+                AssertInfo(field_meta.is_element_nullable(),
+                           "ARRAY field {} has nullable_data but schema is not "
+                           "element nullable",
+                           field_meta.get_id().get());
+                AssertInfo(
+                    array_array.nullable_data_size() == element_count,
+                    "ARRAY nullable_data size {} must match row count {}",
+                    array_array.nullable_data_size(),
+                    element_count);
+                for (auto& array_value : array_array.nullable_data()) {
+                    data_raw.emplace_back(Array(array_value));
+                }
+            } else {
+                const auto& array_data = array_array.data();
+                AssertInfo(
+                    !field_meta.is_element_nullable() || element_count == 0,
+                    "element nullable ARRAY field {} must use "
+                    "nullable_data",
+                    field_meta.get_id().get());
+                AssertInfo(array_data.size() == element_count,
+                           "ARRAY data size {} must match row count {}",
+                           array_data.size(),
+                           element_count);
+                for (auto& array_value : array_data) {
+                    data_raw.emplace_back(Array(array_value));
+                }
             }
 
             return set_data_raw(element_offset, data_raw.data(), element_count);

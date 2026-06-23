@@ -942,6 +942,7 @@ struct FieldInfo {
     milvus::DataType data_type;
     milvus::DataType element_type;
     bool nullable;
+    bool element_nullable;
     int64_t dim;  // for vector types
     const milvus::segcore::VectorBase* vec_base;
     milvus::segcore::ThreadSafeValidDataPtr valid_data;
@@ -1636,7 +1637,10 @@ BuildArrayForChunk(const FieldInfo& field_info,
                 } else {
                     auto array_view = array_vec->view_element(offset);
                     auto serialized =
-                        array_view.output_data().SerializeAsString();
+                        field_info.element_nullable
+                            ? array_view.output_nullable_data()
+                                  .SerializeAsString()
+                            : array_view.output_data().SerializeAsString();
                     ARROW_RETURN_NOT_OK(
                         builder.Append(serialized.data(), serialized.size()));
                 }
@@ -1783,6 +1787,7 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
             info.data_type = field_meta.get_data_type();
             info.element_type = milvus::DataType::NONE;
             info.nullable = field_meta.is_nullable();
+            info.element_nullable = false;
             info.dim = 0;
             info.vec_base = &insert_record.row_ids_;
             info.valid_data = nullptr;
@@ -1846,6 +1851,7 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
             info.data_type = data_type;
             info.element_type = field_meta.get_element_type();
             info.nullable = field_meta.is_nullable();
+            info.element_nullable = field_meta.is_element_nullable();
             info.dim = dim;
             info.vec_base = vec_base;
             info.valid_data = nullptr;

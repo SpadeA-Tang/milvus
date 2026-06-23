@@ -190,7 +190,10 @@ BitmapIndex<T>::BuildArrayField(const std::vector<FieldDataPtr>& field_datas) {
                 auto array =
                     reinterpret_cast<const milvus::Array*>(data->RawValue(i));
                 for (size_t j = 0; j < array->length(); ++j) {
-                    auto val = array->template get_data<T>(j);
+                    if (!array->is_element_valid(j)) {
+                        continue;
+                    }
+                    auto val = array->template get_data_unchecked<T>(j);
                     data_[val].add(offset);
                 }
                 valid_bitset_.set(offset);

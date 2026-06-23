@@ -743,6 +743,8 @@ InvertedIndexTantivy<T>::build_index_for_array(
                                            int32_t,
                                            T>;
     int64_t offset = 0;
+    std::vector<ElementType> output;
+    static const ElementType empty_value{};
     for (const auto& data : field_datas) {
         auto n = data->get_num_rows();
         auto array_column = static_cast<const Array*>(data->Data());
@@ -750,18 +752,33 @@ InvertedIndexTantivy<T>::build_index_for_array(
             if (schema_.nullable() && !data->is_valid(i)) {
                 null_offset_.push_back(offset);
             }
-            auto length = data->is_valid(i) ? array_column[i].length() : 0;
+            const ElementType* values = &empty_value;
+            int64_t length = 0;
+            if (data->is_valid(i)) {
+                if (array_column[i].has_invalid_element()) {
+                    output.clear();
+                    for (int64_t j = 0; j < array_column[i].length(); ++j) {
+                        if (array_column[i].is_element_valid(j)) {
+                            auto value =
+                                array_column[i]
+                                    .template get_data_unchecked<ElementType>(
+                                        j);
+                            output.push_back(value);
+                        }
+                    }
+                    values = output.data();
+                    length = output.size();
+                } else {
+                    values = reinterpret_cast<const ElementType*>(
+                        array_column[i].data());
+                    length = array_column[i].length();
+                }
+            }
             if (!inverted_index_single_segment_) {
-                wrapper_->template add_array_data(
-                    reinterpret_cast<const ElementType*>(
-                        array_column[i].data()),
-                    length,
-                    offset++);
+                wrapper_->template add_array_data(values, length, offset++);
             } else {
                 wrapper_->template add_array_data_by_single_segment_writer(
-                    reinterpret_cast<const ElementType*>(
-                        array_column[i].data()),
-                    length);
+                    values, length);
                 offset++;
             }
         }
@@ -786,9 +803,15 @@ InvertedIndexTantivy<std::string>::build_index_for_array(
                     static_cast<DataType>(schema_.element_type())));
             }
             output.clear();
-            for (int64_t j = 0; j < array_column[i].length(); j++) {
-                output.push_back(
-                    array_column[i].template get_data<std::string>(j));
+            if (data->is_valid(i)) {
+                for (int64_t j = 0; j < array_column[i].length(); j++) {
+                    if (array_column[i].is_element_valid(j)) {
+                        auto value =
+                            array_column[i]
+                                .template get_data_unchecked<std::string>(j);
+                        output.push_back(value);
+                    }
+                }
             }
             auto length = data->is_valid(i) ? output.size() : 0;
             if (!inverted_index_single_segment_) {
@@ -823,10 +846,15 @@ InvertedIndexTantivy<T>::build_index_for_array_nested(
                 continue;
             }
             auto length = array_column[i].length();
-            wrapper_->template add_data<ElementType>(
-                reinterpret_cast<const ElementType*>(array_column[i].data()),
-                length,
-                offset);
+            for (int64_t j = 0; j < length; ++j) {
+                if (array_column[i].is_element_valid(j)) {
+                    auto value =
+                        array_column[i]
+                            .template get_data_unchecked<ElementType>(j);
+                    wrapper_->template add_data<ElementType>(
+                        &value, 1, offset + j);
+                }
+            }
             offset += length;
         }
     }
@@ -838,7 +866,6 @@ InvertedIndexTantivy<std::string>::build_index_for_array_nested(
     const std::vector<std::shared_ptr<FieldDataBase>>& field_datas) {
     int64_t offset = 0;
     int64_t row_offset = 0;
-    std::vector<std::string> output;
     for (const auto& data : field_datas) {
         auto n = data->get_num_rows();
         auto array_column = static_cast<const Array*>(data->Data());
@@ -852,13 +879,15 @@ InvertedIndexTantivy<std::string>::build_index_for_array_nested(
             Assert(IsStringDataType(
                 static_cast<DataType>(schema_.element_type())));
 
-            output.clear();
             auto length = array_column[i].length();
             for (int64_t j = 0; j < length; j++) {
-                output.push_back(
-                    array_column[i].template get_data<std::string>(j));
+                if (array_column[i].is_element_valid(j)) {
+                    auto value =
+                        array_column[i]
+                            .template get_data_unchecked<std::string>(j);
+                    wrapper_->add_data(&value, 1, offset + j);
+                }
             }
-            wrapper_->add_data(output.data(), length, offset);
             offset += length;
         }
     }

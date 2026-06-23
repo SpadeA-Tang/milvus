@@ -375,8 +375,11 @@ PhyJsonContainsFilterExpr::ExecArrayContains(EvalCtx& context) {
         auto executor = [&](size_t i) {
             const auto& array = data[i];
             for (int j = 0; j < array.length(); ++j) {
-                if (elements.find(array.template get_data<GetType>(j)) !=
-                    elements.end()) {
+                if (!array.is_element_valid(j)) {
+                    continue;
+                }
+                auto value = array.template get_data_unchecked<GetType>(j);
+                if (elements.find(value) != elements.end()) {
                     return true;
                 }
             }
@@ -950,8 +953,12 @@ PhyJsonContainsFilterExpr::ExecArrayContainsAll(EvalCtx& context) {
             if (matcher.use_small()) {
                 uint64_t found = 0;
                 for (int j = 0; j < data[i].length(); ++j) {
-                    if (matcher.set_if_found(
-                            data[i].template get_data<GetType>(j), found)) {
+                    if (!data[i].is_element_valid(j)) {
+                        continue;
+                    }
+                    auto value =
+                        data[i].template get_data_unchecked<GetType>(j);
+                    if (matcher.set_if_found(value, found)) {
                         return true;
                     }
                 }
@@ -960,10 +967,12 @@ PhyJsonContainsFilterExpr::ExecArrayContainsAll(EvalCtx& context) {
                 std::fill(found_large.begin(), found_large.end(), 0);
                 size_t remaining = matcher.target_count();
                 for (int j = 0; j < data[i].length(); ++j) {
-                    if (matcher.set_if_found(
-                            data[i].template get_data<GetType>(j),
-                            found_large,
-                            remaining)) {
+                    if (!data[i].is_element_valid(j)) {
+                        continue;
+                    }
+                    auto value =
+                        data[i].template get_data_unchecked<GetType>(j);
+                    if (matcher.set_if_found(value, found_large, remaining)) {
                         return true;
                     }
                 }

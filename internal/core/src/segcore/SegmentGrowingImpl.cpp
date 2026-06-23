@@ -95,6 +95,33 @@ using namespace milvus::cachinglayer;
 namespace {
 
 int32_t
+GetScalarArrayLength(const proto::schema::ScalarField& array_value,
+                     DataType element_type) {
+    switch (element_type) {
+        case DataType::BOOL:
+            return array_value.bool_data().data_size();
+        case DataType::INT8:
+        case DataType::INT16:
+        case DataType::INT32:
+            return array_value.int_data().data_size();
+        case DataType::INT64:
+            return array_value.long_data().data_size();
+        case DataType::FLOAT:
+            return array_value.float_data().data_size();
+        case DataType::DOUBLE:
+            return array_value.double_data().data_size();
+        case DataType::STRING:
+        case DataType::VARCHAR:
+            return array_value.string_data().data_size();
+        default:
+            ThrowInfo(ErrorCode::UnexpectedError,
+                      "Unexpected array type: {}",
+                      element_type);
+    }
+    return 0;
+}
+
+int32_t
 GetVectorArrayLength(const proto::schema::VectorField& vec_field,
                      DataType element_type,
                      int64_t dim) {
@@ -209,42 +236,31 @@ ExtractArrayLengths(const proto::schema::FieldData& field_data,
                 vector_array.data(source_index), element_type, dim);
         }
     } else {
-        // ARRAY: extract from scalars().array_data().data(i)
+        // ARRAY: extract from scalars().array_data().data(i) or
+        // nullable_data(i).data().
         const auto& array_data = field_data.scalars().array_data();
         auto element_type = field_meta.get_element_type();
+        const auto has_nullable_data = array_data.nullable_data_size() > 0;
+        AssertInfo(has_nullable_data == field_meta.is_element_nullable(),
+                   "ARRAY element nullable representation mismatch, "
+                   "has_nullable_data={}, element_nullable={}",
+                   has_nullable_data,
+                   field_meta.is_element_nullable());
+        AssertInfo(
+            !has_nullable_data || array_data.nullable_data_size() == num_rows,
+            "ARRAY nullable_data size {} must match row count {}",
+            array_data.nullable_data_size(),
+            num_rows);
+        AssertInfo(has_nullable_data || array_data.data_size() == num_rows,
+                   "ARRAY data size {} must match row count {}",
+                   array_data.data_size(),
+                   num_rows);
 
         for (int i = 0; i < num_rows; ++i) {
-            int32_t array_len = 0;
-
-            switch (element_type) {
-                case DataType::BOOL:
-                    array_len = array_data.data(i).bool_data().data_size();
-                    break;
-                case DataType::INT8:
-                case DataType::INT16:
-                case DataType::INT32:
-                    array_len = array_data.data(i).int_data().data_size();
-                    break;
-                case DataType::INT64:
-                    array_len = array_data.data(i).long_data().data_size();
-                    break;
-                case DataType::FLOAT:
-                    array_len = array_data.data(i).float_data().data_size();
-                    break;
-                case DataType::DOUBLE:
-                    array_len = array_data.data(i).double_data().data_size();
-                    break;
-                case DataType::STRING:
-                case DataType::VARCHAR:
-                    array_len = array_data.data(i).string_data().data_size();
-                    break;
-                default:
-                    ThrowInfo(ErrorCode::UnexpectedError,
-                              "Unexpected array type: {}",
-                              element_type);
-            }
-
-            array_lengths[i] = array_len;
+            const auto& array_value = has_nullable_data
+                                          ? array_data.nullable_data(i).data()
+                                          : array_data.data(i);
+            array_lengths[i] = GetScalarArrayLength(array_value, element_type);
         }
     }
 
@@ -843,6 +859,7 @@ SegmentGrowingImpl::load_field_data_internal(const LoadFieldDataInfo& infos) {
                 storage::CreateFieldData(field_meta.get_data_type(),
                                          field_meta.get_element_type(),
                                          true,
+                                         field_meta.is_element_nullable(),
                                          1,
                                          lack_num);
             field_data->FillFieldData(field_meta.default_value(), lack_num);
@@ -1098,6 +1115,7 @@ SegmentGrowingImpl::load_column_group_data_internal(
                             data_type,
                             field.second.get_element_type(),
                             field.second.is_nullable(),
+                            field.second.is_element_nullable(),
                             IsVectorDataType(data_type) &&
                                     !IsSparseFloatVectorDataType(data_type)
                                 ? field.second.get_dim()
@@ -1703,14 +1721,20 @@ SegmentGrowingImpl::bulk_subscript(milvus::OpContext* op_ctx,
             break;
         }
         case DataType::ARRAY: {
-            // element
-            bulk_subscript_array_impl(op_ctx,
-                                      *vec_ptr,
-                                      seg_offsets,
-                                      count,
-                                      result->mutable_scalars()
-                                          ->mutable_array_data()
-                                          ->mutable_data());
+            auto array_data = result->mutable_scalars()->mutable_array_data();
+            if (field_meta.is_element_nullable()) {
+                bulk_subscript_array_impl(op_ctx,
+                                          *vec_ptr,
+                                          seg_offsets,
+                                          count,
+                                          array_data->mutable_nullable_data());
+            } else {
+                bulk_subscript_array_impl(op_ctx,
+                                          *vec_ptr,
+                                          seg_offsets,
+                                          count,
+                                          array_data->mutable_data());
+            }
             break;
         }
         default: {
@@ -1876,7 +1900,7 @@ SegmentGrowingImpl::bulk_subscript_array_impl(
     for (int64_t i = 0; i < count; ++i) {
         auto offset = seg_offsets[i];
         if (offset != INVALID_SEG_OFFSET) {
-            dst->at(i) = vec[offset].output_data();
+            vec[offset].output_data(*dst->Mutable(i));
         }
     }
 }
@@ -2624,6 +2648,7 @@ SegmentGrowingImpl::LoadColumnGroup(
                     data_type,
                     field.get_element_type(),
                     field.is_nullable(),
+                    field.is_element_nullable(),
                     IsVectorDataType(data_type) &&
                             !IsSparseFloatVectorDataType(data_type)
                         ? field.get_dim()

@@ -105,6 +105,14 @@ class FieldData<Array> : public FieldDataArrayImpl {
                        int64_t buffered_num_rows = 0)
         : FieldDataArrayImpl(data_type, nullable, buffered_num_rows) {
     }
+
+    explicit FieldData(DataType data_type,
+                       bool nullable,
+                       bool element_nullable,
+                       int64_t buffered_num_rows = 0)
+        : FieldDataArrayImpl(
+              data_type, nullable, element_nullable, buffered_num_rows) {
+    }
 };
 
 template <>

@@ -279,13 +279,34 @@ ArrayChunkWriter::calculate_size(const arrow::ArrayVector& array_vec) {
                    "type id {}; upstream normalizer must coerce to BINARY",
                    data ? static_cast<int>(data->type_id()) : -1);
         for (int64_t i = 0; i < array->length(); ++i) {
+            header_.push_back(static_cast<uint32_t>(cursor));  // off_i
+            if (array->IsNull(i)) {
+                AssertInfo(nullable_,
+                           "ArrayChunkWriter got null row for non-nullable "
+                           "ARRAY field");
+                cached_arrays_.emplace_back();
+                header_.push_back(0);  // len_i
+                continue;
+            }
             auto str = array->GetView(i);
-            ScalarFieldProto scalar_array;
-            scalar_array.ParseFromArray(str.data(), str.size());
-            cached_arrays_.emplace_back(scalar_array);
+            if (element_nullable_) {
+                NullableScalarArrayValueProto nullable_array;
+                auto success =
+                    nullable_array.ParseFromArray(str.data(), str.size());
+                AssertInfo(success, "parse nullable array from string failed");
+                cached_arrays_.emplace_back(nullable_array);
+            } else {
+                ScalarFieldProto scalar_array;
+                auto success = scalar_array.ParseFromArray(str.data(),
+                                                           str.size());
+                AssertInfo(success, "parse array from string failed");
+                cached_arrays_.emplace_back(scalar_array);
+            }
             const auto& arr = cached_arrays_.back();
-            header_.push_back(static_cast<uint32_t>(cursor));        // off_i
             header_.push_back(static_cast<uint32_t>(arr.length()));  // len_i
+            if (element_nullable_) {
+                cursor += arr.get_element_valid_data_byte_size();
+            }
             if (is_string) {
                 cursor += sizeof(uint32_t) * arr.length();
             }
@@ -317,11 +338,22 @@ ArrayChunkWriter::write_to_target(const arrow::ArrayVector& array_vec,
     target->write(header_.data(), header_.size() * sizeof(uint32_t));
 
     for (auto& arr : cached_arrays_) {
-        if (is_string) {
-            target->write(arr.get_offsets_data(),
-                          arr.length() * sizeof(uint32_t));
+        if (element_nullable_) {
+            auto element_valid_bytes = arr.get_element_valid_data_byte_size();
+            if (element_valid_bytes > 0) {
+                target->write(arr.get_element_valid_data().data(),
+                              element_valid_bytes);
+            }
         }
-        target->write(arr.data(), arr.byte_size());
+        if (is_string) {
+            auto offsets_bytes = arr.length() * sizeof(uint32_t);
+            if (offsets_bytes > 0) {
+                target->write(arr.get_offsets_data(), offsets_bytes);
+            }
+        }
+        if (arr.byte_size() > 0) {
+            target->write(arr.data(), arr.byte_size());
+        }
     }
 
     char padding[MMAP_ARRAY_PADDING] = {};
@@ -627,7 +659,9 @@ create_chunk_writer(const FieldMeta& field_meta) {
         }
         case milvus::DataType::ARRAY:
             return std::make_shared<ArrayChunkWriter>(
-                field_meta.get_element_type(), nullable);
+                field_meta.get_element_type(),
+                nullable,
+                field_meta.is_element_nullable());
         case milvus::DataType::VECTOR_SPARSE_U32_F32:
             return std::make_shared<SparseFloatVectorChunkWriter>(nullable);
         case milvus::DataType::VECTOR_ARRAY:
@@ -772,6 +806,7 @@ make_chunk(const FieldMeta& field_meta,
                                                 size,
                                                 field_meta.get_element_type(),
                                                 nullable,
+                                                field_meta.is_element_nullable(),
                                                 chunk_mmap_guard);
         case milvus::DataType::VECTOR_SPARSE_U32_F32:
             return std::make_unique<SparseFloatVectorChunk>(

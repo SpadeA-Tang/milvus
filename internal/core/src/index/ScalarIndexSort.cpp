@@ -204,8 +204,7 @@ ScalarIndexSort<T>::BuildWithArrayDataNested(
     }
 
     data_.reserve(total_num_rows_);
-    // all values are valid for nested index because any given slot in a valid_bitset_ denotes one element in a valid row
-    valid_bitset_ = TargetBitmap(total_num_rows_, true);
+    valid_bitset_ = TargetBitmap(total_num_rows_, false);
     int64_t offset = 0;
     for (const auto& data : datas) {
         auto n = data->get_num_rows();
@@ -216,15 +215,20 @@ ScalarIndexSort<T>::BuildWithArrayDataNested(
             }
             auto length = array_column[i].length();
             for (int64_t j = 0; j < length; j++) {
-                data_.emplace_back(IndexStructure(
-                    array_column[i].template get_data<T>(j), offset));
+                if (array_column[i].is_element_valid(j)) {
+                    auto value =
+                        array_column[i].template get_data_unchecked<T>(j);
+                    data_.emplace_back(IndexStructure(value, offset));
+                    valid_bitset_.set(offset);
+                }
                 offset++;
             }
         }
     }
     std::sort(data_.begin(), data_.end());
     idx_to_offsets_.resize(total_num_rows_);
-    for (size_t i = 0; i < total_num_rows_; ++i) {
+    std::fill(idx_to_offsets_.begin(), idx_to_offsets_.end(), -1);
+    for (size_t i = 0; i < data_.size(); ++i) {
         idx_to_offsets_[data_[i].idx_] = i;
     }
     idx_to_offsets_ptr_ = idx_to_offsets_.data();

@@ -143,6 +143,15 @@ func TestDataSorter(t *testing.T) {
 					Description:  "description_14",
 					DataType:     schemapb.DataType_SparseFloatVector,
 				},
+				{
+					FieldID:         115,
+					Name:            "field_array",
+					IsPrimaryKey:    false,
+					Description:     "description_15",
+					DataType:        schemapb.DataType_Array,
+					ElementType:     schemapb.DataType_Int32,
+					ElementNullable: true,
+				},
 			},
 			StructArrayFields: []*schemapb.StructArrayFieldSchema{
 				{
@@ -221,29 +230,52 @@ func TestDataSorter(t *testing.T) {
 					},
 				},
 			},
+			115: &ArrayFieldData{
+				ElementType: schemapb.DataType_Int32,
+				NullableData: []*schemapb.NullableScalarArrayValue{
+					{
+						Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{3}}}},
+						ValidData: []bool{true},
+					},
+					{
+						Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{4, 0, 40}}}},
+						ValidData: []bool{true, false, true},
+					},
+					{
+						Data:      &schemapb.ScalarField{Data: &schemapb.ScalarField_IntData{IntData: &schemapb.IntArray{Data: []int32{0, 5, 50, 500}}}},
+						ValidData: []bool{false, true, true, true},
+					},
+				},
+				ElementNullable: true,
+			},
 			114: &VectorArrayFieldData{
 				Dim:         2,
 				ElementType: schemapb.DataType_FloatVector,
-				Data: []*schemapb.VectorField{
+				ValidData:   []bool{true, false, true},
+				NullableData: []*schemapb.NullableVectorArrayValue{
 					{
-						Dim: 2,
-						Data: &schemapb.VectorField_FloatVector{
-							FloatVector: &schemapb.FloatArray{Data: []float32{1, 2, 3, 4}},
+						Data: &schemapb.VectorField{
+							Dim:  2,
+							Data: &schemapb.VectorField_FloatVector{FloatVector: &schemapb.FloatArray{Data: []float32{1, 2, 3, 4}}},
 						},
+						ValidData: []bool{true, false, true},
 					},
 					{
-						Dim: 2,
-						Data: &schemapb.VectorField_FloatVector{
-							FloatVector: &schemapb.FloatArray{Data: []float32{5, 6, 7, 8, 9, 10}},
+						Data: &schemapb.VectorField{
+							Dim:  2,
+							Data: &schemapb.VectorField_FloatVector{FloatVector: &schemapb.FloatArray{Data: []float32{5, 6, 7, 8, 9, 10}}},
 						},
+						ValidData: []bool{true, false, true, true},
 					},
 					{
-						Dim: 2,
-						Data: &schemapb.VectorField_FloatVector{
-							FloatVector: &schemapb.FloatArray{Data: []float32{11, 12, 13, 14, 15, 16}},
+						Data: &schemapb.VectorField{
+							Dim:  2,
+							Data: &schemapb.VectorField_FloatVector{FloatVector: &schemapb.FloatArray{Data: []float32{11, 12, 13, 14, 15, 16}}},
 						},
+						ValidData: []bool{false, true, true, true},
 					},
 				},
+				ElementNullable: true,
 			},
 		},
 	}
@@ -318,12 +350,23 @@ func TestDataSorter(t *testing.T) {
 		},
 	}, &dataSorter.InsertData.Data[112].(*SparseFloatVectorFieldData).SparseFloatArray)
 
+	assert.Equal(t, []int32{0, 5, 50, 500}, dataSorter.InsertData.Data[115].(*ArrayFieldData).NullableData[0].GetData().GetIntData().GetData())
+	assert.Equal(t, []int32{3}, dataSorter.InsertData.Data[115].(*ArrayFieldData).NullableData[1].GetData().GetIntData().GetData())
+	assert.Equal(t, []int32{4, 0, 40}, dataSorter.InsertData.Data[115].(*ArrayFieldData).NullableData[2].GetData().GetIntData().GetData())
+	assert.Equal(t, []bool{false, true, true, true}, dataSorter.InsertData.Data[115].(*ArrayFieldData).NullableData[0].GetValidData())
+	assert.Equal(t, []bool{true}, dataSorter.InsertData.Data[115].(*ArrayFieldData).NullableData[1].GetValidData())
+	assert.Equal(t, []bool{true, false, true}, dataSorter.InsertData.Data[115].(*ArrayFieldData).NullableData[2].GetValidData())
+
 	assert.Equal(t, []float32{11, 12, 13, 14, 15, 16},
-		dataSorter.InsertData.Data[114].(*VectorArrayFieldData).Data[0].Data.(*schemapb.VectorField_FloatVector).FloatVector.Data)
+		dataSorter.InsertData.Data[114].(*VectorArrayFieldData).NullableData[0].GetData().Data.(*schemapb.VectorField_FloatVector).FloatVector.Data)
 	assert.Equal(t, []float32{1, 2, 3, 4},
-		dataSorter.InsertData.Data[114].(*VectorArrayFieldData).Data[1].Data.(*schemapb.VectorField_FloatVector).FloatVector.Data)
+		dataSorter.InsertData.Data[114].(*VectorArrayFieldData).NullableData[1].GetData().Data.(*schemapb.VectorField_FloatVector).FloatVector.Data)
 	assert.Equal(t, []float32{5, 6, 7, 8, 9, 10},
-		dataSorter.InsertData.Data[114].(*VectorArrayFieldData).Data[2].Data.(*schemapb.VectorField_FloatVector).FloatVector.Data)
+		dataSorter.InsertData.Data[114].(*VectorArrayFieldData).NullableData[2].GetData().Data.(*schemapb.VectorField_FloatVector).FloatVector.Data)
+	assert.Equal(t, []bool{true, true, false}, dataSorter.InsertData.Data[114].(*VectorArrayFieldData).ValidData)
+	assert.Equal(t, []bool{false, true, true, true}, dataSorter.InsertData.Data[114].(*VectorArrayFieldData).NullableData[0].GetValidData())
+	assert.Equal(t, []bool{true, false, true}, dataSorter.InsertData.Data[114].(*VectorArrayFieldData).NullableData[1].GetValidData())
+	assert.Equal(t, []bool{true, false, true, true}, dataSorter.InsertData.Data[114].(*VectorArrayFieldData).NullableData[2].GetValidData())
 }
 
 func TestDataSorterNullableCompactVectors(t *testing.T) {

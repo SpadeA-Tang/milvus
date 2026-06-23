@@ -379,6 +379,10 @@ using GeometryChunk = StringChunk;
 // [null_bitmap][offsets_lens][array_data]
 // [00000000] [29, 3, 41, 2, 49, 4, 65] [1, 2, 3, 4, 5, 6, 7, 8, 9]
 //
+// For element-nullable arrays, each row payload is prefixed with that row's
+// element validity bitmap:
+// [null_bitmap][offsets_lens][row0_element_bitmap][row0_data]...
+//
 // For string arrays, the structure is more complex as each string element needs its own offset:
 // [null_bitmap][offsets_lens][array1_offsets][array1_data][array2_offsets][array2_data][array3_offsets][array3_data]
 // [00000000] [29, 3, 53, 2, 69, 4, 101] [0, 5, 11, 16] ["hello", "world", "!"] [0, 3, 6] ["foo", "bar"] [0, 6, 12, 18, 24] ["apple", "orange", "banana", "grape"]
@@ -398,9 +402,11 @@ class ArrayChunk : public Chunk {
                uint64_t size,
                milvus::DataType element_type,
                bool nullable,
+               bool element_nullable,
                std::shared_ptr<ChunkMmapGuard> chunk_mmap_guard)
         : Chunk(row_nums, data, size, nullable, chunk_mmap_guard),
-          element_type_(element_type) {
+          element_type_(element_type),
+          element_nullable_(element_nullable) {
         auto null_bitmap_bytes_num = 0;
         if (nullable) {
             null_bitmap_bytes_num = (row_nums + 7) / 8;
@@ -416,6 +422,13 @@ class ArrayChunk : public Chunk {
         auto len = offsets_lens_[idx_off + 1];
         auto next_offset = offsets_lens_[idx_off + 2];
         auto data_ptr = data_ + offset;
+        TargetBitmapView element_valid_data;
+        uint32_t element_valid_bytes_len = 0;
+        if (element_nullable_) {
+            element_valid_data = TargetBitmapView(data_ptr, len);
+            element_valid_bytes_len = element_valid_data.size_in_bytes();
+            data_ptr += element_valid_bytes_len;
+        }
         uint32_t offsets_bytes_len = 0;
         uint32_t* offsets_ptr = nullptr;
         if (IsStringDataType(element_type_)) {
@@ -425,9 +438,12 @@ class ArrayChunk : public Chunk {
 
         return ArrayView(data_ptr + offsets_bytes_len,
                          len,
-                         next_offset - offset - offsets_bytes_len,
+                         next_offset - offset - element_valid_bytes_len -
+                             offsets_bytes_len,
                          element_type_,
-                         offsets_ptr);
+                         offsets_ptr,
+                         element_valid_data,
+                         element_nullable_);
     }
 
     std::pair<std::vector<ArrayView>, FixedVector<bool>>
@@ -490,6 +506,7 @@ class ArrayChunk : public Chunk {
 
  private:
     milvus::DataType element_type_;
+    bool element_nullable_;
     uint32_t* offsets_lens_;
 };
 

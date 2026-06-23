@@ -440,6 +440,7 @@ TEST(chunk, test_array) {
                          DataType::ARRAY,
                          DataType::STRING,
                          false,
+                         false,
                          std::nullopt);
     arrow::ArrayVector array_vec = read_single_column_batches(rb_reader);
     auto chunk = create_chunk(field_meta, array_vec);
@@ -448,9 +449,111 @@ TEST(chunk, test_array) {
     EXPECT_EQ(views.size(), 1);
     auto& arr = views[0];
     for (size_t i = 0; i < arr.length(); ++i) {
-        auto str = arr.get_data<std::string>(i);
+        auto str = arr.get_data_unchecked<std::string>(i);
         EXPECT_EQ(str, field_string_data.string_data().data(i));
     }
+}
+
+namespace {
+
+milvus::NullableScalarArrayValueProto
+BuildNullableIntArrayValueForChunkTest(const std::vector<int>& values,
+                                       const std::vector<bool>& valid_data) {
+    milvus::NullableScalarArrayValueProto proto;
+    for (auto value : values) {
+        proto.mutable_data()->mutable_int_data()->add_data(value);
+    }
+    for (auto valid : valid_data) {
+        proto.add_valid_data(valid);
+    }
+    return proto;
+}
+
+void
+AssertNullableIntArray(const ArrayView& array) {
+    ASSERT_TRUE(array.is_element_nullable());
+    ASSERT_EQ(array.length(), 3);
+    ASSERT_TRUE(array.is_element_valid(0));
+    ASSERT_FALSE(array.is_element_valid(1));
+    ASSERT_TRUE(array.is_element_valid(2));
+    EXPECT_EQ(array.get_data_unchecked<int>(0), 10);
+    EXPECT_EQ(array.get_data_unchecked<int>(2), 30);
+}
+
+}  // namespace
+
+TEST(chunk, test_element_nullable_array_field_data_from_arrow) {
+    auto proto =
+        BuildNullableIntArrayValueForChunkTest({10, 0, 30},
+                                               {true, false, true});
+    std::string serialized;
+    proto.SerializeToString(&serialized);
+
+    arrow::BinaryBuilder builder;
+    ASSERT_TRUE(builder.Append(serialized).ok());
+    std::shared_ptr<arrow::Array> arrow_array;
+    ASSERT_TRUE(builder.Finish(&arrow_array).ok());
+
+    auto field_data = milvus::storage::CreateFieldData(
+        DataType::ARRAY, DataType::INT32, false, true, 1, 1);
+    field_data->FillFieldData(arrow_array);
+
+    auto array = static_cast<const Array*>(field_data->RawValue(0));
+    ASSERT_TRUE(array->is_element_nullable());
+    ASSERT_EQ(array->length(), 3);
+    ASSERT_TRUE(array->is_element_valid(0));
+    ASSERT_FALSE(array->is_element_valid(1));
+    ASSERT_TRUE(array->is_element_valid(2));
+    EXPECT_EQ(array->get_data_unchecked<int>(0), 10);
+    EXPECT_EQ(array->get_data_unchecked<int>(2), 30);
+}
+
+TEST(chunk, test_element_nullable_array_chunk) {
+    auto proto =
+        BuildNullableIntArrayValueForChunkTest({10, 0, 30},
+                                               {true, false, true});
+    auto array = Array(proto);
+    FixedVector<Array> data = {array};
+
+    auto field_data = milvus::storage::CreateFieldData(
+        DataType::ARRAY, DataType::INT32, false, true, 1, 1);
+    field_data->FillFieldData(data.data(), data.size());
+
+    storage::InsertEventData event_data;
+    auto payload_reader =
+        std::make_shared<milvus::storage::PayloadReader>(field_data);
+    event_data.payload_reader = payload_reader;
+    auto ser_data = event_data.Serialize();
+    auto buffer = std::make_shared<arrow::io::BufferReader>(
+        ser_data.data() + 2 * sizeof(milvus::Timestamp),
+        ser_data.size() - 2 * sizeof(milvus::Timestamp));
+
+    parquet::arrow::FileReaderBuilder reader_builder;
+    auto s = reader_builder.Open(buffer);
+    ASSERT_TRUE(s.ok());
+    std::unique_ptr<parquet::arrow::FileReader> arrow_reader;
+    s = reader_builder.Build(&arrow_reader);
+    ASSERT_TRUE(s.ok());
+
+    std::shared_ptr<::arrow::RecordBatchReader> rb_reader;
+    s = arrow_reader->GetRecordBatchReader(&rb_reader);
+    ASSERT_TRUE(s.ok());
+
+    FieldMeta field_meta(FieldName("a"),
+                         milvus::FieldId(1),
+                         DataType::ARRAY,
+                         DataType::INT32,
+                         false,
+                         true,
+                         std::nullopt);
+    arrow::ArrayVector array_vec = read_single_column_batches(rb_reader);
+    auto chunk = create_chunk(field_meta, array_vec);
+    auto array_chunk = static_cast<ArrayChunk*>(chunk.get());
+    auto [views, valid] = array_chunk->Views(std::nullopt);
+    ASSERT_EQ(views.size(), 1);
+    ASSERT_TRUE(valid.empty());
+
+    AssertNullableIntArray(views[0]);
 }
 
 TEST(chunk, test_null_array) {
@@ -503,6 +606,7 @@ TEST(chunk, test_null_array) {
                          DataType::ARRAY,
                          DataType::STRING,
                          true,
+                         false,
                          std::nullopt);
     arrow::ArrayVector array_vec = read_single_column_batches(rb_reader);
     auto chunk = create_chunk(field_meta, array_vec);
@@ -526,7 +630,7 @@ TEST(chunk, test_null_array) {
             EXPECT_EQ(arr.length(),
                       field_string_data.string_data().data_size());
             for (size_t j = 0; j < arr.length(); j++) {
-                auto str = arr.get_data<std::string>(j);
+                auto str = arr.get_data_unchecked<std::string>(j);
                 EXPECT_EQ(str, field_string_data.string_data().data(j));
             }
         }
@@ -577,6 +681,7 @@ TEST(chunk, test_array_views) {
                          DataType::ARRAY,
                          DataType::STRING,
                          true,
+                         false,
                          std::nullopt);
     arrow::ArrayVector array_vec = read_single_column_batches(rb_reader);
     auto chunk = create_chunk(field_meta, array_vec);
@@ -587,7 +692,7 @@ TEST(chunk, test_array_views) {
         for (auto i = 0; i < array_count; i++) {
             auto& arr = views[i];
             for (size_t j = 0; j < arr.length(); ++j) {
-                auto str = arr.get_data<std::string>(j);
+                auto str = arr.get_data_unchecked<std::string>(j);
                 EXPECT_EQ(str, field_string_data.string_data().data(j));
             }
         }
@@ -600,7 +705,7 @@ TEST(chunk, test_array_views) {
         for (auto i = 0; i < len; i++) {
             auto& arr = views[i];
             for (size_t j = 0; j < arr.length(); ++j) {
-                auto str = arr.get_data<std::string>(j);
+                auto str = arr.get_data_unchecked<std::string>(j);
                 EXPECT_EQ(str, field_string_data.string_data().data(j));
             }
         }
