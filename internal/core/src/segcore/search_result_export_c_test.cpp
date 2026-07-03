@@ -163,6 +163,35 @@ TEST(SearchResultExport, SortEqualScoresByPks_MixedScores) {
     EXPECT_FLOAT_EQ(sr.distances_[3], 3.0f);
 }
 
+TEST(SearchResultExport, SortEqualScoresByPks_KeepsDistancesWithRows) {
+    SearchResult sr;
+    sr.total_nq_ = 1;
+    sr.unity_topK_ = 3;
+
+    // Scores are equal under EPSILON but intentionally not identical. Sorting
+    // by PK must move each score together with its PK and offset.
+    sr.distances_ = {0.0f, EPSILON / 2, EPSILON / 4};
+    sr.seg_offsets_ = {30, 10, 20};
+    sr.primary_keys_ = {
+        PkType(int64_t(300)), PkType(int64_t(100)), PkType(int64_t(200))};
+    sr.topk_per_nq_prefix_sum_ = {0, 3};
+
+    SortEqualScoresByPks(&sr);
+
+    ASSERT_EQ(sr.primary_keys_.size(), 3u);
+    ASSERT_EQ(sr.seg_offsets_.size(), 3u);
+    ASSERT_EQ(sr.distances_.size(), 3u);
+    EXPECT_EQ(std::get<int64_t>(sr.primary_keys_[0]), 100);
+    EXPECT_EQ(sr.seg_offsets_[0], 10);
+    EXPECT_FLOAT_EQ(sr.distances_[0], EPSILON / 2);
+    EXPECT_EQ(std::get<int64_t>(sr.primary_keys_[1]), 200);
+    EXPECT_EQ(sr.seg_offsets_[1], 20);
+    EXPECT_FLOAT_EQ(sr.distances_[1], EPSILON / 4);
+    EXPECT_EQ(std::get<int64_t>(sr.primary_keys_[2]), 300);
+    EXPECT_EQ(sr.seg_offsets_[2], 30);
+    EXPECT_FLOAT_EQ(sr.distances_[2], 0.0f);
+}
+
 TEST(SearchResultExport, SortEqualScoresByPks_WithElementIndices) {
     SearchResult sr;
     sr.total_nq_ = 1;

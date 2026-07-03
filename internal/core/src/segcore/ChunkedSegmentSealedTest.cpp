@@ -675,6 +675,106 @@ TEST(test_chunk_segment, TestSearchOnSealedWithAllNullVectors) {
     ASSERT_EQ(search_result.unity_topK_, search_info.topk_);
 }
 
+TEST(test_chunk_segment,
+     SearchIndexedNormalVectorAfterAddingNullableStructArrayField) {
+    constexpr int64_t dim = 8;
+    constexpr int64_t row_count = 32;
+    constexpr int64_t query_offset = 12;
+    constexpr int64_t topk = 128;
+
+    auto old_schema = std::make_shared<Schema>();
+    old_schema->set_schema_version(1);
+    auto pk = old_schema->AddDebugField("id", DataType::INT64);
+    auto normal_vector = old_schema->AddDebugField(
+        "normal_vector", DataType::VECTOR_FLOAT, dim, knowhere::metric::L2);
+    old_schema->set_primary_field_id(pk);
+
+    auto raw_data = segcore::DataGen(old_schema, row_count);
+    for (auto& field_data : *raw_data.raw_->mutable_fields_data()) {
+        if (field_data.field_id() == pk.get()) {
+            auto* values = field_data.mutable_scalars()->mutable_long_data();
+            values->clear_data();
+            for (int64_t row = 0; row < row_count; row++) {
+                values->add_data(row);
+            }
+        }
+        if (field_data.field_id() == normal_vector.get()) {
+            auto* values = field_data.mutable_vectors()
+                               ->mutable_float_vector()
+                               ->mutable_data();
+            values->Clear();
+            for (int64_t row = 0; row < row_count; row++) {
+                for (int64_t i = 0; i < dim; i++) {
+                    values->Add(static_cast<float>(row) +
+                                static_cast<float>(i) / 1000.0F);
+                }
+            }
+        }
+    }
+
+    auto segment = CreateSealedWithFieldDataLoaded(old_schema, raw_data);
+    auto vectors = raw_data.get_col<float>(normal_vector);
+    auto indexing = segcore::GenVecIndexing(
+        row_count, dim, vectors.data(), knowhere::IndexEnum::INDEX_FAISS_IDMAP);
+    segcore::LoadIndexInfo load_index_info;
+    load_index_info.field_id = normal_vector.get();
+    load_index_info.index_params = GenIndexParams(indexing.get());
+    load_index_info.cache_index =
+        CreateTestCacheIndex("normal-vector-flat-l2", std::move(indexing));
+    load_index_info.index_params[METRICS_TYPE] = knowhere::metric::L2;
+    segment->LoadIndex(load_index_info);
+
+    auto new_schema = std::make_shared<Schema>();
+    new_schema->set_schema_version(2);
+    new_schema->AddField(
+        FieldName("id"), pk, DataType::INT64, false, std::nullopt);
+    new_schema->AddField(FieldName("normal_vector"),
+                         normal_vector,
+                         DataType::VECTOR_FLOAT,
+                         dim,
+                         knowhere::metric::L2,
+                         false);
+    auto profile_age = FieldId(normal_vector.get() + 1);
+    auto profile_vector = FieldId(normal_vector.get() + 2);
+    new_schema->AddField(FieldName("profile[age]"),
+                         profile_age,
+                         DataType::ARRAY,
+                         DataType::INT64,
+                         true);
+    new_schema->AddField(FieldMeta(FieldName("profile[clip_vector]"),
+                                   profile_vector,
+                                   DataType::VECTOR_ARRAY,
+                                   DataType::VECTOR_FLOAT,
+                                   dim,
+                                   knowhere::metric::L2,
+                                   true));
+    new_schema->set_primary_field_id(pk);
+
+    segment->Reopen(new_schema);
+
+    auto* query = vectors.data() + query_offset * dim;
+    segcore::ScopedSchemaHandle schema_handle(*new_schema);
+    auto plan_str = schema_handle.ParseSearch(
+        "", "normal_vector", topk, "L2", R"({"nprobe": 10})", -1);
+    auto plan = query::CreateSearchPlanByExpr(
+        new_schema, plan_str.data(), plan_str.size());
+    auto ph_group_raw = segcore::CreatePlaceholderGroupFromBlob(1, dim, query);
+    auto ph_group = query::ParsePlaceholderGroup(
+        plan.get(), ph_group_raw.SerializeAsString());
+
+    auto result = segment->Search(plan.get(), ph_group.get(), MAX_TIMESTAMP);
+    ASSERT_GE(result->seg_offsets_.size(), 1);
+    EXPECT_EQ(result->seg_offsets_[0], query_offset)
+        << segcore::SearchResultToJson(*result).dump();
+    ASSERT_GE(result->distances_.size(), 1);
+    EXPECT_FLOAT_EQ(result->distances_[0], 0.0F)
+        << segcore::SearchResultToJson(*result).dump();
+    for (size_t i = row_count; i < result->seg_offsets_.size(); i++) {
+        EXPECT_EQ(result->seg_offsets_[i], INVALID_SEG_OFFSET)
+            << segcore::SearchResultToJson(*result).dump();
+    }
+}
+
 // Test search iterator on nullable vector field with all null vectors
 TEST(test_chunk_segment, TestSearchIteratorOnSealedWithAllNullVectors) {
     int dim = 16;
